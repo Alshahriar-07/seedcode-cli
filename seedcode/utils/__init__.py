@@ -10,7 +10,7 @@ from .helpers import (
     restrict_permissions,
     session_id,
 )
-from .logger import get_logger
+from .logger import get_logger, setup_logging
 
 __all__ = [
     "app_dir",
@@ -20,4 +20,5 @@ __all__ = [
     "human_timestamp",
     "restrict_permissions",
     "session_id",
+    "setup_logging",
 ]

@@ -30,6 +30,12 @@ class UI:
 
     def __init__(self) -> None:
         self.console = Console(theme=SEED_THEME, highlight=False)
+        # Legacy Windows consoles (pre-Windows-Terminal cmd.exe with raster
+        # fonts) can't render ✔/✖ — fall back to pure-ASCII markers there.
+        if self.console.legacy_windows:
+            self._ok_mark, self._err_mark = "[OK]", "[X]"
+        else:
+            self._ok_mark, self._err_mark = "✔", "✖"
 
     # --- primitives --------------------------------------------------------
     def print(self, *args, **kwargs) -> None:
@@ -85,13 +91,13 @@ class UI:
         self.console.print(Text(message, style="seed.dim"))
 
     def success(self, message: str) -> None:
-        self.console.print(Text(f"✔ {message}", style="seed.success"))
+        self.console.print(Text(f"{self._ok_mark} {message}", style="seed.success"))
 
     def warning(self, message: str) -> None:
         self.console.print(Text(f"! {message}", style="seed.warning"))
 
     def error(self, message: str) -> None:
-        self.console.print(Text(f"✖ {message}", style="seed.error"))
+        self.console.print(Text(f"{self._err_mark} {message}", style="seed.error"))
 
     def panel(self, body, title: str | None = None) -> None:
         self.console.print(

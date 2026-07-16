@@ -7,8 +7,9 @@ from . import CommandContext, CommandResult, command
 
 @command("clear", "Clear the screen")
 def _clear(ctx: CommandContext, arg: str) -> CommandResult:
+    # The branded banner renders exactly once at startup, so /clear only
+    # wipes the screen.
     ctx.ui.console.clear()
-    ctx.ui.banner(ctx.config)
     return CommandResult()
 
 

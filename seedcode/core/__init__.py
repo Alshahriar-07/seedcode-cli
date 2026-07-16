@@ -1,10 +1,18 @@
-"""Core logic: data models, OpenRouter client, chat engine, streaming."""
+"""Core logic: data models, provider backends, chat engine, streaming."""
 
 from __future__ import annotations
 
 from .chat import ChatEngine, ChatError, SYSTEM_PROMPT
-from .client import ValidationResult, build_client, validate_key
 from .models import AppConfig, Message
+from .providers import (
+    PROVIDERS,
+    ModelInfo,
+    Provider,
+    ProviderError,
+    ValidationResult,
+    get_provider,
+    provider_label,
+)
 from .streaming import iter_stream
 
 __all__ = [
@@ -12,9 +20,13 @@ __all__ = [
     "ChatEngine",
     "ChatError",
     "Message",
+    "ModelInfo",
+    "PROVIDERS",
+    "Provider",
+    "ProviderError",
     "SYSTEM_PROMPT",
     "ValidationResult",
-    "build_client",
+    "get_provider",
     "iter_stream",
-    "validate_key",
+    "provider_label",
 ]

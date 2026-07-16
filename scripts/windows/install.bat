@@ -92,7 +92,11 @@ if errorlevel 1 (
 )
 where seedcode >nul 2>&1
 if errorlevel 1 (
-    echo [WARN] 'seedcode' is not on PATH yet - open a NEW terminal and it will be.
+    echo [WARN] 'seedcode' is not on PATH in THIS terminal.
+    echo        Open a NEW terminal and try:  seedcode
+    echo        If it is still missing, ensure your Python Scripts folder is on
+    echo        PATH ^(re-run the python.org installer and tick "Add to PATH"^),
+    echo        or always launch with:  %PY_CMD% -m seedcode
 ) else (
     for /f "delims=" %%P in ('where seedcode') do echo [OK] seedcode command: %%P
 )

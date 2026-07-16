@@ -7,11 +7,19 @@ validation happens in one place and the rest of the app can rely on typed data.
 from __future__ import annotations
 
 import time
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 Role = Literal["system", "user", "assistant"]
+
+# Safe completion budget sent to OpenRouter when the user has not overridden
+# it. Free-tier accounts are rejected (HTTP 402) when the requested budget
+# exceeds what their credits could cover, so the default stays small.
+DEFAULT_MAX_TOKENS = 1024
+
+# The three supported backends (kept as a Literal so bad config fails loudly).
+ProviderId = Literal["openrouter", "aerolink", "ollama"]
 
 
 class Message(BaseModel):
@@ -22,31 +30,180 @@ class Message(BaseModel):
     timestamp: float = Field(default_factory=time.time)
 
     def to_api(self) -> dict[str, str]:
-        """Return the minimal shape the OpenAI SDK expects."""
+        """Return the minimal shape chat-completions style APIs expect."""
         return {"role": self.role, "content": self.content}
+
+
+class ProviderConfig(BaseModel):
+    """Per-provider settings: each backend keeps its own key and model.
+
+    Switching providers never touches another provider's entry, so keys and
+    model choices are always remembered. Ollama simply leaves ``api_key``
+    empty (it does not use one).
+    """
+
+    api_key: str = ""
+    model: str = ""
+
+
+_ALL_PROVIDERS = ("openrouter", "aerolink", "ollama")
+
+
+def _default_providers() -> dict[str, ProviderConfig]:
+    return {pid: ProviderConfig() for pid in _ALL_PROVIDERS}
 
 
 class AppConfig(BaseModel):
     """Persisted application configuration.
 
-    Stored as JSON under the user's config directory. The API key lives here but
-    the file is written with owner-only permissions where the OS supports it.
+    Stored shape (config.json)::
+
+        active_provider: "openrouter" | "aerolink" | "ollama"
+        providers:
+          openrouter: {api_key, model}
+          aerolink:   {api_key, model}
+          ollama:     {api_key(unused), model}
+
+    Models are never hardcoded — each provider's ``model`` starts empty and
+    the user selects one from the live catalogue. Older config formats
+    (v0.x flat ``api_key``, v1.x ``api_keys``/``models`` maps) migrate
+    automatically on load.
     """
 
-    api_key: str = ""
-    model: str = "z-ai/glm-5.2"
-    provider: str = "OpenRouter"
+    active_provider: ProviderId = "openrouter"
+    providers: dict[str, ProviderConfig] = Field(default_factory=_default_providers)
+    ollama_host: str = "http://localhost:11434"
     theme: str = "seed"
     username: str = "You"
     stream: bool = True
+    # Completion-token budget for chat requests. Users may override in
+    # config.json; the value is clamped before every request.
+    max_tokens: int = DEFAULT_MAX_TOKENS
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_legacy(cls, data: Any) -> Any:
+        """Accept pre-2.x config files and keyword shorthand.
+
+        Handles: v0.x (flat ``api_key`` string, display-name provider),
+        v1.x (``provider``/``model`` fields plus ``api_keys``/``models``
+        maps), and constructor convenience (``AppConfig(model=...)``).
+        """
+        if not isinstance(data, dict):
+            return data
+        data = dict(data)  # never mutate the caller's dict
+
+        # Normalise nested provider entries to plain dicts we can merge into.
+        providers: dict[str, dict] = {}
+        for pid, entry in (data.get("providers") or {}).items():
+            if isinstance(entry, ProviderConfig):
+                providers[pid] = entry.model_dump()
+            elif isinstance(entry, dict):
+                providers[pid] = dict(entry)
+
+        # Active provider: new field, or legacy "provider" (any casing).
+        raw_active = data.pop("provider", None) or data.get("active_provider")
+        if isinstance(raw_active, str):
+            active = raw_active.strip().lower()
+            if active not in _ALL_PROVIDERS:
+                active = "openrouter"
+            data["active_provider"] = active
+
+        # v1.x per-provider maps.
+        for pid, key in (data.pop("api_keys", None) or {}).items():
+            providers.setdefault(pid, {})["api_key"] = key
+        for pid, model in (data.pop("models", None) or {}).items():
+            providers.setdefault(pid, {}).setdefault("model", model)
+
+        # v1.x top-level model belongs to the active provider.
+        top_model = data.pop("model", None)
+        if top_model:
+            active = data.get("active_provider", "openrouter")
+            providers.setdefault(active, {})["model"] = top_model
+
+        # v0.x: single "api_key" string belonged to OpenRouter.
+        legacy_key = data.pop("api_key", None)
+        if legacy_key:
+            providers.setdefault("openrouter", {}).setdefault("api_key", legacy_key)
+
+        if providers or "providers" in data:
+            data["providers"] = providers
+        return data
+
+    @model_validator(mode="after")
+    def _ensure_all_providers(self) -> "AppConfig":
+        """Every supported provider always has an entry."""
+        for pid in _ALL_PROVIDERS:
+            if pid not in self.providers:
+                self.providers[pid] = ProviderConfig()
+        return self
+
+    # --- active provider/model (compatibility + convenience) ----------------
+    @property
+    def provider(self) -> str:
+        """Id of the active provider."""
+        return self.active_provider
+
+    @provider.setter
+    def provider(self, value: str) -> None:
+        self.active_provider = value  # type: ignore[assignment]
+
+    @property
+    def model(self) -> str:
+        """Model selected for the ACTIVE provider ('' if none yet)."""
+        return self.providers[self.active_provider].model
+
+    @model.setter
+    def model(self, value: str) -> None:
+        self.providers[self.active_provider].model = value
+
+    # --- key management -----------------------------------------------------
+    def get_api_key(self, provider_id: str | None = None) -> str:
+        """Key for ``provider_id`` (default: the active provider)."""
+        pid = (provider_id or self.active_provider).lower()
+        entry = self.providers.get(pid)
+        return entry.api_key if entry else ""
+
+    def set_api_key(self, provider_id: str, key: str) -> None:
+        pid = provider_id.lower()
+        if pid not in self.providers:
+            self.providers[pid] = ProviderConfig()
+        self.providers[pid].api_key = key
 
     def is_configured(self) -> bool:
-        """True when a non-empty API key is present."""
-        return bool(self.api_key.strip())
+        """True when the active provider is usable and a model is chosen.
 
-    def masked_key(self) -> str:
+        Ollama needs no key; the other providers need one.
+        """
+        if not self.model:
+            return False
+        if self.active_provider == "ollama":
+            return True
+        return bool(self.get_api_key().strip())
+
+    def remember_model(self) -> None:
+        """Compatibility no-op: models are stored per provider already."""
+
+    def recall_model(self) -> str:
+        """Model saved for the active provider ('' if none yet)."""
+        return self.model
+
+    def effective_max_tokens(self) -> int:
+        """Completion budget to send with a request, clamped to a safe range.
+
+        Values outside [1, 4096] are clamped so an oversized config value can
+        never trigger OpenRouter's 402 "more credits or fewer max_tokens"
+        rejection. Free models (``*:free``) are further capped at
+        ``DEFAULT_MAX_TOKENS`` since their credit ceiling is lowest.
+        """
+        max_tokens = max(1, min(self.max_tokens, 4096))
+        if self.model.endswith(":free"):
+            max_tokens = min(max_tokens, DEFAULT_MAX_TOKENS)
+        return max_tokens
+
+    def masked_key(self, provider_id: str | None = None) -> str:
         """Return the API key with the middle obscured for safe display."""
-        key = self.api_key.strip()
+        key = self.get_api_key(provider_id).strip()
         if not key:
             return "(not set)"
         if len(key) <= 12:

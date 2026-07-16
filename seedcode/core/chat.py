@@ -1,8 +1,8 @@
-"""Chat engine: talks to OpenRouter through the OpenAI SDK.
+"""Chat engine: routes conversations through the active provider.
 
-OpenRouter is OpenAI-API compatible, so we reuse the official SDK (see
-:mod:`seedcode.core.client`). Streaming is the default path and SDK exceptions
-are translated into :class:`ChatError` so the UI never surfaces a raw traceback.
+The engine owns conversation state and retry policy. Which vendor actually
+answers is decided per request by ``config.provider`` + ``config.model``, so
+switching providers or models mid-session takes effect on the next turn.
 """
 
 from __future__ import annotations
@@ -10,16 +10,11 @@ from __future__ import annotations
 import time
 from collections.abc import Iterator
 
-from openai import (
-    APIConnectionError,
-    APIError,
-    AuthenticationError,
-    RateLimitError,
-)
-
-from .client import build_client
 from .models import AppConfig, Message
-from .streaming import iter_stream
+from .providers import ProviderError, get_provider
+from ..utils.logger import get_logger
+
+_log = get_logger("chat")
 
 # Transparent retry for transient failures before any output has streamed.
 _MAX_RETRIES = 2
@@ -37,12 +32,11 @@ class ChatError(Exception):
 
 
 class ChatEngine:
-    """Stateful conversation manager backed by OpenRouter."""
+    """Stateful conversation manager delegating requests to providers."""
 
     def __init__(self, config: AppConfig) -> None:
         self.config = config
         self.messages: list[Message] = [Message(role="system", content=SYSTEM_PROMPT)]
-        self._client = build_client(config)
 
     # --- history management ------------------------------------------------
     def add_user(self, content: str) -> None:
@@ -50,6 +44,15 @@ class ChatEngine:
 
     def add_assistant(self, content: str) -> None:
         self.messages.append(Message(role="assistant", content=content))
+
+    def drop_last_user(self) -> None:
+        """Remove a trailing unanswered user turn (after a failed request).
+
+        Keeps the transcript alternating so the next attempt never sends two
+        consecutive user messages, which strict APIs reject.
+        """
+        if self.messages and self.messages[-1].role == "user":
+            self.messages.pop()
 
     def reset(self) -> None:
         """Clear the conversation but keep the system prompt."""
@@ -61,45 +64,44 @@ class ChatEngine:
 
     # --- requests ----------------------------------------------------------
     def stream_reply(self) -> Iterator[str]:
-        """Yield response chunks for the current conversation.
+        """Stream a reply via the current provider + current model.
 
-        Translates SDK exceptions into :class:`ChatError` with friendly text so
-        the UI never surfaces a raw traceback.
+        Transient provider failures are retried with a short backoff — but
+        never once output has started, since a retry would replay the reply.
+        All failures surface as :class:`ChatError` with friendly text.
         """
-        payload = [m.to_api() for m in self.messages]
+        if not self.config.model:
+            raise ChatError("No model selected. Pick one with /model first.")
+
+        try:
+            provider = get_provider(self.config.provider)
+        except ProviderError as exc:
+            raise ChatError(str(exc)) from exc
+
         attempt = 0
         while True:
             yielded = False
+            _log.info(
+                "request: provider=%s model=%s turns=%d attempt=%d",
+                self.config.provider,
+                self.config.model,
+                len(self.messages),
+                attempt,
+            )
             try:
-                stream = self._client.chat.completions.create(
-                    model=self.config.model,
-                    messages=payload,
-                    stream=True,
-                )
-                for piece in iter_stream(stream):
+                for piece in provider.stream_chat(self.config, self.messages):
                     yielded = True
                     yield piece
+                _log.info("request complete: provider=%s", self.config.provider)
                 return
-            except AuthenticationError as exc:
-                raise ChatError(
-                    "Authentication failed. Your API key may be invalid — run /config."
-                ) from exc
-            except (RateLimitError, APIConnectionError) as exc:
-                # Transient failures are retried with a short backoff — but never
-                # once output has started, since a retry would replay the reply.
-                if not yielded and attempt < _MAX_RETRIES:
+            except ProviderError as exc:
+                if exc.transient and not yielded and attempt < _MAX_RETRIES:
                     attempt += 1
+                    _log.warning("transient failure, retry %d: %s", attempt, exc)
                     time.sleep(_RETRY_BACKOFF_S * attempt)
                     continue
-                if isinstance(exc, RateLimitError):
-                    raise ChatError(
-                        "Rate limited by OpenRouter. Please wait and try again."
-                    ) from exc
-                raise ChatError(
-                    "Network error reaching OpenRouter. Check your connection."
-                ) from exc
-            except APIError as exc:
-                detail = getattr(exc, "message", str(exc)) or "Unknown API error."
-                raise ChatError(f"OpenRouter error: {detail}") from exc
+                _log.error("request failed: %s", exc)
+                raise ChatError(str(exc)) from exc
             except Exception as exc:  # last-resort guard: never crash the REPL
+                _log.exception("unexpected error during request")
                 raise ChatError(f"Unexpected error: {exc}") from exc

@@ -5,6 +5,7 @@ from __future__ import annotations
 from rich.text import Text
 
 from .. import TAGLINE, __author__, __version__
+from ..core.providers import provider_label
 from . import CommandContext, CommandResult, command
 
 
@@ -15,7 +16,8 @@ def _about(ctx: CommandContext, arg: str) -> CommandResult:
     body.append(f"{TAGLINE}\n\n", style="seed.accent")
     body.append(f"Version   {__version__}\n", style="seed.text")
     body.append(f"Author    {__author__}\n", style="seed.text")
-    body.append("Provider  OpenRouter\n\n", style="seed.text")
+    body.append(f"Provider  {provider_label(ctx.config.provider)}\n", style="seed.text")
+    body.append(f"Model     {ctx.config.model or '(none)'}\n\n", style="seed.text")
     body.append("A premium terminal-based AI coding assistant.", style="seed.dim")
     ctx.ui.panel(body, title="About")
     return CommandResult()

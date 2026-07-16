@@ -5,6 +5,7 @@ Kept dependency-light so importing this module stays cheap during startup.
 
 from __future__ import annotations
 
+import tempfile
 import time
 from pathlib import Path
 
@@ -13,10 +14,16 @@ def app_dir() -> Path:
     """Return the per-user Seed Code directory, creating it if needed.
 
     Uses ``~/.seedcode`` on every platform for predictable, cross-platform
-    behaviour (Windows PowerShell, Linux, macOS).
+    behaviour (Windows PowerShell, Linux, macOS). If the home directory is
+    unwritable (locked-down corporate machines), falls back to a temp
+    location so the app still starts.
     """
     path = Path.home() / ".seedcode"
-    path.mkdir(parents=True, exist_ok=True)
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        path = Path(tempfile.gettempdir()) / "seedcode"
+        path.mkdir(parents=True, exist_ok=True)
     return path
 
 
@@ -28,7 +35,10 @@ def config_path() -> Path:
 def history_dir() -> Path:
     """Directory holding saved conversation transcripts."""
     path = app_dir() / "history"
-    path.mkdir(parents=True, exist_ok=True)
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass  # history is best-effort; callers already tolerate write failures
     return path
 
 

@@ -1,11 +1,10 @@
-"""Informational commands: /help, /model, /version."""
+"""Informational commands: /help, /version."""
 
 from __future__ import annotations
 
 from rich.table import Table
 
 from .. import __version__
-from ..config import save_config
 from . import CommandContext, CommandResult, _REGISTRY, command
 
 
@@ -17,22 +16,6 @@ def _help(ctx: CommandContext, arg: str) -> CommandResult:
     for name, (_, help_text) in sorted(_REGISTRY.items()):
         table.add_row(f"/{name}", help_text)
     ctx.ui.panel(table, title="Commands")
-    return CommandResult()
-
-
-@command("model", "Show or change the active model. Usage: /model [name]", aliases=("show",))
-def _model(ctx: CommandContext, arg: str) -> CommandResult:
-    target = arg.strip()
-    # Support the documented "/show model" phrasing.
-    if target.lower().startswith("model"):
-        target = target[len("model"):].strip()
-    if not target:
-        ctx.ui.info(f"Current model: {ctx.config.model}")
-        ctx.ui.dim(f"Provider: {ctx.config.provider}")
-        return CommandResult()
-    ctx.config.model = target
-    save_config(ctx.config)
-    ctx.ui.success(f"Model set to {target}")
     return CommandResult()
 
 

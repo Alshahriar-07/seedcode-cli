@@ -95,6 +95,100 @@ v0.1.0
   Deliverable: Release\SeedCodeSetup.exe — public-release ready except code
   signing (unsigned exes trip SmartScreen until reputation builds).
 
+✔ Multi-provider AI backend (real, no mocks) — three backends behind one
+  Provider interface (core/providers/): OpenRouter, AeroLink, Ollama.
+    - core/providers/base.py — Provider ABC (validate_key, list_models,
+      stream_chat), ModelInfo, ValidationResult, ProviderError(transient=)
+      so the engine knows what is worth retrying.
+    - openrouter.py — OpenAI SDK pointed at https://openrouter.ai/api/v1,
+      streaming chat completions; /model lists ONLY free models (prompt AND
+      completion pricing == 0 from GET /models); key validated via GET /key
+      (sk-or- prefix checked offline first).
+    - aerolink.py — AeroLink (https://aerolink.lat) is an Anthropic-compatible
+      gateway at https://capi.aerolink.lat (per Info_for_ai_agents AeroLink
+      docs: ANTHROPIC_BASE_URL=https://capi.aerolink.lat/). Speaks the
+      Messages API over httpx: POST /v1/messages with SSE streaming
+      (content_block_delta/text_delta), GET /v1/models for the catalogue.
+      If the gateway doesn't proxy /v1/models, key is accepted provisionally
+      and `/model <id>` sets a typed model id directly.
+    - ollama.py — native local API: GET /api/tags (detect + installed models,
+      with sizes), POST /api/chat NDJSON streaming. No key; host configurable
+      via config.ollama_host (default http://localhost:11434, editable with
+      /settings ollama_host ...). Friendly errors for "not running" /
+      "model not installed".
+    - Engine: core/chat.py streams via get_provider(config.provider) using
+      config.model on EVERY request; retries transient failures (2x, backoff)
+      only before the first token has streamed. No model is ever hardcoded —
+      AppConfig.model defaults to "".
+    - Config: AppConfig gained api_keys{provider->key} and models{provider->
+      last model} (switching providers restores the last model used with it);
+      legacy v0.x configs (flat api_key, display-name provider) migrate via a
+      model_validator. Env overrides: OPENROUTER_API_KEY / AEROLINK_API_KEY
+      (ENV_KEYS dict in config/defaults.py).
+    - Commands: commands/provider.py adds /provider (numbered menu or
+      `/provider <name>`; collects+validates the key on first use; detects
+      Ollama) and the new /model (fetches the live list, pick by number,
+      exact id, or filter substring; `/model <text>` selects directly).
+      /settings edits username/stream/ollama_host (model removed — /model
+      owns it). /config shows per-provider masked keys + ollama host.
+    - Onboarding (app.py) reuses select_provider/select_model, so first-run
+      setup == /provider + /model. Cancelling is allowed; banner shows
+      "Setup needed" until config.is_configured().
+    - core/client.py is a deprecated shim delegating to OpenRouterProvider
+      (kept so nothing external breaks); core/__init__ re-exports the
+      provider registry.
+    - Tests rewritten for the provider registry + per-provider config
+      (test_client.py, test_config.py, test_memory.py).
+
+✔ Provider management v2 — per-provider config isolation + /apikey.
+    - Config schema (config.json) is now NESTED per provider:
+        active_provider: openrouter | aerolink | ollama
+        providers.openrouter: {api_key, model}
+        providers.aerolink:   {api_key, model}
+        providers.ollama:     {api_key(unused), model}
+      Switching providers changes ONLY active_provider — every provider keeps
+      its own key + model, so nothing is ever overwritten and switching back
+      restores instantly. Older formats migrate automatically on load
+      (v0.x flat api_key; v1.x provider/model + api_keys{}/models{} maps).
+    - core/models.py: ProviderConfig model + AppConfig.active_provider/
+      providers. Compatibility properties keep call sites unchanged:
+      config.provider and config.model read/write the ACTIVE provider's slot
+      (pydantic v2 property setters). remember_model()/recall_model() kept as
+      no-op/alias for compatibility.
+    - New command /apikey (alias /key): edit the API key for the ACTIVE
+      provider — shows the current masked key, validates before saving;
+      `/apikey <key>` sets it inline. Ollama reports "no key needed".
+    - /config now lists every provider's masked key AND saved model.
+    - /provider no longer copies models around: the switched-to provider's
+      own saved model is simply active again (commands/provider.py
+      simplified; key entry extracted into _collect_key, reused by /apikey).
+    - Provider rules unchanged and real (no mocks): OpenRouter = free models
+      only from live GET /models; AeroLink = dynamic GET /v1/models (typed id
+      fallback); Ollama = installed models from GET /api/tags.
+    - Tests: nested-shape round-trip, v1.x migration, switch-isolation
+      (keys/models never clobbered), /apikey registration.
+
+✔ Windows stability pass (2026-07) — reliability/logging/UX hardening:
+    - cli.py: UTF-8 reconfigure of stdout/stderr (errors=replace) so redirected
+      output can't UnicodeEncodeError; heavy imports deferred so --version is
+      instant; fatal errors logged with traceback.
+    - utils/logger.py: real rotating file log ~/.seedcode/logs/seedcode.log
+      (512KB x2, INFO; SEEDCODE_DEBUG=1 -> DEBUG). No keys/content logged.
+    - app.py: Ctrl+C mid-stream cancels only the response (partial reply kept);
+      command dispatch guarded so no handler can kill the REPL; failed or
+      empty turns drop the dangling user message (keeps transcript
+      alternating for strict Messages APIs).
+    - config/manager.py: save_config is best-effort (logs, never crashes);
+      load/fallback logged. utils/helpers.py: app_dir falls back to temp dir
+      if home is unwritable.
+    - openrouter.py: explicit timeouts (20s connect/180s read), max_tokens
+      always sent (clamped 1..4096, :free models capped at 1024 —
+      DEFAULT_MAX_TOKENS in core/models.py; fixes free-tier HTTP 402),
+      friendly 402/404/5xx messages (5xx transient -> auto-retry).
+    - ui: legacy-conhost fallbacks (ASCII logo + [OK]/[X] marks); banner is
+      the branded screen only (no provider/model/version lines).
+    - /settings gained max_tokens (int, >=1); /config shows it.
+
 ## In Progress
 
 Nothing — installation system verified by real runs (install → build →
@@ -108,12 +202,19 @@ Phase 9 — Public release (docs, GitHub, PyPI)
 
 ## Notes
 
-Provider: OpenRouter (OpenAI-SDK compatible, base_url = https://openrouter.ai/api/v1)
-Default model: z-ai/glm-5.2
+Providers (3, via core/providers registry — never hardcode models):
+  openrouter — OpenAI-SDK compatible, base_url https://openrouter.ai/api/v1,
+               free models only in /model
+  aerolink   — Anthropic Messages API gateway, base https://capi.aerolink.lat
+  ollama     — local, native API, no key, host in config.ollama_host
 Python 3.12+, Rich + Prompt Toolkit + Pydantic + httpx + OpenAI SDK.
 
 Config + history stored under ~/.seedcode (cross-platform, owner-only perms).
-OPENROUTER_API_KEY env var overrides the stored key.
+Config shape: active_provider + providers.{openrouter,aerolink,ollama}
+  = {api_key, model} each (older formats auto-migrate on load).
+OPENROUTER_API_KEY / AEROLINK_API_KEY env vars override stored keys.
+Commands: /help /provider /apikey /model /clear /reset /history /config
+  /settings /about /version /exit.
 
 Accent color: followed the PROJECT VISION (Soft Green) over Design.md's cyan,
 for a cohesive green identity. Cyan reserved for rare emphasis.
@@ -122,15 +223,18 @@ Module map (post-restructure):
   cli.py                entry point (thin) -> app.run
   app.py                application controller: onboarding + REPL
   __main__.py           `python -m seedcode`
-  core/chat.py          ChatEngine + ChatError
-  core/client.py        OpenRouter client factory + validate_key
+  core/chat.py          ChatEngine + ChatError (provider-routed, retries)
+  core/providers/       base.py (Provider ABC) + openrouter/aerolink/ollama
+                        + __init__.py registry (PROVIDERS, get_provider)
+  core/client.py        deprecated shim -> providers.openrouter
   core/streaming.py     raw stream iterator (iter_stream)
   core/models.py        Pydantic AppConfig + Message
-  config/manager.py     load/save AppConfig
-  config/defaults.py    ENV_KEY, CONFIG_FILENAME
-  commands/             registry/dispatch + help/clear/history/about handlers
+  config/manager.py     load/save AppConfig (env key overrides)
+  config/defaults.py    ENV_KEYS, CONFIG_FILENAME
+  commands/             registry/dispatch + help/clear/history/about/provider
   memory/storage.py     HistoryStore (per-session JSON)
   memory/manager.py     list_sessions / load_session
   ui/                   theme, banner, renderer, prompts, UI class
-  utils/helpers.py      paths + timestamps
-  utils/logger.py       silent logger (NullHandler)
+  utils/helpers.py      paths + timestamps (temp-dir fallback)
+  utils/logger.py       rotating file log ~/.seedcode/logs/seedcode.log
+                        (terminal always silent; SEEDCODE_DEBUG=1 -> DEBUG)

@@ -21,15 +21,20 @@ from openai import (
 )
 
 from ..streaming import iter_stream
+from ...utils.logger import get_logger
 from .base import ModelInfo, Provider, ProviderError, ValidationResult
 
 if TYPE_CHECKING:
     from ..models import AppConfig, Message
 
+_log = get_logger("openrouter")
+
 _BASE_URL = "https://openrouter.ai/api/v1"
 _VALIDATE_URL = f"{_BASE_URL}/key"
 _MODELS_URL = f"{_BASE_URL}/models"
 _TIMEOUT = 20.0
+# Chat: fail fast on connect, but give slow free-tier models time to answer.
+_CHAT_TIMEOUT = httpx.Timeout(20.0, read=180.0)
 # Sent so Seed Code shows up correctly in OpenRouter dashboards / rankings.
 _HEADERS = {
     "HTTP-Referer": "https://github.com/Alshahriar-07/seedbot-cli",
@@ -114,13 +119,20 @@ class OpenRouterProvider(Provider):
             api_key=config.get_api_key("openrouter"),
             base_url=_BASE_URL,
             default_headers=_HEADERS,
+            timeout=_CHAT_TIMEOUT,
             # The engine owns retry policy; keep the SDK from stacking its own.
             max_retries=0,
         )
+        max_tokens = config.effective_max_tokens()
+        _log.debug("chat request: model=%s max_tokens=%d", config.model, max_tokens)
         try:
             stream = client.chat.completions.create(
                 model=config.model,
                 messages=[m.to_api() for m in messages],  # type: ignore[arg-type]
+                # Clamped budget — an unbounded request makes OpenRouter derive
+                # max_tokens from the model's context window (e.g. 65536),
+                # which free-tier accounts reject with HTTP 402.
+                max_tokens=max_tokens,
                 stream=True,
             )
             yield from iter_stream(stream)
@@ -133,9 +145,29 @@ class OpenRouterProvider(Provider):
                 "Rate limited by OpenRouter. Please wait and try again.", transient=True
             ) from exc
         except APIConnectionError as exc:
+            # Includes read timeouts — the SDK wraps them in connection errors.
             raise ProviderError(
                 "Network error reaching OpenRouter. Check your connection.", transient=True
             ) from exc
         except APIError as exc:
-            detail = getattr(exc, "message", str(exc)) or "Unknown API error."
-            raise ProviderError(f"OpenRouter error: {detail}") from exc
+            raise _friendly_api_error(exc, config.model) from exc
+
+
+def _friendly_api_error(exc: APIError, model: str) -> ProviderError:
+    """Translate OpenRouter API errors into actionable user messages."""
+    status = getattr(exc, "status_code", None)
+    detail = getattr(exc, "message", str(exc)) or "Unknown API error."
+    if status == 402:
+        return ProviderError(
+            "OpenRouter rejected the request for lack of credits (HTTP 402). "
+            "Try a ':free' model via /model, or add credits at openrouter.ai."
+        )
+    if status == 404:
+        return ProviderError(
+            f"Model '{model}' was not found on OpenRouter. Pick another with /model."
+        )
+    if status is not None and status >= 500:
+        return ProviderError(
+            "OpenRouter had a server error. Please try again.", transient=True
+        )
+    return ProviderError(f"OpenRouter error: {detail}")
