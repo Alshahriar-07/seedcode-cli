@@ -4,15 +4,15 @@ build-backend = "hatchling.build"
 
 [project]
 name = "seedcode"
-version = "1.0.0"
+version = "1.2.0.3"
 description = "Seed Code — a premium terminal-based AI coding assistant. Plant ideas. Grow code."
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.12"
 authors = [{ name = "Al shahriar sowan" }]
-keywords = ["ai", "cli", "terminal", "openrouter", "coding-assistant", "seedcode"]
+keywords = ["ai", "cli", "terminal", "chat", "coding-assistant", "seedcode", "ollama"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Environment :: Console",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
@@ -32,8 +32,8 @@ dependencies = [
 dev = ["pytest>=8.0.0", "pytest-mock>=3.12.0"]
 
 [project.urls]
-Homepage = "https://github.com/Alshahriar-07/seedbot-cli"
-Repository = "https://github.com/Alshahriar-07/seedbot-cli"
+Homepage = "https://github.com/Alshahriar-07/seedcode-cli"
+Repository = "https://github.com/Alshahriar-07/seedcode-cli"
 
 [project.scripts]
 seedcode = "seedcode.cli:main"

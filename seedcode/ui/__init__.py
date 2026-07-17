@@ -1,8 +1,8 @@
 """Rich-based presentation layer for Seed Code.
 
 Everything the user sees on screen is produced here so the visual identity —
-the "Seed Green" theme, the ASCII banner, panels and spinners — stays in one
-place. Business logic lives elsewhere and calls into these helpers.
+the "Seed Green" theme, the startup dashboard, panels and spinners — stays in
+one place. Business logic lives elsewhere and calls into these helpers.
 """
 
 from __future__ import annotations
@@ -12,13 +12,12 @@ from typing import Iterator
 
 from rich.console import Console
 from rich.live import Live
-from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.spinner import Spinner
 from rich.text import Text
 
 from ..core.models import AppConfig
-from .banner import render_banner
+from .dashboard import render_dashboard
 from .renderer import StreamRenderer
 from .theme import SEED_THEME
 
@@ -44,24 +43,12 @@ class UI:
     def blank(self) -> None:
         self.console.print()
 
-    def rule(self) -> None:
-        self.console.rule(style="seed.dim")
-
     # --- startup -----------------------------------------------------------
     def banner(self, config: AppConfig) -> None:
-        """Render the ASCII logo, tagline and status header."""
-        render_banner(self.console, config)
+        """Render the startup dashboard (shown exactly once at launch)."""
+        render_dashboard(self.console, config)
 
     # --- chat rendering ----------------------------------------------------
-    def user_prompt_label(self, username: str) -> str:
-        """Prompt Toolkit consumes this via a formatted-text callable elsewhere."""
-        return f"{username} > "
-
-    def assistant_markdown(self, text: str) -> None:
-        """Render a completed assistant message as markdown."""
-        self.console.print(Markdown(text, code_theme="ansi_dark"))
-        self.console.print()
-
     @contextmanager
     def thinking(self, label: str = "Thinking") -> Iterator[None]:
         """Show a spinner while awaiting the first streamed token."""

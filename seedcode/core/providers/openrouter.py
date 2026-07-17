@@ -1,25 +1,24 @@
-"""OpenRouter backend: OpenAI-compatible chat completions.
+"""OpenRouter backend: the openrouter.ai catalogue with Free/Pro modes.
 
-Model listing uses OpenRouter's public catalogue and keeps only FREE models
-(zero prompt and completion pricing), per product requirements. Nothing is
-hardcoded — the user picks from the live list.
+Fully independent provider: its own key slot, base URL, client cache, and
+catalogue. Two modes share the same API key:
+
+* **Free Models** (default) — the model picker shows only zero-cost models.
+* **Pro Models** — the picker shows paid models.
+
+The mode is a provider-specific setting persisted in OpenRouter's own
+config entry. Nothing is hardcoded and no other provider's logic is used.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import httpx
-from openai import (
-    APIConnectionError,
-    APIError,
-    AuthenticationError,
-    OpenAI,
-    RateLimitError,
-)
 
+from ..models import DEFAULT_MAX_TOKENS
 from ..streaming import iter_stream
 from ...utils.logger import get_logger
 from .base import ModelInfo, Provider, ProviderError, ValidationResult
@@ -33,16 +32,19 @@ _BASE_URL = "https://openrouter.ai/api/v1"
 _VALIDATE_URL = f"{_BASE_URL}/key"
 _MODELS_URL = f"{_BASE_URL}/models"
 _TIMEOUT = 20.0
-# Chat: fail fast on connect, but give slow free-tier models time to answer.
 _CHAT_TIMEOUT = httpx.Timeout(20.0, read=180.0)
-# Sent so Seed Code shows up correctly in OpenRouter dashboards / rankings.
 _HEADERS = {
-    "HTTP-Referer": "https://github.com/Alshahriar-07/seedbot-cli",
+    "HTTP-Referer": "https://github.com/Alshahriar-07/seedcode-cli",
     "X-Title": "Seed Code",
 }
 
 
-def _is_free(entry: dict[str, Any]) -> bool:
+# Model-list modes (persisted in OpenRouter's own options; same API key).
+MODE_FREE = "free"
+MODE_PRO = "pro"
+
+
+def _entry_is_free(entry: dict[str, Any]) -> bool:
     """True when both prompt and completion pricing are exactly zero."""
     pricing = entry.get("pricing") or {}
     try:
@@ -55,20 +57,22 @@ def _is_free(entry: dict[str, Any]) -> bool:
 
 @dataclass
 class OpenRouterProvider(Provider):
+    # Private per-provider client cache (key -> client); never shared.
+    _client: Any = field(init=False, default=None, repr=False)
+    _client_key: str = field(init=False, default="", repr=False)
+
     def __post_init__(self) -> None:
         self.id = "openrouter"
         self.label = "OpenRouter"
+        self.base_url = _BASE_URL
         self.requires_key = True
-        self.key_hint = "sk-or-...  (create one at https://openrouter.ai/keys)"
+        self.key_hint = "create a key at https://openrouter.ai/keys"
 
     def validate_key(self, api_key: str) -> ValidationResult:
+        """Validate with a real authenticated request — no heuristics."""
         key = api_key.strip()
         if not key:
             return ValidationResult(False, "API key is empty.")
-        if not key.startswith("sk-or-"):
-            return ValidationResult(
-                False, "That does not look like an OpenRouter key (expected 'sk-or-...')."
-            )
         try:
             response = httpx.get(
                 _VALIDATE_URL, headers={"Authorization": f"Bearer {key}"}, timeout=_TIMEOUT
@@ -85,7 +89,27 @@ class OpenRouterProvider(Provider):
             False, f"Unexpected response from OpenRouter (HTTP {response.status_code})."
         )
 
+    def mode(self, config: "AppConfig") -> str:
+        """Current model-list mode: 'free' (default) or 'pro'."""
+        raw = (config.provider_options("openrouter").get("mode") or MODE_FREE).lower()
+        return raw if raw in (MODE_FREE, MODE_PRO) else MODE_FREE
+
+    def extra_settings(self, config: "AppConfig") -> dict[str, str]:
+        return {"mode": f"{self.mode(config)}  (free = zero-cost models, pro = paid models)"}
+
+    def set_extra_setting(
+        self, config: "AppConfig", name: str, value: str
+    ) -> tuple[bool, str]:
+        if name != "mode":
+            return False, f"{self.label} has no setting '{name}'."
+        mode = value.strip().lower()
+        if mode not in (MODE_FREE, MODE_PRO):
+            return False, "mode expects 'free' or 'pro'."
+        config.provider_options("openrouter")["mode"] = mode
+        return True, f"OpenRouter mode set to {mode} — /model now lists {mode} models."
+
     def list_models(self, config: "AppConfig") -> list[ModelInfo]:
+        """The live catalogue for the CURRENT mode (free or pro models)."""
         try:
             response = httpx.get(_MODELS_URL, timeout=_TIMEOUT)
             response.raise_for_status()
@@ -100,52 +124,75 @@ class OpenRouterProvider(Provider):
                 transient=True,
             ) from exc
 
-        models = [
-            ModelInfo(
-                id=entry["id"],
-                label=entry.get("name") or entry["id"],
-                detail=f"{entry.get('context_length') or '?'} ctx",
+        want_free = self.mode(config) == MODE_FREE
+        models = []
+        for entry in data:
+            if not entry.get("id"):
+                continue
+            free = _entry_is_free(entry)
+            if free is not want_free:
+                continue
+            models.append(
+                ModelInfo(
+                    id=entry["id"],
+                    label=entry.get("name") or entry["id"],
+                    detail=f"{'free' if free else 'paid'} · {entry.get('context_length') or '?'} ctx",
+                    is_free=free,
+                )
             )
-            for entry in data
-            if entry.get("id") and _is_free(entry)
-        ]
         models.sort(key=lambda m: m.id)
         if not models:
-            raise ProviderError("OpenRouter reported no free models right now.")
+            raise ProviderError(
+                f"OpenRouter has no {self.mode(config)} models right now. "
+                "Switch mode in /settings (mode free|pro)."
+            )
         return models
 
     def stream_chat(self, config: "AppConfig", messages: list["Message"]) -> Iterator[str]:
-        client = OpenAI(
-            api_key=config.get_api_key("openrouter"),
-            base_url=_BASE_URL,
-            default_headers=_HEADERS,
-            timeout=_CHAT_TIMEOUT,
-            # The engine owns retry policy; keep the SDK from stacking its own.
-            max_retries=0,
+        # Heavy SDK import deferred to first use; client cached per key.
+        from openai import (
+            APIConnectionError,
+            APIError,
+            APITimeoutError,
+            AuthenticationError,
+            OpenAI,
+            RateLimitError,
         )
+
+        api_key = config.get_api_key("openrouter")
+        if self._client is None or self._client_key != api_key:
+            self._client = OpenAI(
+                api_key=api_key,
+                base_url=_BASE_URL,
+                default_headers=_HEADERS,
+                timeout=_CHAT_TIMEOUT,
+                max_retries=0,  # the engine owns retry policy
+            )
+            self._client_key = api_key
+
         max_tokens = config.effective_max_tokens()
         _log.debug("chat request: model=%s max_tokens=%d", config.model, max_tokens)
         try:
-            stream = client.chat.completions.create(
+            stream = self._client.chat.completions.create(
                 model=config.model,
                 messages=[m.to_api() for m in messages],  # type: ignore[arg-type]
-                # Clamped budget — an unbounded request makes OpenRouter derive
-                # max_tokens from the model's context window (e.g. 65536),
-                # which free-tier accounts reject with HTTP 402.
                 max_tokens=max_tokens,
                 stream=True,
             )
             yield from iter_stream(stream)
         except AuthenticationError as exc:
             raise ProviderError(
-                "Authentication failed. Your OpenRouter key may be invalid — run /provider."
+                "Authentication failed. Your OpenRouter key may be invalid — run /apikey."
             ) from exc
         except RateLimitError as exc:
             raise ProviderError(
                 "Rate limited by OpenRouter. Please wait and try again.", transient=True
             ) from exc
+        except APITimeoutError as exc:
+            raise ProviderError(
+                "The OpenRouter request timed out. Please try again.", transient=True
+            ) from exc
         except APIConnectionError as exc:
-            # Includes read timeouts — the SDK wraps them in connection errors.
             raise ProviderError(
                 "Network error reaching OpenRouter. Check your connection.", transient=True
             ) from exc
@@ -153,21 +200,31 @@ class OpenRouterProvider(Provider):
             raise _friendly_api_error(exc, config.model) from exc
 
 
-def _friendly_api_error(exc: APIError, model: str) -> ProviderError:
+def _friendly_api_error(exc: Any, model: str) -> ProviderError:
     """Translate OpenRouter API errors into actionable user messages."""
     status = getattr(exc, "status_code", None)
     detail = getattr(exc, "message", str(exc)) or "Unknown API error."
     if status == 402:
         return ProviderError(
             "OpenRouter rejected the request for lack of credits (HTTP 402). "
-            "Try a ':free' model via /model, or add credits at openrouter.ai."
+            "Pick a free model with /model (filter: free), or add credits."
+        )
+    if status == 403:
+        return ProviderError(
+            "OpenRouter refused the request (HTTP 403). Your key may lack access "
+            "to this model — pick another with /model."
         )
     if status == 404:
         return ProviderError(
             f"Model '{model}' was not found on OpenRouter. Pick another with /model."
         )
+    if status == 408:
+        return ProviderError(
+            "OpenRouter timed out handling the request. Please try again.", transient=True
+        )
     if status is not None and status >= 500:
         return ProviderError(
-            "OpenRouter had a server error. Please try again.", transient=True
+            f"OpenRouter had a server error (HTTP {status}). Please try again.",
+            transient=True,
         )
     return ProviderError(f"OpenRouter error: {detail}")

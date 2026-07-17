@@ -8,7 +8,6 @@ so setup and mid-session switching behave identically.
 
 from __future__ import annotations
 
-from prompt_toolkit import PromptSession
 from rich.table import Table
 
 from ..config import save_config
@@ -19,19 +18,10 @@ from ..core.providers import (
     ProviderError,
     get_provider,
 )
-from ..ui.prompts import PT_STYLE, prompt_label
+from ..core.providers.base import STATUS_CONNECTED, STATUS_OFFLINE
+from ..core.providers.freemodel import AUTO_MODEL
+from ..ui.prompts import read_line as _prompt
 from . import CommandContext, CommandResult, command
-
-
-def _prompt(text: str, *, password: bool = False) -> str | None:
-    """Read one line of input; ``None`` means the user cancelled (Ctrl+C/D)."""
-    session: PromptSession = PromptSession()
-    try:
-        return session.prompt(
-            prompt_label(text), is_password=password, style=PT_STYLE
-        ).strip()
-    except (EOFError, KeyboardInterrupt):
-        return None
 
 
 # --- provider selection ------------------------------------------------------
@@ -85,6 +75,7 @@ def _collect_key(ui, config, provider: Provider, *, replacing: bool = False) -> 
     Returns False when the user cancels. Only this provider's entry is
     written — other providers' keys are never touched.
     """
+    provider.prepare(config)  # bind validation to the configured sub-backend
     if replacing:
         ui.info(f"Enter a new API key for {provider.label}.")
         ui.dim(f"Current: {config.masked_key(provider.id)}")
@@ -100,8 +91,10 @@ def _collect_key(ui, config, provider: Provider, *, replacing: bool = False) -> 
         with ui.thinking("Validating key"):
             result = provider.validate_key(key)
         if result.ok:
+            # Only a key that passed real authentication is ever saved.
             config.set_api_key(provider.id, key)
             save_config(config)
+            provider.status = STATUS_CONNECTED
             ui.success(result.message)
             return True
         ui.error(result.message)
@@ -117,6 +110,7 @@ def _ensure_ready(ui, config, provider: Provider) -> bool:
     if not provider.requires_key:
         with ui.thinking("Checking Ollama"):
             running = provider.detect(config)
+        provider.status = STATUS_CONNECTED if running else STATUS_OFFLINE
         if running:
             ui.success("Ollama server detected.")
         else:
@@ -127,6 +121,10 @@ def _ensure_ready(ui, config, provider: Provider) -> bool:
         return True
 
     if config.get_api_key(provider.id).strip():
+        # Existing key: refresh this provider's connection status with a
+        # real request so the menu reflects reality immediately.
+        with ui.thinking(f"Checking {provider.label}"):
+            provider.refresh_status(config)
         return True
     return _collect_key(ui, config, provider)
 
@@ -198,7 +196,11 @@ def _render_models(ui, models: list[ModelInfo], total: int, provider_label: str)
 
 
 def select_model(ui, config, target: str = "") -> None:
-    """Browse the live model catalogue of the active provider and pick one."""
+    """Browse the live model catalogue of the active provider and pick one.
+
+    FreeModel additionally supports Auto mode (type ``auto``): the best free
+    model is resolved from the live catalogue on every request.
+    """
     try:
         provider = get_provider(config.provider)
     except ProviderError as exc:
@@ -206,6 +208,12 @@ def select_model(ui, config, target: str = "") -> None:
         return
     if provider.requires_key and not config.get_api_key(provider.id).strip():
         ui.warning(f"{provider.label} has no API key yet — run /provider first.")
+        return
+
+    auto_supported = provider.id == "freemodel"
+    if target and auto_supported and target.lower() in ("auto", "a"):
+        _set_model(ui, config, AUTO_MODEL)
+        ui.dim("(Auto mode: the best free model is picked per request)")
         return
 
     try:
@@ -228,13 +236,38 @@ def select_model(ui, config, target: str = "") -> None:
             ui.warning(f"No model matching '{target}'. Run /model to browse.")
         return
 
+    has_modes = provider.id == "openrouter"
     shown = models
     while True:
         _render_models(ui, shown, total=len(models), provider_label=provider.label)
+        if auto_supported:
+            ui.dim("Type 'auto' for Auto mode — the best free model per request.")
+        if has_modes:
+            ui.dim("Modes: 'free' or 'pro' switches the list — or pick by number, id, or text.")
         raw = _prompt("Model (number, id, or filter) > ")
         if raw is None or not raw:
             ui.dim("Cancelled.")
             return
+        if auto_supported and raw.lower() in ("auto", "a"):
+            _set_model(ui, config, AUTO_MODEL)
+            ui.dim("(Auto mode: the best free model is picked per request)")
+            return
+        if has_modes and raw.lower() in ("free", "pro"):
+            # Persist the mode on OpenRouter's own settings and refetch.
+            ok, message = provider.set_extra_setting(config, "mode", raw.lower())
+            if not ok:
+                ui.warning(message)
+                continue
+            save_config(config)
+            ui.success(message)
+            try:
+                with ui.thinking("Fetching models"):
+                    models = provider.list_models(config)
+            except ProviderError as exc:
+                ui.error(str(exc))
+                return
+            shown = models
+            continue
         if raw.isdigit() and 1 <= int(raw) <= len(shown):
             _set_model(ui, config, shown[int(raw) - 1].id)
             return
@@ -259,7 +292,7 @@ def select_model(ui, config, target: str = "") -> None:
 # --- command handlers --------------------------------------------------------
 
 
-@command("provider", "Select the active provider (OpenRouter, AeroLink, Ollama)")
+@command("provider", "Select the active provider (OpenRouter, FreeModel, AeroLink, Ollama)")
 def _provider_cmd(ctx: CommandContext, arg: str) -> CommandResult:
     select_provider(ctx.ui, ctx.config, arg.strip())
     return CommandResult()
@@ -275,21 +308,83 @@ def _model_cmd(ctx: CommandContext, arg: str) -> CommandResult:
     return CommandResult()
 
 
-@command("apikey", "Set or replace the API key for the active provider", aliases=("key",))
-def _apikey_cmd(ctx: CommandContext, arg: str) -> CommandResult:
+def apikey_menu(ui, config) -> None:
+    """Manage the ACTIVE provider's API key: view, replace, remove, validate."""
     try:
-        provider = get_provider(ctx.config.provider)
+        provider = get_provider(config.provider)
     except ProviderError as exc:
-        ctx.ui.error(str(exc))
-        return CommandResult()
-
+        ui.error(str(exc))
+        return
     if not provider.requires_key:
-        ctx.ui.info(f"{provider.label} does not use an API key.")
-        return CommandResult()
+        ui.info(f"{provider.label} does not use an API key.")
+        return
 
+    while True:
+        table = Table.grid(padding=(0, 3))
+        table.add_column(style="seed.accent", justify="right")
+        table.add_column(style="seed.text")
+        table.add_row("Provider", provider.label)
+        table.add_row("Key", config.masked_key(provider.id))
+        table.add_row("", "")
+        table.add_row("1", "View (masked)")
+        table.add_row("2", "Replace")
+        table.add_row("3", "Remove")
+        table.add_row("4", "Validate")
+        table.add_row("0", "Back")
+        ui.panel(table, title="API Key")
+
+        raw = _prompt("Choice > ")
+        if raw is None or raw in ("", "0", "back", "b"):
+            return
+        has_key = bool(config.get_api_key(provider.id).strip())
+        if raw == "1":
+            if has_key:
+                ui.info(f"{provider.label} key: {config.masked_key(provider.id)}")
+            else:
+                ui.dim("No key saved yet.")
+        elif raw == "2":
+            _collect_key(ui, config, provider, replacing=has_key)
+        elif raw == "3":
+            if not has_key:
+                ui.dim("No key saved — nothing to remove.")
+                continue
+            confirm = _prompt("Remove the saved key? [y/N] > ")
+            if confirm is not None and confirm.lower() in ("y", "yes"):
+                config.set_api_key(provider.id, "")
+                save_config(config)
+                ui.success(f"{provider.label} key removed.")
+            else:
+                ui.dim("Key kept.")
+        elif raw == "4":
+            if not has_key:
+                ui.warning("No key saved — add one first (option 2).")
+                continue
+            provider.prepare(config)
+            with ui.thinking("Validating key"):
+                result = provider.validate_key(config.get_api_key(provider.id))
+            if result.ok:
+                ui.success(result.message)
+            else:
+                ui.error(result.message)
+        else:
+            ui.warning(f"Unknown option '{raw}'. Enter 0-4.")
+
+
+@command("apikey", "View, replace, remove, or validate the active provider's key",
+         aliases=("key",))
+def _apikey_cmd(ctx: CommandContext, arg: str) -> CommandResult:
     key = arg.strip()
     if key:
         # Key given inline: validate and save it directly.
+        try:
+            provider = get_provider(ctx.config.provider)
+        except ProviderError as exc:
+            ctx.ui.error(str(exc))
+            return CommandResult()
+        if not provider.requires_key:
+            ctx.ui.info(f"{provider.label} does not use an API key.")
+            return CommandResult()
+        provider.prepare(ctx.config)
         with ctx.ui.thinking("Validating key"):
             result = provider.validate_key(key)
         if result.ok:
@@ -300,5 +395,5 @@ def _apikey_cmd(ctx: CommandContext, arg: str) -> CommandResult:
             ctx.ui.error(result.message)
         return CommandResult()
 
-    _collect_key(ctx.ui, ctx.config, provider, replacing=True)
+    apikey_menu(ctx.ui, ctx.config)
     return CommandResult()

@@ -1,10 +1,11 @@
 """AeroLink backend: Anthropic-compatible gateway at capi.aerolink.lat.
 
-AeroLink (https://aerolink.lat) exposes the Anthropic Messages API, so this
-provider speaks that protocol directly over httpx: ``POST /v1/messages`` with
-SSE streaming, and ``GET /v1/models`` for the catalogue when the gateway
-supports it. No models are hardcoded; if listing is unavailable the user
-types the model ID from their AeroLink dashboard.
+AeroLink (https://aerolink.lat) exposes the Anthropic Messages API and
+serves Claude-family models only. This provider speaks that protocol
+directly over httpx: ``POST /v1/messages`` with SSE streaming, and
+``GET /v1/models`` for the catalogue when the gateway supports it. No
+models are hardcoded; if listing is unavailable the user types the model
+ID from their AeroLink dashboard. Independent API key and model.
 """
 
 from __future__ import annotations
@@ -40,6 +41,7 @@ class AeroLinkProvider(Provider):
     def __post_init__(self) -> None:
         self.id = "aerolink"
         self.label = "AeroLink"
+        self.base_url = _BASE_URL
         self.requires_key = True
         self.key_hint = "from your dashboard at https://aerolink.lat (API keys page)"
 
@@ -82,15 +84,16 @@ class AeroLinkProvider(Provider):
                 "dashboard with: /model <model-id>",
             ) from exc
 
+        # AeroLink serves the Claude family only — filter anything else out.
         models = [
             ModelInfo(id=entry["id"], label=entry.get("display_name") or entry["id"])
             for entry in data
-            if entry.get("id")
+            if entry.get("id") and "claude" in entry["id"].lower()
         ]
         if not models:
             raise ProviderError(
-                "AeroLink returned an empty model list. Enter a model ID from your "
-                "dashboard with: /model <model-id>"
+                "AeroLink returned no Claude-family models. Enter a model ID from "
+                "your dashboard with: /model <model-id>"
             )
         return models
 
@@ -117,11 +120,31 @@ class AeroLinkProvider(Provider):
             ) as response:
                 if response.status_code in (401, 403):
                     raise ProviderError(
-                        "Authentication failed. Your AeroLink key may be invalid — run /provider."
+                        "Authentication failed. Your AeroLink key may be invalid — run /apikey."
+                    )
+                if response.status_code == 402:
+                    raise ProviderError(
+                        "AeroLink says the account is out of credits (HTTP 402). "
+                        "Check your plan at https://aerolink.lat."
+                    )
+                if response.status_code == 404:
+                    raise ProviderError(
+                        f"Model '{config.model}' was not found on AeroLink — run /model."
+                    )
+                if response.status_code == 408:
+                    raise ProviderError(
+                        "AeroLink timed out handling the request. Please try again.",
+                        transient=True,
                     )
                 if response.status_code == 429:
                     raise ProviderError(
                         "Rate limited by AeroLink. Please wait and try again.", transient=True
+                    )
+                if response.status_code >= 500:
+                    raise ProviderError(
+                        f"AeroLink had a server error (HTTP {response.status_code}). "
+                        "Please try again.",
+                        transient=True,
                     )
                 if response.status_code >= 400:
                     detail = response.read().decode("utf-8", "replace")[:300]

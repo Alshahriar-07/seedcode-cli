@@ -1,20 +1,31 @@
-"""Provider registry: the three supported AI backends.
+"""Provider registry: the four supported AI backends.
 
-The registry is the single source of truth for which providers exist.
-Everything else (engine, commands, onboarding, banner) resolves providers
-through :func:`get_provider` / :data:`PROVIDERS`.
+The registry is the single source of truth for which providers exist:
+OpenRouter, FreeModel, AeroLink, and Ollama. Each is fully independent —
+own key slot, base URL, catalogue, client, and connection status — sharing
+only the Provider chat contract. Everything else (engine, commands,
+onboarding, menu) resolves providers through :func:`get_provider` /
+:data:`PROVIDERS`.
 """
 
 from __future__ import annotations
 
 from .aerolink import AeroLinkProvider
 from .base import ModelInfo, Provider, ProviderError, ValidationResult
+from .freemodel import FreeModelProvider
 from .ollama import OllamaProvider
 from .openrouter import OpenRouterProvider
 
-# Instantiated once; providers are stateless beyond their metadata.
+# Instantiated once; per-provider state (status, client cache) lives on the
+# instance and is session-only.
 PROVIDERS: dict[str, Provider] = {
-    p.id: p for p in (OpenRouterProvider(), AeroLinkProvider(), OllamaProvider())
+    p.id: p
+    for p in (
+        OpenRouterProvider(),
+        FreeModelProvider(),
+        AeroLinkProvider(),
+        OllamaProvider(),
+    )
 }
 
 

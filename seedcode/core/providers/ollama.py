@@ -36,12 +36,27 @@ class OllamaProvider(Provider):
     def __post_init__(self) -> None:
         self.id = "ollama"
         self.label = "Ollama (local)"
+        self.base_url = ""  # per-user host lives in config.ollama_host
         self.requires_key = False
         self.key_hint = ""
 
     def validate_key(self, api_key: str) -> ValidationResult:
         """No key needed; 'validation' means the local server responds."""
         return ValidationResult(True, "Ollama needs no API key.")
+
+    def extra_settings(self, config: "AppConfig") -> dict[str, str]:
+        return {"host": config.ollama_host}
+
+    def set_extra_setting(
+        self, config: "AppConfig", name: str, value: str
+    ) -> tuple[bool, str]:
+        if name != "host":
+            return False, f"{self.label} has no setting '{name}'."
+        host = value.strip().rstrip("/")
+        if not host.startswith(("http://", "https://")):
+            return False, "host expects a URL like http://localhost:11434."
+        config.ollama_host = host
+        return True, f"Ollama host set to {host}."
 
     def detect(self, config: "AppConfig") -> bool:
         """True when the Ollama server answers on the configured host."""
@@ -90,6 +105,12 @@ class OllamaProvider(Provider):
                     raise ProviderError(
                         f"Model '{config.model}' is not installed in Ollama. "
                         f"Run: ollama pull {config.model}  (or pick another via /model)"
+                    )
+                if response.status_code >= 500:
+                    raise ProviderError(
+                        f"Ollama had a server error (HTTP {response.status_code}). "
+                        "Please try again.",
+                        transient=True,
                     )
                 if response.status_code >= 400:
                     detail = response.read().decode("utf-8", "replace")[:300]

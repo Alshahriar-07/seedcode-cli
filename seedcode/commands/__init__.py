@@ -69,7 +69,7 @@ def dispatch(ctx: CommandContext, text: str) -> CommandResult:
 
 # Import handler modules for their registration side effects. Deferred to the
 # bottom so ``command`` / ``_REGISTRY`` already exist when the handlers load.
-from . import about, clear, help, history, provider  # noqa: E402,F401
+from . import about, agent, clear, doctor, help, history, provider  # noqa: E402,F401
 
 __all__ = [
     "CommandContext",

@@ -6,8 +6,9 @@ from pydantic import ValidationError
 from rich.table import Table
 
 from ..config import save_config
-from ..core.providers import PROVIDERS, provider_label
+from ..core.providers import PROVIDERS, ProviderError, get_provider, provider_label
 from ..memory import list_sessions
+from ..ui.prompts import read_line
 from . import CommandContext, CommandResult, command
 
 # Settings editable via /settings, with a tiny parser per value type.
@@ -20,18 +21,19 @@ _SETTINGS = {
 }
 
 
-@command("history", "List saved conversation sessions")
+@command("history", "List the active provider's saved sessions")
 def _history(ctx: CommandContext, arg: str) -> CommandResult:
-    sessions = list_sessions()
+    # History is per provider: only the active backend's sessions are shown.
+    sessions = list_sessions(ctx.config.provider)
     if not sessions:
-        ctx.ui.dim("No saved sessions yet.")
+        ctx.ui.dim(f"No saved sessions for {provider_label(ctx.config.provider)} yet.")
         return CommandResult()
     table = Table.grid(padding=(0, 3))
     table.add_column(style="seed.accent")
     table.add_column(style="seed.dim")
     for sid, count in sessions[:20]:
         table.add_row(sid, f"{count} messages")
-    ctx.ui.panel(table, title="History")
+    ctx.ui.panel(table, title=f"History — {provider_label(ctx.config.provider)}")
     return CommandResult()
 
 
@@ -60,6 +62,94 @@ def _config(ctx: CommandContext, arg: str) -> CommandResult:
     return CommandResult()
 
 
+def apply_setting(ui, config, name: str, raw: str) -> None:
+    """Parse, validate, apply, and persist one setting change.
+
+    Global settings first; anything else routes to the ACTIVE provider's own
+    settings (e.g. OpenRouter 'mode', FreeModel 'backend', Ollama 'host').
+    """
+    kind = _SETTINGS.get(name)
+    if kind is None:
+        try:
+            provider = get_provider(config.provider)
+        except ProviderError:
+            provider = None
+        if provider is not None and name in provider.extra_settings(config):
+            ok, message = provider.set_extra_setting(config, name, raw)
+            if ok:
+                save_config(config)
+                ui.success(message)
+            else:
+                ui.warning(message)
+            return
+        known = sorted(_SETTINGS)
+        if provider is not None:
+            known += sorted(provider.extra_settings(config))
+        ui.warning(f"Unknown setting: {name}. Available: {', '.join(known)}")
+        return
+
+    value: object = raw
+    if kind is bool:
+        lowered = raw.lower()
+        if lowered not in ("on", "off", "true", "false"):
+            ui.warning(f"'{name}' expects on/off.")
+            return
+        value = lowered in ("on", "true")
+    elif kind is int:
+        try:
+            value = int(raw)
+        except ValueError:
+            ui.warning(f"'{name}' expects a number.")
+            return
+        if value < 1:
+            ui.warning(f"'{name}' must be at least 1.")
+            return
+
+    try:
+        setattr(config, name, value)
+    except ValidationError:
+        ui.warning(f"Invalid value for '{name}': {raw}")
+        return
+    save_config(config)
+    ui.success(f"{name} set to {value}")
+
+
+def settings_menu(ui, config) -> None:
+    """Interactive settings editor used by the main menu's [5] Settings.
+
+    Shows the global settings plus the ACTIVE provider's own settings
+    screen — each provider only ever exposes its own options.
+    """
+    while True:
+        table = Table.grid(padding=(0, 3))
+        table.add_column(style="seed.dim", justify="right")
+        table.add_column(style="seed.text")
+        table.add_row("username", config.username)
+        table.add_row("stream", "on" if config.stream else "off")
+        table.add_row("max_tokens", str(config.max_tokens))
+        try:
+            provider = get_provider(config.provider)
+            extras = provider.extra_settings(config)
+        except ProviderError:
+            provider, extras = None, {}
+        if extras:
+            table.add_row("", "")
+            table.add_row(f"— {provider.label} —", "")
+            for name, value in extras.items():
+                table.add_row(name, value)
+        ui.panel(table, title="Settings")
+        ui.dim("Change one with '<name> <value>' (e.g. max_tokens 2048); blank to go back.")
+
+        raw = read_line("Setting > ")
+        if raw is None or not raw:
+            return
+        parts = raw.split(maxsplit=1)
+        if len(parts) < 2:
+            ui.warning("Format: <name> <value>")
+            continue
+        apply_setting(ui, config, parts[0].lower(), parts[1].strip())
+
+
 @command("settings", "Change a setting. Usage: /settings <name> <value>")
 def _settings(ctx: CommandContext, arg: str) -> CommandResult:
     parts = arg.split(maxsplit=1)
@@ -68,35 +158,5 @@ def _settings(ctx: CommandContext, arg: str) -> CommandResult:
         ctx.ui.info("Usage: /settings <name> <value>")
         ctx.ui.dim(f"Available settings: {names}")
         return CommandResult()
-
-    name, raw = parts[0].lower(), parts[1].strip()
-    kind = _SETTINGS.get(name)
-    if kind is None:
-        ctx.ui.warning(f"Unknown setting: {name}. Available: {', '.join(sorted(_SETTINGS))}")
-        return CommandResult()
-
-    value: object = raw
-    if kind is bool:
-        lowered = raw.lower()
-        if lowered not in ("on", "off", "true", "false"):
-            ctx.ui.warning(f"'{name}' expects on/off.")
-            return CommandResult()
-        value = lowered in ("on", "true")
-    elif kind is int:
-        try:
-            value = int(raw)
-        except ValueError:
-            ctx.ui.warning(f"'{name}' expects a number.")
-            return CommandResult()
-        if value < 1:
-            ctx.ui.warning(f"'{name}' must be at least 1.")
-            return CommandResult()
-
-    try:
-        setattr(ctx.config, name, value)
-    except ValidationError:
-        ctx.ui.warning(f"Invalid value for '{name}': {raw}")
-        return CommandResult()
-    save_config(ctx.config)
-    ctx.ui.success(f"{name} set to {value}")
+    apply_setting(ctx.ui, ctx.config, parts[0].lower(), parts[1].strip())
     return CommandResult()

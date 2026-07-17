@@ -13,13 +13,13 @@ from pydantic import BaseModel, Field, model_validator
 
 Role = Literal["system", "user", "assistant"]
 
-# Safe completion budget sent to OpenRouter when the user has not overridden
-# it. Free-tier accounts are rejected (HTTP 402) when the requested budget
-# exceeds what their credits could cover, so the default stays small.
+# Safe completion budget sent with chat requests when the user has not
+# overridden it. Free-tier accounts are rejected (HTTP 402) when the requested
+# budget exceeds what their credits could cover, so the default stays small.
 DEFAULT_MAX_TOKENS = 1024
 
-# The three supported backends (kept as a Literal so bad config fails loudly).
-ProviderId = Literal["openrouter", "aerolink", "ollama"]
+# The four supported backends (kept as a Literal so bad config fails loudly).
+ProviderId = Literal["openrouter", "freemodel", "aerolink", "ollama"]
 
 
 class Message(BaseModel):
@@ -39,14 +39,17 @@ class ProviderConfig(BaseModel):
 
     Switching providers never touches another provider's entry, so keys and
     model choices are always remembered. Ollama simply leaves ``api_key``
-    empty (it does not use one).
+    empty (it does not use one). ``options`` holds provider-specific extras
+    (e.g. OpenRouter's free/pro mode, FreeModel's claude/codex backend) so
+    new providers can add settings without schema changes.
     """
 
     api_key: str = ""
     model: str = ""
+    options: dict[str, str] = Field(default_factory=dict)
 
 
-_ALL_PROVIDERS = ("openrouter", "aerolink", "ollama")
+_ALL_PROVIDERS = ("openrouter", "freemodel", "aerolink", "ollama")
 
 
 def _default_providers() -> dict[str, ProviderConfig]:
@@ -58,9 +61,10 @@ class AppConfig(BaseModel):
 
     Stored shape (config.json)::
 
-        active_provider: "openrouter" | "aerolink" | "ollama"
+        active_provider: "openrouter" | "freemodel" | "aerolink" | "ollama"
         providers:
           openrouter: {api_key, model}
+          freemodel:  {api_key, model}
           aerolink:   {api_key, model}
           ollama:     {api_key(unused), model}
 
@@ -70,7 +74,7 @@ class AppConfig(BaseModel):
     automatically on load.
     """
 
-    active_provider: ProviderId = "openrouter"
+    active_provider: ProviderId = "freemodel"
     providers: dict[str, ProviderConfig] = Field(default_factory=_default_providers)
     ollama_host: str = "http://localhost:11434"
     theme: str = "seed"
@@ -79,6 +83,10 @@ class AppConfig(BaseModel):
     # Completion-token budget for chat requests. Users may override in
     # config.json; the value is clamped before every request.
     max_tokens: int = DEFAULT_MAX_TOKENS
+    # Agent mode: when on, the model may act on the project through the tool
+    # engine. permission_mode bounds what it may touch (see seedcode.tools).
+    agent_mode: bool = False
+    permission_mode: Literal["read_only", "workspace", "full_access"] = "workspace"
 
     @model_validator(mode="before")
     @classmethod
@@ -93,32 +101,36 @@ class AppConfig(BaseModel):
             return data
         data = dict(data)  # never mutate the caller's dict
 
+        def norm(pid: str) -> str:
+            """Provider id normalisation (OpenRouter is a first-class backend)."""
+            return pid.strip().lower()
+
         # Normalise nested provider entries to plain dicts we can merge into.
         providers: dict[str, dict] = {}
         for pid, entry in (data.get("providers") or {}).items():
             if isinstance(entry, ProviderConfig):
-                providers[pid] = entry.model_dump()
+                providers[norm(pid)] = entry.model_dump()
             elif isinstance(entry, dict):
-                providers[pid] = dict(entry)
+                providers[norm(pid)] = dict(entry)
 
         # Active provider: new field, or legacy "provider" (any casing).
         raw_active = data.pop("provider", None) or data.get("active_provider")
         if isinstance(raw_active, str):
-            active = raw_active.strip().lower()
+            active = norm(raw_active)
             if active not in _ALL_PROVIDERS:
-                active = "openrouter"
+                active = "freemodel"
             data["active_provider"] = active
 
         # v1.x per-provider maps.
         for pid, key in (data.pop("api_keys", None) or {}).items():
-            providers.setdefault(pid, {})["api_key"] = key
+            providers.setdefault(norm(pid), {})["api_key"] = key
         for pid, model in (data.pop("models", None) or {}).items():
-            providers.setdefault(pid, {}).setdefault("model", model)
+            providers.setdefault(norm(pid), {}).setdefault("model", model)
 
         # v1.x top-level model belongs to the active provider.
         top_model = data.pop("model", None)
         if top_model:
-            active = data.get("active_provider", "openrouter")
+            active = data.get("active_provider", "freemodel")
             providers.setdefault(active, {})["model"] = top_model
 
         # v0.x: single "api_key" string belonged to OpenRouter.
@@ -170,6 +182,13 @@ class AppConfig(BaseModel):
             self.providers[pid] = ProviderConfig()
         self.providers[pid].api_key = key
 
+    def provider_options(self, provider_id: str) -> dict[str, str]:
+        """Mutable provider-specific options dict for ``provider_id``."""
+        pid = provider_id.lower()
+        if pid not in self.providers:
+            self.providers[pid] = ProviderConfig()
+        return self.providers[pid].options
+
     def is_configured(self) -> bool:
         """True when the active provider is usable and a model is chosen.
 
@@ -192,7 +211,7 @@ class AppConfig(BaseModel):
         """Completion budget to send with a request, clamped to a safe range.
 
         Values outside [1, 4096] are clamped so an oversized config value can
-        never trigger OpenRouter's 402 "more credits or fewer max_tokens"
+        never trigger the gateway's 402 "more credits or fewer max_tokens"
         rejection. Free models (``*:free``) are further capped at
         ``DEFAULT_MAX_TOKENS`` since their credit ceiling is lowest.
         """
