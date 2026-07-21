@@ -1,0 +1,345 @@
+# LLM.TXT
+# Project: Seed Code CLI
+# Author: Al Shahriar Sowan
+# License: MIT
+
+## Project Overview
+
+Seed Code is a modern open-source AI CLI designed to provide a fast, clean and developer-friendly terminal experience.
+
+The goal is to make interacting with multiple AI providers feel as simple as using a native shell command.
+
+Example:
+
+seedcode
+> Explain Python decorators
+> Generate React component
+> Fix this code
+> Continue previous chat
+
+The CLI should feel lightweight, responsive and beautiful.
+
+---
+
+## Core Principles
+
+- Terminal-first experience
+- Fast startup
+- Streaming responses
+- Minimal dependencies
+- Cross-platform
+- Easy to extend
+- Clean architecture
+- Simple configuration
+- Open source
+
+---
+
+## Supported Platforms
+
+- Windows
+- Linux
+- macOS
+
+---
+
+## Supported Providers
+
+The architecture should support multiple providers.
+
+Examples:
+
+- OpenRouter
+- AeroLink
+- Anthropic-compatible APIs
+- OpenAI-compatible APIs
+- Local OpenAI-compatible servers
+
+Providers must be modular.
+
+Never hardcode provider logic.
+
+---
+
+## Architecture
+
+High level layers:
+
+CLI
+
+↓
+
+Application
+
+↓
+
+Conversation Manager
+
+↓
+
+Provider Client
+
+↓
+
+HTTP Transport
+
+↓
+
+AI Model
+
+Each layer should have one responsibility.
+
+---
+
+## Coding Rules
+
+Prefer
+
+- Python 3.12+
+- Type hints
+- Dataclasses where appropriate
+- Async I/O
+- Rich for terminal UI
+- httpx for networking
+- pathlib instead of os.path
+- logging module
+- small reusable functions
+
+Avoid
+
+- Global mutable state
+- Huge files
+- Circular imports
+- Deep inheritance
+- Blocking network requests
+
+---
+
+## Style
+
+Write code that is
+
+- readable
+- maintainable
+- modular
+- documented
+
+Names should be descriptive.
+
+Avoid abbreviations.
+
+---
+
+## Error Handling
+
+Never silently ignore errors.
+
+Provide actionable messages.
+
+Example
+
+✓ Connected
+
+✗ Invalid API key
+
+✗ Provider unavailable
+
+✗ Network timeout
+
+Always fail gracefully.
+
+---
+
+## Configuration
+
+Configuration should be stored separately from source code.
+
+Support
+
+API key
+
+Default provider
+
+Default model
+
+Theme
+
+History
+
+Custom endpoints
+
+Future settings should be backward compatible.
+
+---
+
+## Streaming
+
+Streaming is a first-class feature.
+
+Responses should render token-by-token whenever supported.
+
+Fallback to normal responses if streaming is unavailable.
+
+---
+
+## Commands
+
+Potential commands
+
+seedcode
+
+seedcode chat
+
+seedcode login
+
+seedcode models
+
+seedcode providers
+
+seedcode update
+
+seedcode doctor
+
+seedcode config
+
+seedcode history
+
+seedcode clear
+
+seedcode version
+
+---
+
+## Extensibility
+
+Adding a provider should require minimal changes.
+
+Prefer plugin-like architecture.
+
+New providers should implement a common interface.
+
+---
+
+## Security
+
+Never
+
+- log API keys
+- expose secrets
+- commit credentials
+- print tokens
+
+Mask sensitive values.
+
+Validate configuration.
+
+---
+
+## Documentation
+
+Every public module should contain
+
+- purpose
+- usage
+- examples
+
+Complex logic should include comments explaining WHY rather than WHAT.
+
+---
+
+## Testing
+
+Prefer
+
+pytest
+
+Test
+
+- parsing
+- provider selection
+- configuration
+- streaming
+- retries
+- failures
+
+---
+
+## Performance
+
+Optimize for
+
+Fast startup
+
+Low memory usage
+
+Responsive streaming
+
+Minimal network overhead
+
+---
+
+## User Experience
+
+The CLI should feel premium.
+
+Requirements
+
+- Beautiful terminal output
+- Clean spacing
+- Helpful errors
+- Sensible defaults
+- Fast responses
+
+Avoid unnecessary prompts.
+
+---
+
+## Design Philosophy
+
+Seed Code should feel like
+
+"the VS Code of AI command-line tools"
+
+Professional.
+
+Minimal.
+
+Reliable.
+
+Powerful.
+
+---
+
+## Future Goals
+
+- Plugin system
+- MCP integration
+- Local models
+- Tool calling
+- Agent mode
+- File editing
+- Image generation
+- Voice support
+- Shell execution
+- Workspace awareness
+
+---
+
+## AI Agent Instructions
+
+If you are modifying this project:
+
+- Preserve architecture.
+- Preserve modularity.
+- Do not introduce breaking changes without reason.
+- Prefer extending existing abstractions.
+- Keep files small.
+- Keep commits focused.
+- Follow existing naming conventions.
+- Maintain backward compatibility whenever possible.
+- Update documentation when behavior changes.
+- Add tests for new functionality.
+
+When uncertain, choose the simplest maintainable solution.
+
+End of file.
