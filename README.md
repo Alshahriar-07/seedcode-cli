@@ -1,4 +1,19 @@
 # Seed Code
+<p align="center">
+
+<a href="https://github.com/Alshahriar-07/seedcode-cli/releases">
+<img src="https://img.shields.io/github/v/release/Alshahriar-07/seedcode-cli" />
+</a>
+
+<a href="https://github.com/Alshahriar-07/seedcode-cli/blob/main/LICENSE">
+<img src="https://img.shields.io/github/license/Alshahriar-07/seedcode-cli" />
+</a>
+
+<a href="https://github.com/Alshahriar-07/seedcode-cli/stargazers">
+<img src="https://img.shields.io/github/stars/Alshahriar-07/seedcode-cli?style=social" />
+</a>
+
+</p>
 
 **Plant ideas. Grow code.**
 
