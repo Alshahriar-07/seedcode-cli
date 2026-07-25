@@ -58,7 +58,11 @@ echo.
 echo [STEP] Upgrading pip...
 %PY_CMD% -m pip install --upgrade pip >> "%LOG_FILE%" 2>&1
 if errorlevel 1 (
-    echo [ERROR] pip upgrade failed. See "%LOG_FILE%".
+    echo [ERROR] pip upgrade failed. Common causes:
+    echo         - no internet connection ^(check and retry^)
+    echo         - permission denied ^(re-run from an Administrator prompt, or
+    echo           use:  %PY_CMD% -m pip install --user --upgrade pip^)
+    echo         Details: "%LOG_FILE%"
     exit /b 1
 )
 
@@ -74,19 +78,51 @@ if exist "%REPO_ROOT%\requirements.txt" (
     echo [WARN] requirements.txt not found - relying on pyproject dependencies.
 )
 
-REM --- 4. Install Seed Code in editable mode ---------------------------------
-echo [STEP] Installing Seed Code ^(editable^)...
-%PY_CMD% -m pip install -e "%REPO_ROOT%" >> "%LOG_FILE%" 2>&1
+REM --- 4. Install Seed Code with desktop + OCR support ------------------------
+REM The [desktop] extra carries the Computer Engine AND the OCR/CV detection
+REM tiers, so the user is never asked to install anything afterwards. If the
+REM extra cannot build (unsupported platform/Python), fall back to a core
+REM install rather than failing the whole setup.
+echo [STEP] Installing Seed Code with desktop support ^(editable^)...
+%PY_CMD% -m pip install -e "%REPO_ROOT%[desktop]" >> "%LOG_FILE%" 2>&1
 if errorlevel 1 (
-    echo [ERROR] Seed Code installation failed. See "%LOG_FILE%".
-    exit /b 1
+    echo [WARN] Desktop extras failed to install - retrying without them.
+    echo [WARN] desktop extras failed; falling back to core >> "%LOG_FILE%"
+    %PY_CMD% -m pip install -e "%REPO_ROOT%" >> "%LOG_FILE%" 2>&1
+    if errorlevel 1 (
+        echo [ERROR] Seed Code installation failed. See "%LOG_FILE%".
+        exit /b 1
+    )
 )
 
+REM --- 4b. Report the OCR engine ---------------------------------------------
+REM pytesseract is only a wrapper; the tesseract binary must exist too. Probing
+REM here means a missing engine is visible at install time, not mid-workflow.
+REM Never fatal - OCR is one tier of the detection ladder, not a requirement.
+echo [STEP] Checking the OCR engine...
+%PY_CMD% -c "from seedcode.computer import ocr; ok, d = ocr.status(); print(('[OK] OCR engine: ' + d) if ok else ('[WARN] OCR unavailable: ' + d))" 2>> "%LOG_FILE%"
+if errorlevel 1 echo [WARN] Could not probe the OCR engine - see "%LOG_FILE%".
+
 REM --- 5. Verify ---------------------------------------------------------------
+REM Primary check: the console script. Fallback: python -m seedcode. One of
+REM the two MUST answer with the version, or the install is reported failed.
 echo [STEP] Verifying installation...
-%PY_CMD% -c "import seedcode; print('[OK] Seed Code', seedcode.__version__, 'imports cleanly')"
-if errorlevel 1 (
-    echo [ERROR] Verification failed: the seedcode package does not import.
+set "VERIFIED="
+seedcode --version >nul 2>&1
+if not errorlevel 1 (
+    for /f "delims=" %%V in ('seedcode --version') do echo [OK] %%V ^(seedcode command works^)
+    set "VERIFIED=1"
+) else (
+    %PY_CMD% -m seedcode --version >nul 2>&1
+    if not errorlevel 1 (
+        for /f "delims=" %%V in ('%PY_CMD% -m seedcode --version') do echo [OK] %%V ^(via python -m seedcode^)
+        set "VERIFIED=1"
+    )
+)
+if not defined VERIFIED (
+    echo [ERROR] Verification failed: neither 'seedcode --version' nor
+    echo         '%PY_CMD% -m seedcode --version' answered.
+    echo         The install did not complete - see "%LOG_FILE%".
     echo [FAILED] verification >> "%LOG_FILE%"
     exit /b 1
 )

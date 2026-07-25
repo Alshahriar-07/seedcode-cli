@@ -1,22 +1,25 @@
 [build-system]
-requires = ["hatchling"]
+# hatchling >= 1.27 is needed for PEP 639 license expressions (license = "MIT").
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
-name = "seedcode"
-version = "1.0.0"
+name = "seedcode-cli"
+version = "5.0.2"
 description = "Seed Code — a premium terminal-based AI coding assistant. Plant ideas. Grow code."
 readme = "README.md"
-license = { file = "LICENSE" }
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.12"
-authors = [{ name = "Al shahriar sowan" }]
-keywords = ["ai", "cli", "terminal", "openrouter", "coding-assistant", "seedcode"]
+authors = [{ name = "Al Shahriar Sowan" }]
+keywords = ["ai", "cli", "terminal", "chat", "coding-assistant", "seedcode", "ollama", "agent"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Environment :: Console",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Software Development",
     "Topic :: Terminals",
 ]
@@ -30,10 +33,46 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0.0", "pytest-mock>=3.12.0"]
+# Computer Engine (desktop control) — Windows only in this release.
+# OCR and OpenCV belong to THIS extra rather than an optional add-on: the
+# detection ladder's OCR/CV tiers must exist on every machine that has desktop
+# control, so a workflow can never fail with "OCR is not installed". The
+# tesseract ENGINE (a native binary, not a Python package) ships with the
+# Windows installer and is located at runtime by seedcode/computer/ocr.py.
+desktop = [
+    "pyautogui>=0.9.54",
+    "mss>=9.0.1",
+    "pygetwindow>=0.0.9",
+    "uiautomation>=2.0.18; sys_platform == 'win32'",
+    "pillow>=10.0.0",
+    # Lets the verifier confirm a process is really running (instead of falling
+    # back to a window-title guess).
+    "psutil>=5.9.0",
+    # Detection ladder: OCR (tier 4) for windows exposing no accessibility
+    # tree, OpenCV (tiers 5-6) for control-boundary refinement and image match.
+    "pytesseract>=0.3.10",
+    "opencv-python>=4.9.0",
+]
+# Retained so existing `seedcode-cli[vision]` installs keep resolving; these
+# tiers are now part of [desktop].
+vision = [
+    "pytesseract>=0.3.10",
+    "opencv-python>=4.9.0",
+]
+# Optional DOM-level browser control via WebDriver. NOT needed for normal web
+# automation: the Browser Engine drives the user's own default browser through
+# the OS, the DevTools protocol, and the UI resolver. Install only for tasks
+# that genuinely need a scripted throwaway browser profile.
+browser = [
+    "selenium>=4.18.0",
+    "webdriver-manager>=4.0.1",
+]
 
 [project.urls]
-Homepage = "https://github.com/Alshahriar-07/seedbot-cli"
-Repository = "https://github.com/Alshahriar-07/seedbot-cli"
+Homepage = "https://github.com/Alshahriar-07/seedcode-cli"
+Repository = "https://github.com/Alshahriar-07/seedcode-cli"
+Documentation = "https://github.com/Alshahriar-07/seedcode-cli#readme"
+Issues = "https://github.com/Alshahriar-07/seedcode-cli/issues"
 
 [project.scripts]
 seedcode = "seedcode.cli:main"
