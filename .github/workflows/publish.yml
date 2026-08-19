@@ -8,6 +8,10 @@ permissions:
   contents: read
   id-token: write
 
+concurrency:
+  group: publish-pypi-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   publish:
     name: Build and publish package
@@ -36,5 +40,8 @@ jobs:
           python -m pip install twine
           python -m twine check dist/*
 
+      # Publishes via PyPI Trusted Publishing (OIDC) - no API token stored.
+      # This only succeeds after the project owner enables trusted publishing
+      # for this repository in PyPI settings (see README "Release process").
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1

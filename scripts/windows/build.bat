@@ -265,27 +265,28 @@ if errorlevel 1 (
     exit /b 5
 )
 
-REM --- Publish to the repository root as setup.exe --------------------------
-REM The root setup.exe is the artifact published with the GitHub release.
-REM Release\ stays as the build staging area; the root copy is what ships, so
-REM it is refreshed from THIS build every time and never left stale.
-echo [STEP] Publishing the installer to the repository root as setup.exe...
-if exist "%REPO_ROOT%\setup.exe" del /f /q "%REPO_ROOT%\setup.exe" >nul 2>&1
-if exist "%REPO_ROOT%\setup.exe" (
-    echo [ERROR] Could not replace the existing setup.exe - it is locked.
+REM --- Publish to the repository root as seedcode-cli-setup.exe ---------------
+REM The root seedcode-cli-setup.exe is the artifact published with the GitHub
+REM release (stable, predictable name across versions). Release\ stays as the
+REM build staging area; the root copy is what ships, so it is refreshed from
+REM THIS build every time and never left stale.
+echo [STEP] Publishing the installer to the repository root as seedcode-cli-setup.exe...
+if exist "%REPO_ROOT%\seedcode-cli-setup.exe" del /f /q "%REPO_ROOT%\seedcode-cli-setup.exe" >nul 2>&1
+if exist "%REPO_ROOT%\seedcode-cli-setup.exe" (
+    echo [ERROR] Could not replace the existing seedcode-cli-setup.exe - it is locked.
     exit /b 5
 )
-copy /y "%REPO_ROOT%\Release\SeedCodeSetup.exe" "%REPO_ROOT%\setup.exe" >nul 2>&1
-if not exist "%REPO_ROOT%\setup.exe" (
-    echo [ERROR] Failed to copy the installer to "%REPO_ROOT%\setup.exe".
+copy /y "%REPO_ROOT%\Release\SeedCodeSetup.exe" "%REPO_ROOT%\seedcode-cli-setup.exe" >nul 2>&1
+if not exist "%REPO_ROOT%\seedcode-cli-setup.exe" (
+    echo [ERROR] Failed to copy the installer to "%REPO_ROOT%\seedcode-cli-setup.exe".
     exit /b 5
 )
 
 REM Verify the published copy independently - a truncated or partial copy must
 REM fail here rather than ship as a broken download.
-%PY_CMD% "%~dp0build_assets.py" --verify-exe "%REPO_ROOT%\setup.exe"
+%PY_CMD% "%~dp0build_assets.py" --verify-exe "%REPO_ROOT%\seedcode-cli-setup.exe"
 if errorlevel 1 (
-    echo [ERROR] The published setup.exe does NOT contain the Seed Code icon.
+    echo [ERROR] The published seedcode-cli-setup.exe does NOT contain the Seed Code icon.
     exit /b 5
 )
 
@@ -293,7 +294,7 @@ echo.
 echo ============================================================
 echo   [SUCCESS] Build pipeline complete.
 echo   Standalone exe : %REPO_ROOT%\dist\seedcode.exe
-echo   Installer      : %REPO_ROOT%\setup.exe  ^(v%SRC_VERSION%^)
+echo   Installer      : %REPO_ROOT%\seedcode-cli-setup.exe  ^(v%SRC_VERSION%^)
 echo   Staging copy   : %REPO_ROOT%\Release\SeedCodeSetup.exe
 echo   Both verified: correct version + Seed Code icon embedded.
 echo ============================================================

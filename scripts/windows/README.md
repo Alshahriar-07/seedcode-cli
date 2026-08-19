@@ -6,7 +6,7 @@ on Windows (the primary platform).
 | File | Purpose |
 |------|---------|
 | `install.bat` | Install Seed Code from source: Python 3.12+ check, pip upgrade, dependencies, editable install, verification. |
-| `build.bat` | **Complete release pipeline**: branding assets → PyInstaller → `dist\seedcode.exe` (Seed Code icon embedded), then Inno Setup → `Release\SeedCodeSetup.exe`. Every stage verified. |
+| `build.bat` | **Complete release pipeline**: branding assets → PyInstaller → `dist\seedcode.exe` (Seed Code icon embedded), then Inno Setup → `seedcode-cli-setup.exe` (repo root). Every stage verified. |
 | `build_assets.py` | Generates `assets\windows\` (multi-resolution `seedcode.ico`, wizard bitmaps, exe version resource) — stdlib only, deterministic, self-verifying. |
 | `setup.iss` | Inno Setup script (compiled by `build.bat`): one-click branded wizard, Program Files install, PATH, shortcuts, double verification (exe + `seedcode` on PATH), uninstaller with data prompt. No Python needed on the user's PC. |
 | `uninstall.bat` | Remove a source install: PATH cleanup, `pip uninstall`, confirmed user-data deletion. |
@@ -65,12 +65,17 @@ Runs the complete, hands-off release pipeline:
 Log: `%USERPROFILE%\.seedcode\logs\build.log`. The `build\` work directory is
 disposable cache; `dist\` and `Release\` are the outputs.
 
-## 3. The public installer (`Release\SeedCodeSetup.exe`)
+## 3. The public installer (`seedcode-cli-setup.exe`)
 
 **True one-click install.** The end user downloads one file, runs it, and
 accepts the defaults: License → Install → Finish. Nothing else — no Python,
 no pip, no PATH editing, no terminal work. The packaged exe carries its own
 Python runtime and every dependency inside it.
+
+`build.bat` compiles `Release\SeedCodeSetup.exe` (staging) and publishes the
+verified copy to the repository root as **`seedcode-cli-setup.exe`** — the
+stable, predictable name used for every GitHub release asset (for example
+`https://github.com/Alshahriar-07/seedcode-cli/releases/download/v5.0.2/seedcode-cli-setup.exe`).
 
 - **Branding everywhere.** The setup.exe, the installed seedcode.exe, the
   Start Menu / Desktop shortcuts, the taskbar, Explorer, and Add/Remove

@@ -39,7 +39,7 @@
 #if !FileExists(AddBackslash(SourcePath) + "..\..\assets\windows\seedcode.ico")
   #error "assets\windows\seedcode.ico not found - run: python scripts\windows\build_assets.py"
 #endif
-#define MyAppPublisher "Al Shahriar Sowan"
+#define MyAppPublisher "Eagox Studio"
 #define MyAppURL "https://github.com/Alshahriar-07/seedcode-cli"
 #define MyAppExeName "seedcode.exe"
 
@@ -61,6 +61,9 @@ DefaultGroupName={#MyAppName}
 ; One-click flow: skip the Start Menu group page (sane default is used) so a
 ; user who accepts defaults clicks License -> Install -> Finish and is done.
 DisableProgramGroupPage=yes
+; Write an installer log so silent/unattended runs (WinGet, scripts) can
+; inspect what happened via the /LOG= switch and SetupLog.
+SetupLogging=yes
 ; Branding: the setup.exe itself, the wizard pages, and Add/Remove Programs
 ; all use the Seed Code artwork - the default icon never appears.
 SetupIconFile=..\..\assets\windows\seedcode.ico

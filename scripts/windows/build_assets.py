@@ -169,7 +169,7 @@ VSVersionInfo(
   ),
   kids=[
     StringFileInfo([StringTable('040904B0', [
-      StringStruct('CompanyName', 'Al Shahriar Sowan'),
+      StringStruct('CompanyName', 'Eagox Studio'),
       StringStruct('FileDescription', 'Seed Code - terminal AI coding assistant'),
       StringStruct('FileVersion', '{version}'),
       StringStruct('InternalName', 'seedcode'),

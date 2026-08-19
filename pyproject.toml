@@ -5,13 +5,13 @@ build-backend = "hatchling.build"
 
 [project]
 name = "seedcode-cli"
-version = "5.0.2"
 description = "Seed Code — a premium terminal-based AI coding assistant. Plant ideas. Grow code."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.12"
-authors = [{ name = "Al Shahriar Sowan" }]
+authors = [{ name = "Al Shahriar Sowan", email = "github@eagox.studio" }]
+dynamic = ["version"]
 keywords = ["ai", "cli", "terminal", "chat", "coding-assistant", "seedcode", "ollama", "agent"]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
@@ -73,9 +73,16 @@ Homepage = "https://github.com/Alshahriar-07/seedcode-cli"
 Repository = "https://github.com/Alshahriar-07/seedcode-cli"
 Documentation = "https://github.com/Alshahriar-07/seedcode-cli#readme"
 Issues = "https://github.com/Alshahriar-07/seedcode-cli/issues"
+Changelog = "https://github.com/Alshahriar-07/seedcode-cli/releases"
 
 [project.scripts]
 seedcode = "seedcode.cli:main"
+
+# Single source of truth for the version: seedcode/__init__.py (`__version__`).
+# Bump it there and every consumer (wheel, sdist, CLI --version, installer,
+# GitHub release, PyPI, WinGet manifest) picks it up.
+[tool.hatch.version]
+path = "seedcode/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["seedcode"]

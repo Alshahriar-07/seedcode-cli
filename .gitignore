@@ -9,6 +9,7 @@ dist/
 .venv/
 venv/
 env/
+test-env/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
@@ -25,6 +26,7 @@ htmlcov/
 /.realease/
 /archive/
 *.exe
+seedcode-cli-setup.exe
 
 # Volatile outputs of scripts/windows/build_assets.py (regenerated every
 # build). The stable brand assets (seedcode.ico, wizard*.bmp) STAY committed:
@@ -53,3 +55,5 @@ Desktop.ini
 *.bak
 *.orig
 *.rej
+*.crdownload
+opencode.txt

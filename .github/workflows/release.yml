@@ -1,0 +1,225 @@
+name: Release
+
+# Builds a full release from a git tag:
+#   1. tests
+#   2. PyPI package (wheel + sdist) + twine check
+#   3. Windows installer (PyInstaller + Inno Setup) -> seedcode-cli-setup.exe
+#   4. SHA256 + WinGet manifests for SeedCode.CLI
+#   5. GitHub Release with all artifacts attached
+#
+# Pushing a tag also triggers .github/workflows/publish.yml, which publishes
+# seedcode-cli to PyPI via trusted publishing once this release is created.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  pypi:
+    name: Build and check PyPI package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Upgrade pip and install build tooling
+        run: python -m pip install --upgrade pip build twine
+
+      - name: Install package and test dependencies
+        run: python -m pip install -e ".[dev]"
+
+      - name: Run tests
+        run: python -m pytest tests/ -q
+
+      - name: Verify CLI entry point
+        run: |
+          seedcode --version
+          python -m seedcode --version
+
+      - name: Build wheel and sdist
+        run: python -m build
+
+      - name: Check built distributions
+        run: python -m twine check dist/*
+
+      - name: Upload Python distribution artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: pypi-dist
+          path: dist/*.whl
+          if-no-files-found: error
+
+      - name: Upload source distribution
+        uses: actions/upload-artifact@v4
+        with:
+          name: pypi-sdist
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  windows-installer:
+    name: Build Windows installer
+    runs-on: windows-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      - name: Install build tooling
+        run: python -m pip install --upgrade pip pyinstaller
+
+      - name: Build the installer (tests + PyInstaller + Inno Setup)
+        run: scripts\windows\build.bat
+        shell: cmd
+
+      - name: Verify the published installer
+        run: |
+          if (-not (Test-Path "seedcode-cli-setup.exe")) {
+            Write-Error "seedcode-cli-setup.exe was not produced"
+            exit 1
+          }
+          .\seedcode-cli-setup.exe --version 2>$null | Out-Null
+
+      - name: Compute installer SHA256 and write checksum file
+        shell: powershell
+        run: |
+          $sha = (Get-FileHash -Algorithm SHA256 .\seedcode-cli-setup.exe).Hash
+          Set-Content -Path seedcode-cli-setup.exe.sha256 -Value "$sha  seedcode-cli-setup.exe"
+          Write-Host "SHA256=$sha"
+          Write-Output "SHA256=$sha" | Out-File -FilePath checksum.txt -Encoding ascii
+
+      - name: Read source version
+        id: version
+        shell: powershell
+        run: |
+          $v = python -c "import seedcode; print(seedcode.__version__)"
+          Write-Output "version=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
+
+      - name: Generate WinGet manifests
+        shell: powershell
+        run: |
+          $sha = (Get-Content checksum.txt).Split('=')[1]
+          python scripts\winget\build_manifest.py --version ${{ steps.version.outputs.version }} --sha256 $sha --out-dir "build\winget-manifests"
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer
+          path: seedcode-cli-setup.exe
+          if-no-files-found: error
+
+      - name: Upload checksum artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer-sha256
+          path: seedcode-cli-setup.exe.sha256
+          if-no-files-found: error
+
+      - name: Upload WinGet manifests artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: winget-manifests
+          path: build/winget-manifests/*.yaml
+          if-no-files-found: error
+
+  release:
+    name: Create GitHub Release
+    needs: [pypi, windows-installer]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download Python distribution artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: pypi-dist
+          path: dist
+
+      - name: Download source distribution
+        uses: actions/download-artifact@v4
+        with:
+          name: pypi-sdist
+          path: dist
+
+      - name: Download installer artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: installer
+          path: installer
+
+      - name: Download checksum artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: installer-sha256
+          path: installer-sha256
+
+      - name: Download WinGet manifests
+        uses: actions/download-artifact@v4
+        with:
+          name: winget-manifests
+          path: winget-manifests
+
+      - name: Write release body
+        shell: bash
+        run: |
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
+          cat > release-body.md <<EOF
+          ## Seed Code CLI $VERSION
+
+          **Plant ideas. Grow code.**
+
+          ### Assets
+          - **Windows installer** — \`seedcode-cli-setup.exe\` (one-click Inno Setup installer; installs to Program Files, adds \`seedcode\` to PATH, works with CMD, PowerShell, and Windows Terminal).
+          - **Python package** — \`seedcode-cli-$VERSION\` wheel + sdist, installable via \`pip install seedcode-cli\`.
+          - **WinGet manifests** — for submission to \`microsoft/winget-pkgs\` (identifier \`SeedCode.CLI\`). The package is NOT available via \`winget install SeedCode.CLI\` until Microsoft accepts it.
+
+          ### Install
+          \`\`\`bash
+          pip install seedcode-cli
+          \`\`\`
+          or run \`seedcode-cli-setup.exe\`.
+
+          \`\`\`bash
+          seedcode --version
+          \`\`\`
+          EOF
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          body_path: release-body.md
+          draft: false
+          prerelease: false
+          files: |
+            dist/*.whl
+            dist/*.tar.gz
+            installer/seedcode-cli-setup.exe
+            installer-sha256/seedcode-cli-setup.exe.sha256
+            winget-manifests/SeedCode.CLI.yaml
+            winget-manifests/SeedCode.CLI.installer.yaml
+            winget-manifests/SeedCode.CLI.locale.en-US.yaml
