@@ -75,7 +75,7 @@ Python runtime and every dependency inside it.
 `build.bat` compiles `Release\SeedCodeSetup.exe` (staging) and publishes the
 verified copy to the repository root as **`seedcode-cli-setup.exe`** — the
 stable, predictable name used for every GitHub release asset (for example
-`https://github.com/Alshahriar-07/seedcode-cli/releases/download/v5.0.2/seedcode-cli-setup.exe`).
+`https://github.com/Alshahriar-07/seedcode-cli/releases/download/v6.1.5/seedcode-cli-setup.exe`).
 
 - **Branding everywhere.** The setup.exe, the installed seedcode.exe, the
   Start Menu / Desktop shortcuts, the taskbar, Explorer, and Add/Remove

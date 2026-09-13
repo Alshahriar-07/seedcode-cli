@@ -104,6 +104,13 @@ def launch_terminal(ctx: SkillContext, params: dict[str, Any]) -> Outcome:
 from . import browser_skills as _browser_skills  # noqa: E402,F401
 
 
+# --- operator skills (Phase 4+) ---------------------------------------------
+# Screen intelligence queries, semantic element-id actions, the application
+# controller (open/find/close/install), DOM web extraction, and local
+# memory. Same registry, same permission gates, same verification path.
+from . import operator_skills as _operator_skills  # noqa: E402,F401
+
+
 # --- editor / clipboard -----------------------------------------------------
 
 @skill("save_current_file", "Save the file in the focused editor (Ctrl+S).",

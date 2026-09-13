@@ -27,6 +27,7 @@ from .commands.theme import pick_theme
 from .config import load_config
 from .core.agent import AgentEngine, strip_tool_blocks
 from .core.chat import ChatEngine, ChatError
+from .core.lifecycle import lifecycle
 from .core.models import AppConfig
 from .core.providers import PROVIDERS, provider_label
 from .core.providers.freemodel import AUTO_MODEL
@@ -49,6 +50,51 @@ _KEY_ACTIONS = {
     "__shortcuts__": "shortcuts",
     "__settings__": "settings",
 }
+
+
+def _exit_application(reason: str) -> None:
+    """The single, explicit application-exit decision.
+
+    Called only from unambiguous user actions (the menu's Exit item, leaving
+    the menu with Esc/Ctrl+C/Ctrl+D). Marks the lifecycle, enters SHUTDOWN
+    (running teardown hooks), and returns; :func:`run` then unwinds and
+    ``main`` finishes normally. Task completion and errors never reach here.
+    """
+    lc = lifecycle()
+    lc.request_exit(reason)
+    if lc.phase.value != "shutdown":
+        try:
+            lc.shutdown()
+        except Exception:  # a teardown hook must never block exiting
+            pass
+    ui.dim("Goodbye — plant ideas, grow code.")
+
+
+def _release_desktop_resources() -> None:
+    """Teardown hook: release desktop/session resources, never the process.
+
+    Cleanup clears caches and closes driver connections only. It must never
+    terminate SeedCode — historically a finally-block that "cleaned up" by
+    exiting was one of the auto-exit paths.
+    """
+    try:
+        from .computer.browser_cdp import reset as _cdp_reset
+
+        _cdp_reset()
+    except Exception:
+        pass
+    try:
+        from .computer import browser_skills
+
+        browser_skills.reset_engines()
+    except Exception:
+        pass
+    try:
+        from .computer.permissions import session_permissions
+
+        session_permissions().reset()
+    except Exception:
+        pass
 
 
 def _provider_status(config: AppConfig) -> str:
@@ -150,11 +196,20 @@ def _handle_chat(ui: UI, engine: ChatEngine, history: HistoryStore, text: str) -
 
 
 def _handle_agent(ui: UI, agent: AgentEngine, history: HistoryStore, text: str) -> None:
-    """Run one full Assist turn (tool loop) and render the final answer."""
+    """Run one full Assist turn (tool loop) and render the final answer.
+
+    Lifecycle note: every outcome — success, tool failure, provider error,
+    Ctrl+C — ends with a rendered message and a return. Nothing here may
+    terminate the process; the surrounding ``task_span`` guarantees the
+    lifecycle returns to IDLE and the REPL keeps prompting.
+    """
+    lc = lifecycle()
 
     try:
         with ui.thinking("Working"):
+            lc.to_executing()
             reply = agent.run_turn(text)
+        lc.to_verifying()
     except ChatError as exc:
         ui.error(str(exc))
         return
@@ -164,6 +219,7 @@ def _handle_agent(ui: UI, agent: AgentEngine, history: HistoryStore, text: str) 
         ui.dim("(assist turn cancelled — completed tool actions were kept)")
         return
 
+    lc.to_responding()
     final = strip_tool_blocks(reply)
     if final.strip():
         with ui.streaming() as renderer:
@@ -327,13 +383,18 @@ def _chat_loop(
             continue
 
         ui.blank()
-        if config.agent_mode:
-            if agent is None or agent_perm != config.permission_mode:
-                agent = _make_agent(ui, config)
-                agent_perm = config.permission_mode
-            _handle_agent(ui, agent, history, text)
-        else:
-            _handle_chat(ui, engine, history, text)
+        # One whole user turn inside the lifecycle span: whatever happens —
+        # success, failure, cancellation, even an unexpected crash — the
+        # span's ``finally`` returns the state machine to IDLE and the REPL
+        # prompts again. A task can never end the app.
+        with lifecycle().task_span():
+            if config.agent_mode:
+                if agent is None or agent_perm != config.permission_mode:
+                    agent = _make_agent(ui, config)
+                    agent_perm = config.permission_mode
+                _handle_agent(ui, agent, history, text)
+            else:
+                _handle_chat(ui, engine, history, text)
 
 
 def _build_chat_session(ui: UI) -> PromptSession:
@@ -383,6 +444,9 @@ def run(ui: UI) -> None:
     history = HistoryStore(provider_id=active_backend)
     chat_session = _build_chat_session(ui)
 
+    # Best-effort teardown for the one legitimate shutdown path.
+    lifecycle().on_shutdown(_release_desktop_resources)
+
     # Straight into chat after the dashboard — the menu is one /exit away.
     try:
         if config.is_configured() or _guided_setup(ui, config):
@@ -412,8 +476,8 @@ def run(ui: UI) -> None:
         try:
             choice = _main_menu(config)
         except (KeyboardInterrupt, EOFError):
-            ui.blank()
-            ui.dim("Goodbye — plant ideas, grow code.")
+            # The user explicitly left the menu — the app-exit decision.
+            _exit_application("menu interrupt")
             return
 
         try:
@@ -435,7 +499,7 @@ def run(ui: UI) -> None:
             elif choice == "about":
                 show_about(ui, config)
             elif choice in ("exit", None):
-                ui.dim("Goodbye — plant ideas, grow code.")
+                _exit_application("menu exit")
                 return
         except (KeyboardInterrupt, EOFError):
             ui.dim("Cancelled.")

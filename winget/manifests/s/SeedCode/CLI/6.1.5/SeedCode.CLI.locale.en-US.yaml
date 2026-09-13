@@ -1,7 +1,7 @@
 # yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.9.0.schema.json
 # Created by scripts/winget/build_manifest.py - do not edit by hand.
 PackageIdentifier: SeedCode.CLI
-PackageVersion: 5.0.2
+PackageVersion: 6.1.5
 PackageLocale: en-US
 Publisher: Eagox Studio
 PublisherUrl: https://github.com/Alshahriar-07/seedcode-cli

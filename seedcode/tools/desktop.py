@@ -60,6 +60,12 @@ def reset_controller() -> None:
     from ..computer import reset_engine
 
     reset_engine()
+    # Operator-layer engines hold driver references too; drop them so a
+    # rebuilt session never reuses stale desktop state.
+    from ..computer import screen_state, browser_extract
+
+    screen_state.reset_screen_engine()
+    browser_extract.reset_web_extractor()
 
 
 def _engine(perm: "PermissionManager") -> "ComputerEngine":

@@ -28,6 +28,7 @@ class DesktopGrant(str, Enum):
 CATEGORY_CONTROL = "control"          # mouse, keyboard, screenshots, window reads
 CATEGORY_APPS = "apps"                # opening / closing applications
 CATEGORY_REGISTRY_READ = "registry_read"
+CATEGORY_NETWORK = "network"          # downloads / non-navigation web transfers
 
 # Sensitive categories: confirmation can never be remembered ("Always" is
 # treated as "Once"), so each individual action is user-approved.
@@ -36,6 +37,7 @@ CATEGORY_SECRET = "type_secret"       # typing passwords / credentials
 CATEGORY_SYSTEM = "system"            # shutdown, restart, system settings
 CATEGORY_DELETE = "delete"            # deleting files via the desktop
 CATEGORY_PURCHASE = "purchase"        # browser purchases / payments
+CATEGORY_INSTALL = "install"          # installing software (never remembered)
 
 SENSITIVE_CATEGORIES = frozenset(
     {
@@ -44,6 +46,7 @@ SENSITIVE_CATEGORIES = frozenset(
         CATEGORY_SYSTEM,
         CATEGORY_DELETE,
         CATEGORY_PURCHASE,
+        CATEGORY_INSTALL,
     }
 )
 
@@ -61,11 +64,13 @@ CATEGORY_LABELS = {
     CATEGORY_CONTROL: "Desktop control (mouse, keyboard, screen)",
     CATEGORY_APPS: "Open / close applications",
     CATEGORY_REGISTRY_READ: "Read the Windows registry",
+    CATEGORY_NETWORK: "Download files from the web",
     CATEGORY_REGISTRY_WRITE: "WRITE to the Windows registry",
     CATEGORY_SECRET: "Type a password or secret",
     CATEGORY_SYSTEM: "System action (shutdown / restart / settings)",
     CATEGORY_DELETE: "Delete files via the desktop",
     CATEGORY_PURCHASE: "Browser purchase / payment",
+    CATEGORY_INSTALL: "Install software",
 }
 
 # confirm(category, description) -> the user's choice for this ask.

@@ -17,7 +17,7 @@ so every size stays crisp. Everything is deterministic: same inputs, byte-
 identical outputs.
 
 Usage:
-    python build_assets.py --version 5.0.2
+    python build_assets.py --version 6.1.5
     python build_assets.py --verify-exe ..\\..\\dist\\seedcode.exe
 """
 

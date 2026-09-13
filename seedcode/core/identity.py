@@ -57,4 +57,10 @@ def build_system_prompt(provider_label: str, model_id: str) -> str:
 Be concise and professional. Prefer clear, correct code with short explanations.
 Use markdown fenced code blocks with language hints. Focus on practical, working solutions."""
 
-    return _SEED_CODE_IDENTITY + reasoning_context + task_prompt
+    # Owner-persisted personality overrides (identity.json). Never model-
+    # written; a model switch re-renders only the reasoning-engine line.
+    from .identity_store import load_identity
+
+    overrides = load_identity().render()
+
+    return _SEED_CODE_IDENTITY + overrides + reasoning_context + task_prompt

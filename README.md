@@ -1,238 +1,279 @@
-# Seed Code
+# SeedCode CLI
 
-**Plant ideas. Grow code.**
+> **Plant ideas. Grow code.**
 
-Seed Code is a premium, terminal-based AI coding assistant with five fully
-independent backends — [OpenRouter](https://openrouter.ai) (full catalogue,
-free/paid filtering), **FreeModel Claude** and **FreeModel Codex**
-(free AI models from [freemodel.dev](https://freemodel.dev)),
-[AeroLink](https://aerolink.lat), and local [Ollama](https://ollama.com).
-It feels like a real developer tool — fast, minimal, and professional — in
-the spirit of Claude Code, the Gemini CLI, Ollama, and Git.
+SeedCode is a terminal-first AI coding assistant and desktop operator. It
+combines streaming chat, project-aware coding tools, screen intelligence,
+semantic UI actions, browser intelligence, and permission-gated computer
+control in one focused workflow.
 
-```
- ███████╗███████╗███████╗██████╗      ██████╗ ██████╗ ██████╗ ███████╗
- ██╔════╝██╔════╝██╔════╝██╔══██╗    ██╔════╝██╔═══██╗██╔══██╗██╔════╝
- ███████╗█████╗  █████╗  ██║  ██║    ██║     ██║   ██║██║  ██║█████╗
- ╚════██║██╔══╝  ██╔══╝  ██║  ██║    ██║     ██║   ██║██║  ██║██╔══╝
- ███████║███████╗███████╗██████╔╝    ╚██████╗╚██████╔╝██████╔╝███████╗
- ╚══════╝╚══════╝╚═════╝╚═════╝      ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝
+Use the model and provider that fit the task. Keep the work local when you
+want to. Give the operator only the permissions it needs.
 
-                         S E E D   C O D E
-                      Plant ideas. Grow code.
-```
+## Why SeedCode
+
+- **One workflow for code and computer tasks** — move from a code question to
+  a project edit, window inspection, browser extraction, or desktop action
+  without changing tools.
+- **Provider-independent identity** — change providers or models without
+  losing SeedCode's local identity, settings, or memory.
+- **Permission-aware by design** — read, workspace, and full-access modes
+  make control boundaries visible before an action runs.
+- **Windows-ready packaging** — the self-contained installer includes the
+  application runtime and preserves the SeedCode brand.
+- **Recoverable operations** — lifecycle checks, self-guard protection,
+  bounded retries, verification, and structured error handling keep failures
+  explicit instead of silently repeating actions.
 
 ## Install
 
-### Install with PyPI
+### Windows installer
 
-Requires **Python 3.12+**.
+Download the latest `seedcode-cli-setup.exe` from the
+[Releases page](https://github.com/Alshahriar-07/seedcode-cli/releases).
+The installer:
+
+- installs a self-contained `seedcode.exe`;
+- adds SeedCode to the system `PATH`;
+- creates Start Menu shortcuts;
+- optionally creates a desktop shortcut; and
+- does not require Python on the target machine.
+
+### PyPI
+
+Requires **Python 3.12 or newer**:
 
 ```bash
-pip install seedcode-cli
+python -m pip install seedcode-cli
+seedcode
 ```
 
-This installs the `seedcode` command globally on your PATH — no manual PATH
-editing, no `python seedcode.py`.
+### WinGet
 
-### Install with WinGet
-
-> **Status:** The package has been prepared for the Microsoft community
-> repository. `winget install SeedCode.CLI` will only work after the manifests
-> in [`winget/`](winget/manifests/s/SeedCode/CLI/) have been submitted and
-> **accepted** into [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs).
-> Until then, install with PyPI or the Windows installer below.
+When the package is available in the Microsoft community repository:
 
 ```powershell
 winget install SeedCode.CLI
 ```
 
-### Windows installer (no Python required)
+The repository's manifests are in
+[`winget/manifests/s/SeedCode/CLI/`](winget/manifests/s/SeedCode/CLI/).
 
-Download **`seedcode-cli-setup.exe`** from the
-[Releases page](https://github.com/Alshahriar-07/seedcode-cli/releases).
-It is a self-contained Inno Setup installer: it installs `seedcode.exe` to
-Program Files, adds it to your system PATH, creates Start Menu shortcuts, and
-works in CMD, PowerShell, and Windows Terminal. No Python needed.
+## Quick start
 
-```bat
-seedcode-cli-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
-```
-
-### Run
+Start the interactive application:
 
 ```bash
 seedcode
 ```
 
-### Upgrade
-
-```bash
-winget upgrade SeedCode.CLI
-```
-
-or, for pip:
-
-```bash
-pip install --upgrade seedcode-cli
-```
-
-### Uninstall
-
-```powershell
-winget uninstall SeedCode.CLI
-```
-
-If you installed with pip:
-
-```bash
-pip uninstall seedcode-cli
-```
-
-If you used the Windows installer, uninstall from **Settings → Apps** (or
-run the Inno uninstaller, which also removes the PATH entry).
-
-### Version
+The first-run flow helps you choose a provider, validate an API key, fetch
+available models, and select a model. To check an installation without
+starting the UI:
 
 ```bash
 seedcode --version
-```
-
-### Help
-
-```bash
 seedcode --help
 ```
 
-## Requirements
+SeedCode supports:
 
-- **Python 3.12 or newer** for the pip distribution.
-- An **API key** for at least one provider, or a running **Ollama** server.
-- Windows, Linux, or macOS (desktop-control features are Windows-only).
+| Provider | Best for |
+| --- | --- |
+| [OpenRouter](https://openrouter.ai) | A broad catalogue of free and paid models |
+| FreeModel Claude | Claude-family models through FreeModel |
+| FreeModel Codex | GPT/Codex models through FreeModel |
+| [AeroLink](https://aerolink.lat) | Anthropic-compatible gateway access |
+| [Ollama](https://ollama.com) | Local, key-free models |
 
-## Authentication / API setup
-
-API keys are saved only after **real authenticated validation** — no format
-guessing. On first launch, choosing **Start Chat** walks you through setup
-(provider → API key → validate → fetch models → select → save).
-
-| Provider | Get a key |
-|----------|-----------|
-| OpenRouter | <https://openrouter.ai/keys> |
-| FreeModel Claude / Codex | <https://freemodel.dev/dashboard> (a `fe_oa_...` key) |
-| AeroLink | <https://aerolink.lat> |
-| Ollama | none — just run `ollama serve` |
-
-API keys can also come from environment variables (these override stored
-keys):
+API keys can be entered through the guided setup or supplied through
+environment variables:
 
 ```bash
 export OPENROUTER_API_KEY="sk-or-..."
 export FREEMODEL_API_KEY="fe_oa_..."
 export AEROLINK_API_KEY="..."
-seedcode
 ```
 
-## Features
+On Windows PowerShell, use `$env:OPENROUTER_API_KEY = "..."`.
 
-- **Five independent AI providers, one CLI** — switch anytime with
-  `/provider`; each provider owns its API key, model, connection status,
-  client, and even its own history, so switching never loses anything:
-  - **OpenRouter** — two modes on one key: **Free Models** (default) or
-    **Pro Models**; switch with `free`/`pro` in the model picker or
-    `/settings mode free|pro`.
-  - **FreeModel Claude** — Claude API at cc.freemodel.dev; Claude-family
-    models (live catalogue with a maintained fallback list). Auto mode
-    (`/model auto`) picks the best available model.
-  - **FreeModel Codex** — Responses API at api.freemodel.dev; GPT/Codex
-    models. The same FreeModel key (fe_oa_...) works on both FreeModel
-    providers, but each stores it — and its model — independently.
-  - **AeroLink** — Anthropic-compatible gateway; Claude-family models,
-    fetched dynamically.
-  - **Ollama** — fully local and key-free; lists the models you have
-    installed (`/settings host <url>` to point elsewhere).
-- **Startup menu** — banner, current provider/model status, and a numbered
-  menu (Start Chat, Provider, API Key, Model, Settings, About, Exit).
-  Guided setup runs automatically until configuration is complete.
-- **Streaming responses** with live markdown and syntax-highlighted code
-  blocks.
-- **Windows-first** — verified in Windows Terminal, PowerShell, CMD, and the
-  VS Code terminal; one-click installer with PATH integration.
-- **Conversation memory** within a session, auto-saved to history.
-- **Never crashes** — network and API errors are shown as friendly messages,
-  never raw tracebacks. Ctrl+C cancels the current response, not the app.
-- **Quiet diagnostics** — a rotating log at `~/.seedcode/logs/seedcode.log`
-  (API keys and message content are never logged).
+## Operator capabilities
 
-## Commands
+Assist Mode unifies AI reasoning with controlled computer actions. The
+operator stack includes:
 
-| Command      | Description                                            |
-| ------------ | ------------------------------------------------------ |
-| `/help`      | Show available commands                                |
-| `/provider`  | Switch provider (OpenRouter/FreeModel Claude/FreeModel Codex/AeroLink/Ollama) |
-| `/apikey`    | View, replace, remove, or validate the active key      |
-| `/model`     | Browse the live model list ('auto' = FreeModel Auto)   |
-| `/config`    | Show configuration (all providers' keys and models)    |
-| `/settings`  | Change a setting: `username`, `stream`, `ollama_host`, `max_tokens` |
-| `/doctor`    | Diagnose config, network, and provider health          |
-| `/agent`     | Toggle agent mode (the AI can read, edit, search, and run commands in your project) |
-| `/permission`| Show or set the agent permission mode: `read_only`, `workspace`, `full_access` |
-| `/tools`     | List the tools available in agent mode                 |
-| `/index`     | Show a compact tree of the current project             |
-| `/history`   | List saved conversation sessions                       |
-| `/reset`     | Forget the current conversation                        |
-| `/clear`     | Clear the screen                                       |
-| `/about`     | About Seed Code                                        |
-| `/version`   | Show the version                                       |
-| `/exit`      | Leave the chat (back to the main menu)                 |
+### Screen Intelligence Engine
 
-## Configuration
+- captures and inspects the current screen;
+- resolves windows and controls through a detection ladder;
+- combines accessibility metadata, geometry, OCR, and image refinement; and
+- verifies the target before an action is committed.
 
-Config lives at `~/.seedcode/config.json` (owner-only permissions where the
-OS supports it). Each provider keeps its own entry, so nothing is shared or
-overwritten:
+### Semantic UI actions
 
-```json
-{
-  "active_provider": "freemodel_claude",
-  "providers": {
-    "openrouter":       { "api_key": "sk-or-...", "model": "vendor/model" },
-    "freemodel_claude": { "api_key": "fe_oa_...", "model": "claude-sonnet-4-6" },
-    "freemodel_codex":  { "api_key": "fe_oa_...", "model": "auto" },
-    "aerolink":         { "api_key": "...",       "model": "..." },
-    "ollama":           { "api_key": "",          "model": "llama3.2" }
-  },
-  "ollama_host": "http://localhost:11434",
-  "max_tokens": 1024
-}
+Actions target the meaning of an element rather than a brittle coordinate.
+The resolver can work with accessible names, roles, text, window context, and
+visual evidence before dispatching keyboard or mouse input.
+
+### Desktop application control
+
+SeedCode can discover installed applications, inspect open windows, launch
+known applications, and verify process/window state. Application installation
+is permission-gated and uses the trusted `winget` path.
+
+### Web Intelligence
+
+The browser engine supports browser discovery, DevTools/CDP connectivity,
+page extraction, pop-up handling, and browser-oriented operator skills. Web
+extraction requires the existing DevTools/CDP browser connection; it does not
+silently create an uncontrolled browser session.
+
+### Memory and identity
+
+- conversation history is saved locally;
+- persistent memory can retain useful operator context;
+- memory is stored per local SeedCode profile;
+- identity remains stable when the active model or provider changes; and
+- provider credentials remain isolated from one another.
+
+## Assist Mode and permissions
+
+Inside SeedCode, enable the operator with:
+
+```text
+/assist on
 ```
 
-Chat history is stored per provider under `~/.seedcode/history/<provider>/`.
+`/agent` and `/desktop` remain compatibility aliases. Inspect the current
+boundary with:
 
-No model is ever hardcoded — you always pick from the provider's live
-catalogue. `max_tokens` defaults to a free-tier-safe 1024 and is clamped to
-1–4096 per request (older config formats migrate automatically).
+```text
+/permission
+/computer
+/tools
+```
 
-Troubleshooting: check `~/.seedcode/logs/seedcode.log`; set
-`SEEDCODE_DEBUG=1` for verbose logging.
+Permission modes:
+
+| Mode | Behavior |
+| --- | --- |
+| `read_only` | Inspect files, screens, windows, and state without mutations |
+| `workspace` | Allow approved changes inside the active workspace |
+| `full_access` | Allow broader computer and filesystem actions after confirmation |
+
+Use the narrowest mode that can complete the task. Mutating actions are
+subject to permission checks, lifecycle state, verification, and retry
+limits.
+
+## Command reference
+
+| Command | Purpose |
+| --- | --- |
+| `/help` | Search available commands |
+| `/provider` | Switch the active AI provider |
+| `/apikey` | Add, replace, remove, or validate a provider key |
+| `/model` | Browse and select the provider's model catalogue |
+| `/config` | Show current configuration |
+| `/settings` | Open settings or change a named setting |
+| `/assist` | Enable or disable Assist Mode |
+| `/permission` | View or set the Assist permission mode |
+| `/computer` | Show Computer Engine status and permissions |
+| `/screenshot` | Capture a screenshot |
+| `/windows` | List open windows |
+| `/tools` | List tools available in Assist Mode |
+| `/index` | Show a compact project tree |
+| `/files` | Search project files |
+| `/history` | Browse saved sessions |
+| `/doctor` | Diagnose configuration, network, and provider health |
+| `/theme` | Change the terminal theme |
+| `/shortcuts` | Show keyboard shortcuts |
+| `/reset` | Forget the current conversation context |
+| `/clear` | Clear the screen |
+| `/version` | Show the SeedCode version |
+| `/exit` | Leave the current chat |
+
+Useful keyboard shortcuts include `Ctrl+K` for the command palette,
+`Ctrl+P` for project file search, `Ctrl+R` for history, `Ctrl+,` for
+settings, and `Ctrl+/` for the shortcut reference.
+
+## Configuration and local data
+
+SeedCode stores local state under:
+
+```text
+~/.seedcode/
+├── config.json       provider and application settings
+├── history/          saved conversation sessions
+├── memory/           persistent local memory
+└── logs/             rotating diagnostic logs
+```
+
+Configuration and credentials are kept locally. Provider entries are isolated,
+and environment variables take precedence over stored API keys. Logs are
+designed for diagnostics and do not record API keys or message content.
+
+The `doctor` command can check configuration, connectivity, provider health,
+and available computer capabilities:
+
+```text
+/doctor
+```
+
+## Platform support
+
+- **Windows:** full desktop operator support, including UI automation, OCR,
+  application discovery, installer workflow, and browser integration.
+- **Linux/macOS:** terminal chat, provider integrations, project tools, and
+  local configuration.
+- **Browser extraction:** requires the user's existing DevTools/CDP browser
+  connection.
+
+The desktop extra installs the computer-control dependencies:
+
+```bash
+python -m pip install "seedcode-cli[desktop]"
+```
+
+Optional WebDriver support is available for workflows that genuinely need an
+isolated browser profile:
+
+```bash
+python -m pip install "seedcode-cli[browser]"
+```
 
 ## Development
 
-Clone the repository and install in editable mode with the dev extra:
+Clone the repository and install an editable development environment:
 
 ```bash
 git clone https://github.com/Alshahriar-07/seedcode-cli.git
 cd seedcode-cli
 python -m pip install -e ".[dev]"
-pytest tests/ -q
 ```
 
-The `seedcode` entry point, `seedcode --version`, and `python -m seedcode`
-are all verified by the CI workflow.
+The public entry points are:
 
-## Building
+```bash
+seedcode
+python -m seedcode
+seedcode --help
+```
 
-### Python package (wheel + sdist)
+### Windows release build
+
+The existing Windows pipeline generates branding assets, packages a
+self-contained executable with PyInstaller, and compiles the Inno Setup
+installer:
+
+```bat
+scripts\windows\build.bat
+```
+
+The build requires Python 3.12+, the project dependencies, PyInstaller, and
+Inno Setup 6 (`ISCC.exe`). Build details and installer behavior are documented
+in [`scripts/windows/README.md`](scripts/windows/README.md).
+
+### Python distributions
 
 ```bash
 python -m pip install build twine
@@ -240,96 +281,41 @@ python -m build
 python -m twine check dist/*
 ```
 
-Outputs `dist/seedcode_cli-*.whl` and `dist/seedcode_cli-*.tar.gz`.
+## Release workflow
 
-### Windows installer
+The version has one source of truth:
+[`seedcode/__init__.py`](seedcode/__init__.py). Release automation uses the
+same version for package metadata, the CLI, installer metadata, GitHub
+releases, and WinGet manifests.
 
-Requires Python 3.12+, PyInstaller, and Inno Setup 6 (`ISCC.exe`).
+The release workflow:
 
-```bat
-scripts\windows\build.bat
-```
+1. builds and validates Python distributions;
+2. builds the branded Windows installer;
+3. computes the installer checksum;
+4. generates WinGet manifests; and
+5. publishes the release assets.
 
-The pipeline generates branding assets, runs the full test suite (a release
-gate), builds `dist\seedcode.exe` with PyInstaller, compiles the Inno Setup
-installer, and publishes it to the repository root as
-`seedcode-cli-setup.exe` — verifying version and icon at every stage.
+## Security model
 
-## Release process
+SeedCode favors explicit capability boundaries:
 
-The version lives in **one place**: `seedcode/__init__.py` (`__version__`).
-Bump it there, commit, tag, and push — automation does the rest:
+- credentials stay local and provider-scoped;
+- computer actions pass through permission checks;
+- application installation uses `winget`;
+- action targets are resolved and verified before dispatch;
+- lifecycle/self-guard checks prevent unsafe operation states; and
+- retry limits prevent uncontrolled repetition.
 
-```bash
-git tag v5.0.3
-git push origin v5.0.3
-```
-
-`.github/workflows/release.yml` then:
-
-1. checks out the tag
-2. sets up Python 3.12
-3. installs dependencies
-4. runs the test suite
-5. builds the PyPI package (wheel + sdist) and validates it with twine
-6. builds the Windows installer (`seedcode-cli-setup.exe`)
-7. computes the installer SHA256
-8. generates the WinGet manifests for `SeedCode.CLI`
-9. creates a GitHub Release and uploads the installer, checksum, Python
-   distributions, and WinGet manifests
-
-## PyPI publishing
-
-`.github/workflows/publish.yml` publishes `seedcode-cli` to PyPI whenever a
-GitHub Release is published. It uses **PyPI Trusted Publishing (OIDC)** — no
-API token is stored in the repository.
-
-**One-time manual setup** (before the first release):
-
-1. Open <https://pypi.org/manage/account/publishing/>.
-2. "Add a new pending publisher":
-   - **PyPI project name:** `seedcode-cli`
-   - **Owner:** `Alshahriar-07`
-   - **Repository name:** `seedcode-cli`
-   - **Workflow name:** `publish.yml`
-   - **Environment name:** *(leave empty — the workflow does not use an
-     environment)*
-
-After that, publishing is fully automatic on each tagged release.
-
-## WinGet submission
-
-The WinGet manifests live in
-[`winget/manifests/s/SeedCode/CLI/`](winget/manifests/s/SeedCode/CLI/).
-They are generated by:
-
-```bash
-python scripts/winget/build_manifest.py --sha256 <REAL-SHA256-OF-INSTALLER>
-```
-
-(`winget hash <path-to-installer>` computes the real hash; never invent one.)
-Validate locally with:
-
-```powershell
-winget validate winget\manifests\s\SeedCode\CLI\5.0.2
-```
-
-To publish on WinGet, submit the manifests to
-[microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs):
-
-1. Fork `microsoft/winget-pkgs`.
-2. Copy the manifests to `manifests/s/SeedCode/CLI/<version>/` in your fork.
-3. Open a pull request. Microsoft's validation pipelines check the schema,
-   the installer URL, the SHA256, and that the app installs/uninstalls
-   silently.
-4. Once merged, `winget install SeedCode.CLI` works worldwide.
+No automation system is risk-free. Review permissions before enabling Assist
+Mode, especially when working in an unfamiliar project or with sensitive
+applications.
 
 ## Credits
 
 - **Created by:** Al Shahriar Sowan
 - **Publisher:** Eagox Studio
-- Vibe coded with GPT-5.5 + Claude Opus 4.8
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [`LICENSE`](LICENSE).

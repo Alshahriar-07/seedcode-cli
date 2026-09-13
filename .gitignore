@@ -22,9 +22,14 @@ htmlcov/
 
 # Build / release outputs. Installers are published as GitHub Release
 # attachments, never committed to source control.
+/Info_for_ai_agents/
+/Installer/
+/build/
+/dist/
 /Release/
-/.realease/
+/release/
 /archive/
+/installed app/
 *.exe
 seedcode-cli-setup.exe
 
