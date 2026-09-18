@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 import httpx
 
 from ..streaming import iter_stream
+from .. import http as pooled_http
 from ...utils.logger import get_logger
 from .base import (
     ModelInfo,
@@ -83,7 +84,7 @@ class OpenRouterProvider(Provider):
         if not key:
             return ValidationResult(False, "API key is empty.")
         try:
-            response = httpx.get(
+            response = pooled_http.get(
                 _VALIDATE_URL, headers={"Authorization": f"Bearer {key}"}, timeout=_TIMEOUT
             )
         except httpx.TimeoutException:
@@ -120,7 +121,7 @@ class OpenRouterProvider(Provider):
     def list_models(self, config: "AppConfig") -> list[ModelInfo]:
         """The live catalogue for the CURRENT mode (free or pro models)."""
         try:
-            response = httpx.get(_MODELS_URL, timeout=_TIMEOUT)
+            response = pooled_http.get(_MODELS_URL, timeout=_TIMEOUT)
             response.raise_for_status()
             data = response.json().get("data", [])
         except httpx.TimeoutException as exc:

@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Callable
 
@@ -37,7 +38,14 @@ from .models import AppConfig, Message, ToolCallRecord
 from .project import detect_project
 from .providers import provider_label
 from .providers.base import TextDelta, ToolCallEvent, ToolSpec
-from ..tools import PermissionError_, PermissionManager, ToolError, get_tool, tool_manifest
+from ..tools import (
+    TOOL_REGISTRY,
+    PermissionError_,
+    PermissionManager,
+    ToolError,
+    get_tool,
+    tool_manifest,
+)
 from ..tools.base import ToolResult, tool_specs
 from ..utils.logger import get_logger
 
@@ -53,6 +61,17 @@ _TOOL_BLOCK = re.compile(r"```tool\s*\n(.*?)```", re.DOTALL)
 _AGENT_PREAMBLE = (
     "\n\nYou are in AGENT MODE with access to the user's project at {workspace} "
     "(permission mode: {mode})."
+)
+
+_CODEMODE_PREAMBLE = (
+    "\n\nCODE MODE is ON: {workspace} is the project workspace and all work "
+    "stays inside it. Follow the coding-agent workflow: consult the project "
+    "memory and index first (.seedcode/), find the relevant files with "
+    "search_text/find_files, read only what you need, plan, edit, then verify "
+    "with a project command or test run and report the changes you made. "
+    "Never read the whole repository when a targeted search will do. When you "
+    "learn something durable about this project (architecture, conventions, "
+    "decisions), mention that it should be noted in .seedcode memory."
 )
 
 _TEXT_PROTOCOL_INSTRUCTIONS = (
@@ -234,6 +253,8 @@ class AgentEngine(ChatEngine):
             workspace=self.permissions.workspace,
             mode=self.permissions.mode.label,
         )
+        if self._codemode_active():
+            preamble += self._codemode_context()
         if self._native_active():
             # The API carries the tool schemas; no manifest needed.
             instructions = _NATIVE_INSTRUCTIONS
@@ -248,6 +269,60 @@ class AgentEngine(ChatEngine):
             + desktop_section
             + self._project_context()
         )
+
+    def _codemode_active(self) -> bool:
+        """Code Mode is a session-level toggle read lazily (no import cycle)."""
+        try:
+            from .. import codemode_state
+
+            state = codemode_state()
+            return bool(state.enabled and state.workspace is not None)
+        except Exception:
+            return False
+
+    def _codemode_context(self) -> str:
+        """Workspace/index/memory context for the coding agent prompt.
+
+        Compact by design: the file map lives in .seedcode and is searched via
+        tools; the prompt only carries orientation (top files, memories), so a
+        big repository never floods the context window.
+        """
+        try:
+            from .. import codemode_state
+
+            state = codemode_state()
+            store = state.store
+            if store is None:
+                return ""
+            sections: list[str] = []
+            memories = store.list_memories()
+            if memories:
+                sections.append(
+                    "Project memory notes available: " + ", ".join(memories[:8])
+                )
+            file_map = store.load_file_map()
+            if file_map:
+                top = sorted(file_map.items(), key=lambda kv: -kv[1].get("lines", 0))[:15]
+                listed = ", ".join(rel for rel, _ in top)
+                sections.append(
+                    f"Indexed {len(file_map)} files (largest: {listed}). "
+                    "Use find_files/search_text to locate code; read only what you need."
+                )
+            recent = store.latest_session_summaries(limit=2)
+            if recent:
+                goals = "; ".join(
+                    str(s.get("goal", ""))[:80] for s in recent if s.get("goal")
+                )
+                if goals:
+                    sections.append(f"Recent session goals: {goals}")
+            if not sections:
+                return ""
+            return "\n\nPROJECT MEMORY & INDEX:\n" + "\n".join(
+                f"- {s}" for s in sections
+            )
+        except Exception:
+            _log.exception("codemode context failed")
+            return ""
 
     def _project_context(self) -> str:
         """Ambient project summary; detection must never break construction."""
@@ -508,25 +583,66 @@ class AgentEngine(ChatEngine):
             pass
         return []
 
+    def _execute_one(self, call: ToolCall) -> ToolResult:
+        """Run one tool call through the registry, converting failures."""
+        try:
+            return get_tool(call.tool).run(self.permissions, call.args)
+        except (ToolError, PermissionError_) as exc:
+            return ToolResult(False, str(exc))
+        except Exception as exc:  # a tool bug must not kill the loop
+            _log.exception("tool crashed: %s", call.tool)
+            return ToolResult(False, f"Tool crashed: {exc}")
+
     def _execute_calls(self, calls: list[ToolCall]) -> tuple[list[str], bool]:
-        """Execute parsed calls; returns (results-for-model, any_failed)."""
+        """Execute parsed calls; returns (results-for-model, any_failed).
+
+        v6.2.0: when EVERY call in the step is read-only (``mutates=False``),
+        the calls run in a thread pool — reads touch different files and
+        cannot conflict, so ordering cannot affect correctness. Any mutating
+        call in the batch forces the whole step sequential: a read placed
+        after a write in the same step may legitimately depend on it.
+        """
         results: list[str] = []
         any_failed = False
-        for call in calls:
+
+        # Narrate every call up-front (in issue order) so the transcript reads
+        # the same whether execution was parallel or not.
+        runnable: list[tuple[int, ToolCall]] = []
+        for index, call in enumerate(calls):
+            if call.error:
+                continue
+            label = f"{call.tool}({json.dumps(call.args, ensure_ascii=False)[:120]})"
+            self._on_event("call", label)
+            runnable.append((index, call))
+
+        outcomes: dict[int, ToolResult] = {}
+        parallel = (
+            len(runnable) >= 2
+            and all(
+                (tool := TOOL_REGISTRY.get(call.tool)) is not None
+                and not tool.mutates
+                for _, call in runnable
+            )
+        )
+        if parallel:
+            with ThreadPoolExecutor(max_workers=min(4, len(runnable))) as pool:
+                futures = {
+                    index: pool.submit(self._execute_one, call)
+                    for index, call in runnable
+                }
+                for index, future in futures.items():
+                    outcomes[index] = future.result()
+        else:
+            for index, call in runnable:
+                outcomes[index] = self._execute_one(call)
+
+        for index, call in enumerate(calls):
             if call.error:
                 any_failed = True
                 results.append(f"[ERROR] {call.error}")
                 self._on_event("error", call.error)
                 continue
-            label = f"{call.tool}({json.dumps(call.args, ensure_ascii=False)[:120]})"
-            self._on_event("call", label)
-            try:
-                result = get_tool(call.tool).run(self.permissions, call.args)
-            except (ToolError, PermissionError_) as exc:
-                result = ToolResult(False, str(exc))
-            except Exception as exc:  # a tool bug must not kill the loop
-                _log.exception("tool crashed: %s", call.tool)
-                result = ToolResult(False, f"Tool crashed: {exc}")
+            result = outcomes[index]
             if not result.ok:
                 any_failed = True
             self._on_event("result" if result.ok else "error", result.output[:200])

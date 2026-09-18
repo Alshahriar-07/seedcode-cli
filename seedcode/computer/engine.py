@@ -80,6 +80,9 @@ class ComputerEngine:
         result = self._dispatcher.dispatch(name, params, expected)
         # The task is finished (successfully or not); the trail keeps the detail.
         self._state.set_task(None)
+        # A dispatched skill may have moved focus or opened/closed windows;
+        # drop the cached snapshot so the next dispatch reads live state.
+        self._state.invalidate()
         return result
 
     def state(self) -> ComputerState:

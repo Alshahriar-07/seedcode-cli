@@ -11,13 +11,16 @@ Produces, under ``assets/windows/``:
                           product name shown in Explorer file properties).
 * ``preview.png``       — 256px render for eyeballing the artwork.
 
-The artwork is drawn from a 16x16 pixel-art grid matching the blocky Seed
-Code logo style (Seed Green #2ecc71 on dark), scaled with nearest-neighbour
-so every size stays crisp. Everything is deterministic: same inputs, byte-
-identical outputs.
+plus the canonical ``assets/logo.png`` — the official 256px mark committed
+to source control.
+
+The artwork itself lives in ``seedcode/branding.py`` (the 16x16 pixel-art
+"sprouting seed" grid and its Seed Green palette) — the single source of
+truth shared with the terminal renderer ``seedcode/ui/logo.py``. Everything
+is deterministic: same inputs, byte-identical outputs.
 
 Usage:
-    python build_assets.py --version 6.1.5
+    python build_assets.py --version 6.2.0
     python build_assets.py --verify-exe ..\\..\\dist\\seedcode.exe
 """
 
@@ -29,35 +32,27 @@ import sys
 import zlib
 from pathlib import Path
 
+# Make the repo root importable when this runs as a standalone script.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from seedcode import branding as _branding
+from seedcode.branding import CLEAR, INK, logo_pixels, render_logo_png  # noqa: E402
+
 ASSETS_DIR = Path(__file__).resolve().parents[2] / "assets" / "windows"
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
-# --- palette (mirrors seedcode/ui/theme.py) ---------------------------------
-BG = (13, 17, 23, 255)        # dark panel background
-PRIMARY = (46, 204, 113, 255)  # Seed Green
-ACCENT = (123, 237, 159, 255)  # Soft Green
-DARK = (27, 122, 67, 255)      # seed body
-CLEAR = (0, 0, 0, 0)
+# Canonical 256px logo committed to source control (the official asset the
+# dashboard/UI references).
+LOGO_PNG = REPO_ROOT / "assets" / "logo.png"
 
-# --- the mark: a sprouting seed, 16x16 --------------------------------------
-_ART = [
-    "................",
-    "................",
-    "...LL.....GG....",
-    "..LLLL...GGGG...",
-    ".LLLLLL.GGGGG...",
-    ".LLLLLL.GGGGGG..",
-    "..LLLLL.GGGGG...",
-    "...LLLL.GGGG....",
-    ".....LL.GG......",
-    "......LGG.......",
-    ".......G........",
-    ".......G........",
-    "......DDD.......",
-    ".....DDDDD......",
-    ".....DDDDD......",
-    "......DDD.......",
-]
-_INK = {"L": ACCENT, "G": PRIMARY, "D": DARK}
+# Historical aliases kept so any external references keep resolving.
+BG = (13, 17, 23, 255)         # dark panel background
+PRIMARY = INK["G"]             # Seed Green
+ACCENT = INK["L"]              # Soft Green
+DARK = INK["D"]                # seed body
+# The artwork grid lives in seedcode.branding (single source of truth).
+_ART = _branding.ART
+_INK = _branding.INK
 
 
 def _render(size: int) -> list[list[tuple[int, int, int, int]]]:
@@ -80,23 +75,8 @@ def _render(size: int) -> list[list[tuple[int, int, int, int]]]:
 
 # --- PNG encoding (RGBA, no filters) -----------------------------------------
 def _png(grid: list[list[tuple[int, int, int, int]]]) -> bytes:
-    h, w = len(grid), len(grid[0])
-
-    def chunk(tag: bytes, data: bytes) -> bytes:
-        return (
-            struct.pack(">I", len(data)) + tag + data
-            + struct.pack(">I", zlib.crc32(tag + data))
-        )
-
-    raw = b"".join(
-        b"\x00" + b"".join(bytes(px) for px in row) for row in grid
-    )
-    return (
-        b"\x89PNG\r\n\x1a\n"
-        + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0))
-        + chunk(b"IDAT", zlib.compress(raw, 9))
-        + chunk(b"IEND", b"")
-    )
+    """Encode a pixel grid as PNG — delegates to the canonical renderer."""
+    return render_logo_png(len(grid))
 
 
 # --- ICO assembly --------------------------------------------------------------
@@ -239,6 +219,9 @@ def main() -> None:
 
     build_ico(ico_path)
     verify_ico(ico_path)
+    # Canonical logo asset (committed to source control) + the volatile preview.
+    LOGO_PNG.parent.mkdir(parents=True, exist_ok=True)
+    LOGO_PNG.write_bytes(render_logo_png(256))
     (ASSETS_DIR / "preview.png").write_bytes(_png(_render(256)))
     (ASSETS_DIR / "wizard.bmp").write_bytes(_bmp_file(_wizard_canvas(164, 314, 128)))
     (ASSETS_DIR / "wizard-small.bmp").write_bytes(_bmp_file(_wizard_canvas(55, 58, 48)))
@@ -247,6 +230,7 @@ def main() -> None:
     print(f"[OK] Branding assets written to {ASSETS_DIR}")
     for name in ("seedcode.ico", "wizard.bmp", "wizard-small.bmp", "preview.png"):
         print(f"     {name}  ({(ASSETS_DIR / name).stat().st_size} bytes)")
+    print(f"[OK] Canonical logo: {LOGO_PNG}  ({LOGO_PNG.stat().st_size} bytes)")
 
 
 if __name__ == "__main__":

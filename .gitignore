@@ -47,6 +47,14 @@ seedcode-cli-setup.exe
 /data/
 *.log
 
+# Secrets: the real .env never enters source control. The v6.2.0 release
+# build consumes it locally (scripts/windows/embed_default_key.py) and the
+# generated module it produces is also excluded.
+.env
+.env.*
+!.env.example
+seedcode/_default_key.py
+
 # OS / editor / agent state
 .DS_Store
 Thumbs.db
@@ -62,3 +70,4 @@ Desktop.ini
 *.rej
 *.crdownload
 opencode.txt
+V6.2.0/

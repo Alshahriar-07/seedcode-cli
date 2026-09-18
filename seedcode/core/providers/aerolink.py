@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 
 import httpx
 
+from .. import http as pooled_http
 from .base import (
     ModelInfo,
     Provider,
@@ -58,7 +59,7 @@ class AeroLinkProvider(Provider):
         if not key:
             return ValidationResult(False, "API key is empty.")
         try:
-            response = httpx.get(
+            response = pooled_http.get(
                 f"{_BASE_URL}/v1/models", headers=_headers(key), timeout=20.0
             )
         except httpx.TimeoutException:
@@ -77,7 +78,7 @@ class AeroLinkProvider(Provider):
     def list_models(self, config: "AppConfig") -> list[ModelInfo]:
         key = config.get_api_key("aerolink")
         try:
-            response = httpx.get(
+            response = pooled_http.get(
                 f"{_BASE_URL}/v1/models", headers=_headers(key), timeout=20.0
             )
             response.raise_for_status()
@@ -149,7 +150,7 @@ class AeroLinkProvider(Provider):
     def _stream_payload(self, config: "AppConfig", payload: dict, parser) -> Iterator:
         """POST /v1/messages with shared status handling; yield parser output."""
         try:
-            with httpx.stream(
+            with pooled_http.stream(
                 "POST",
                 f"{_BASE_URL}/v1/messages",
                 headers=_headers(config.get_api_key("aerolink")),

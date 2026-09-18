@@ -52,13 +52,17 @@ _KEY_ACTIONS = {
 }
 
 
-def _exit_application(reason: str) -> None:
+def _exit_application(ui: "UI", reason: str) -> None:
     """The single, explicit application-exit decision.
 
     Called only from unambiguous user actions (the menu's Exit item, leaving
     the menu with Esc/Ctrl+C/Ctrl+D). Marks the lifecycle, enters SHUTDOWN
     (running teardown hooks), and returns; :func:`run` then unwinds and
     ``main`` finishes normally. Task completion and errors never reach here.
+
+    ``ui`` is passed in explicitly by :func:`run` — this module has no global
+    UI instance, and referencing one from here was the root cause of the
+    ``NameError: name 'ui' is not defined`` users saw on Exit.
     """
     lc = lifecycle()
     lc.request_exit(reason)
@@ -227,6 +231,21 @@ def _handle_agent(ui: UI, agent: AgentEngine, history: HistoryStore, text: str) 
     else:
         ui.dim("(no response)")
     history.save(agent.transcript)
+    # v6.2.0: Code Mode sessions leave a compact summary in .seedcode/sessions.
+    try:
+        from . import codemode_state as _cms
+
+        state = _cms.codemode_state()
+        if state.enabled and state.store is not None:
+            state.store.save_session_summary({
+                "goal": text[:200],
+                "outcome": (final.strip() or "(no response)")[:400],
+                "tool_calls": sum(
+                    1 for m in agent.messages if m.role == "tool"
+                ),
+            })
+    except Exception:
+        pass
 
 
 def _make_agent(ui: UI, config: AppConfig) -> AgentEngine:
@@ -338,6 +357,14 @@ def _chat_loop(
     # prompt and permission gates reflect both).
     agent: AgentEngine | None = None
     agent_perm = config.permission_mode
+    # v6.2.0: track Code Mode so a /codemode toggle rebuilds the agent with
+    # workspace context (the engine is constructed lazily per turn).
+    try:
+        from . import codemode_state as _cms
+
+        agent_codemode = _cms.enabled
+    except Exception:
+        agent_codemode = False
 
     while True:
         try:
@@ -389,9 +416,20 @@ def _chat_loop(
         # prompts again. A task can never end the app.
         with lifecycle().task_span():
             if config.agent_mode:
-                if agent is None or agent_perm != config.permission_mode:
+                try:
+                    from . import codemode_state as _cms
+
+                    codemode_now = _cms.enabled
+                except Exception:
+                    codemode_now = False
+                if (
+                    agent is None
+                    or agent_perm != config.permission_mode
+                    or agent_codemode != codemode_now
+                ):
                     agent = _make_agent(ui, config)
                     agent_perm = config.permission_mode
+                    agent_codemode = codemode_now
                 _handle_agent(ui, agent, history, text)
             else:
                 _handle_chat(ui, engine, history, text)
@@ -477,7 +515,7 @@ def run(ui: UI) -> None:
             choice = _main_menu(config)
         except (KeyboardInterrupt, EOFError):
             # The user explicitly left the menu — the app-exit decision.
-            _exit_application("menu interrupt")
+            _exit_application(ui, "menu interrupt")
             return
 
         try:
@@ -499,7 +537,7 @@ def run(ui: UI) -> None:
             elif choice == "about":
                 show_about(ui, config)
             elif choice in ("exit", None):
-                _exit_application("menu exit")
+                _exit_application(ui, "menu exit")
                 return
         except (KeyboardInterrupt, EOFError):
             ui.dim("Cancelled.")

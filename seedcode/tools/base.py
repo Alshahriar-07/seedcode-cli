@@ -114,6 +114,8 @@ def register(
             group=group,
             types=types or {},
         )
+        # A late registration (desktop module import) invalidates the cache.
+        _SPECS_CACHE.clear()
         return runner
 
     return wrap
@@ -143,6 +145,11 @@ def tool_manifest(groups: tuple[str, ...] = ("core",)) -> str:
     return "\n".join(lines)
 
 
+# v6.2.0: specs are immutable for a given registry state, so cache them per
+# group tuple instead of rebuilding JSON schemas on every agent step.
+_SPECS_CACHE: dict[tuple[str, ...], list[dict[str, Any]]] = {}
+
+
 def tool_specs(groups: tuple[str, ...] = ("core",)) -> list[dict[str, Any]]:
     """Neutral name/description/parameters specs for native tool calling.
 
@@ -150,8 +157,15 @@ def tool_specs(groups: tuple[str, ...] = ("core",)) -> list[dict[str, Any]]:
     a provider sends can never drift from the implementation. Each entry is
     ``{"name", "description", "parameters"}`` with ``parameters`` a
     JSON-schema object; args whose description lacks "(optional)" are
-    required.
+    required. Results are cached per ``groups`` (the registry is static after
+    import; the cache is invalidated if a tool is registered).
     """
+    key = tuple(groups)
+    cached = _SPECS_CACHE.get(key)
+    if cached is not None and len(cached) == sum(
+        1 for t in TOOL_REGISTRY.values() if t.group in key
+    ):
+        return cached
     specs: list[dict[str, Any]] = []
     for tool in sorted(TOOL_REGISTRY.values(), key=lambda t: t.name):
         if tool.group not in groups:
@@ -176,4 +190,5 @@ def tool_specs(groups: tuple[str, ...] = ("core",)) -> list[dict[str, Any]]:
                 },
             }
         )
+    _SPECS_CACHE[key] = specs
     return specs

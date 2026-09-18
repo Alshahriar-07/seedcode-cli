@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Any
 import httpx
 
 from ..streaming import iter_stream
+from .. import http as pooled_http
 from ...utils.logger import get_logger
 from .base import (
     ModelInfo,
@@ -95,7 +96,7 @@ def _claude_headers(api_key: str) -> dict[str, str]:
 def _fetch_entries(label: str, url: str, headers: dict[str, str]) -> list[dict[str, Any]]:
     """Fetch one backend's live catalogue. Raises ProviderError."""
     try:
-        response = httpx.get(url, headers=headers, timeout=_TIMEOUT)
+        response = pooled_http.get(url, headers=headers, timeout=_TIMEOUT)
         response.raise_for_status()
         data = response.json().get("data", [])
     except httpx.TimeoutException as exc:
@@ -181,7 +182,7 @@ class FreeModelClaudeProvider(_FreeModelBase):
         def probe() -> httpx.Response:
             # A 1-token Messages request is the lightest call that actually
             # exercises the key (the catalogue endpoint is public).
-            return httpx.post(
+            return pooled_http.post(
                 _CLAUDE_MESSAGES_URL,
                 headers=_claude_headers(key),
                 json={
@@ -252,7 +253,7 @@ class FreeModelClaudeProvider(_FreeModelBase):
         if system:
             payload["system"] = system
         try:
-            with httpx.stream(
+            with pooled_http.stream(
                 "POST",
                 _CLAUDE_MESSAGES_URL,
                 headers=_claude_headers(api_key),
@@ -348,7 +349,7 @@ class FreeModelClaudeProvider(_FreeModelBase):
         if system:
             payload["system"] = system
         try:
-            with httpx.stream(
+            with pooled_http.stream(
                 "POST",
                 _CLAUDE_MESSAGES_URL,
                 headers=_claude_headers(api_key),
@@ -404,7 +405,7 @@ class FreeModelCodexProvider(_FreeModelBase):
         def probe() -> httpx.Response:
             # A 1-token completion is the lightest call that actually
             # exercises the key (the catalogue endpoint is public).
-            return httpx.post(
+            return pooled_http.post(
                 f"{_CODEX_API}/chat/completions",
                 headers=_codex_headers(key),
                 json={

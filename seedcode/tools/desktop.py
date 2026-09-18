@@ -42,6 +42,13 @@ if TYPE_CHECKING:
 # the desktop libraries.
 _controller: "Any | None" = None
 
+# v6.2.0: identity of the last frame queued for the vision pipeline. Successive
+# skill dispatches each trigger an observation; when nothing on screen changed
+# (same window sizes/positions via the screen-state hash), re-encoding and
+# re-attaching an identical PNG wastes CPU and context tokens, so the queued
+# image is reused instead of recaptured.
+_last_frame_key: tuple[str, str] | None = None
+
 
 def get_controller() -> "Any":
     """Return the shared :class:`ComputerController`, building it on first use."""
@@ -356,15 +363,32 @@ def _queue_screenshot(perm: "PermissionManager", path: str | None = None) -> Non
 
     The agent loop attaches the encoded image to the next tool-results message
     when the active provider supports vision. Failure here never fails a tool.
+
+    v6.2.0: when the screen-state hash is unchanged since the last queued
+    frame, the previously encoded image is re-queued instead of recapturing —
+    observation tools run several times per turn and identical frames carry
+    no new information.
     """
+    global _last_frame_key
     desktop = perm.desktop
     if desktop is None:
         return
     try:
         from ..computer import screen
+        from ..computer.screen_state import get_screen_engine
 
         if path is None:
+            # Reuse the cached encode when the desktop has not changed.
+            snap = get_screen_engine().refresh(mode="incremental")
+            key = (snap.window_hash, snap.element_hash)
+            if key == _last_frame_key and desktop.pending_images:
+                desktop.pending_images.append(desktop.pending_images[-1])
+                del desktop.pending_images[:-1]  # keep only the latest frame
+                return
             path = str(screen.capture())
+            _last_frame_key = key
+        else:
+            _last_frame_key = None  # explicit capture: never dedupe it
         desktop.pending_images.append(screen.encode_png_base64(path))
         del desktop.pending_images[:-1]  # keep only the latest frame
     except Exception:

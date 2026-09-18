@@ -20,8 +20,10 @@ from ..utils.logger import get_logger
 _log = get_logger("chat")
 
 # Transparent retry for transient failures before any output has streamed.
+# The backoff is short (v6.2.0): first-token latency matters more than
+# hammering politeness — a provider that is down stays down for 2s too.
 _MAX_RETRIES = 2
-_RETRY_BACKOFF_S = 1.5
+_RETRY_BACKOFF_S = 0.5
 
 
 class ChatError(Exception):

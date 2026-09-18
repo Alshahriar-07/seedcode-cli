@@ -2,10 +2,14 @@
 REM ==========================================================================
 REM  Seed Code - complete Windows build pipeline
 REM    Stage 0: branding assets -> assets\windows\ (icon, wizard art, verinfo)
+REM    Stage 0b: embedded default key -> seedcode\_default_key.py (from .env;
+REM              git-ignored; skipped when .env has no OPENROUTER_API_KEY)
 REM    Stage 1: PyInstaller     -> dist\seedcode.exe  (Seed Code icon embedded)
-REM    Stage 2: Inno Setup      -> Release\SeedCodeSetup.exe
+REM    Stage 2: Inno Setup      -> Release\SeedCode-CLI-Setup-<ver>.exe
+REM    Stage 3: release staging -> dist\release\<ver>\ + SHA256SUMS.txt
 REM  Every stage is verified; the pipeline never reports success on a stale
-REM  or unbranded artifact. No manual steps in between.
+REM  or unbranded artifact. No manual steps in between. The .env secret is
+REM  consumed locally and never printed, logged, or committed.
 REM ==========================================================================
 setlocal EnableDelayedExpansion
 
@@ -69,6 +73,23 @@ if not exist "%ICON%" (
     exit /b 1
 )
 echo [OK] Stage 0 complete: Seed Code icon and wizard art verified.
+
+REM ==========================================================================
+REM  STAGE 0b - embedded default API key (v6.2.0 out-of-the-box behavior)
+REM  Consumes the local .env (never printed) and generates the git-ignored
+REM  seedcode\_default_key.py that ships inside the frozen exe. A checkout
+REM  without OPENROUTER_API_KEY in .env builds a normal (setup-required)
+REM  artifact instead - the pipeline must not fail or leak in that case.
+REM ==========================================================================
+echo [STEP] Embedding the default API configuration from .env...
+%PY_CMD% "%~dp0embed_default_key.py" --env-file "%REPO_ROOT%\.env" >> "%LOG_FILE%" 2>&1
+if errorlevel 1 (
+    echo [WARN] No OPENROUTER_API_KEY in .env - building WITHOUT the embedded
+    echo        default key ^(end users will run guided setup on first launch^).
+    echo [WARN] default key not embedded ^(no .env entry^) >> "%LOG_FILE%"
+) else (
+    echo [OK] Default API configuration embedded into the build.
+)
 
 REM ==========================================================================
 REM  STAGE 1 - standalone executable (with the Seed Code icon embedded)
@@ -158,6 +179,17 @@ if defined TESSDIR (
     echo [WARN] tesseract missing at build time >> "%LOG_FILE%"
 )
 
+REM The generated key module is optional: a build without the embedded key
+REM (no .env entry) must still succeed, so the --add-data for it is added
+REM only when the Stage 0b generation actually produced the file.
+set "KEY_ARGS="
+if exist "%REPO_ROOT%\seedcode\_default_key.py" (
+    set "KEY_ARGS=--add-data "%REPO_ROOT%\seedcode\_default_key.py;seedcode""
+    echo [INFO] Packaging the embedded default key module.
+) else (
+    echo [INFO] No embedded key module - packaging without it.
+)
+
 echo [STEP] Running PyInstaller ^(this can take a few minutes^)...
 %PY_CMD% -m PyInstaller --noconfirm --clean --onefile --console ^
     --name seedcode ^
@@ -166,6 +198,7 @@ echo [STEP] Running PyInstaller ^(this can take a few minutes^)...
     --distpath "%REPO_ROOT%\dist" ^
     --workpath "%REPO_ROOT%\build" ^
     --specpath "%REPO_ROOT%\build" ^
+    !KEY_ARGS! ^
     --collect-all rich ^
     --collect-all prompt_toolkit ^
     --collect-submodules pydantic ^
@@ -217,6 +250,14 @@ if errorlevel 1 (
 echo [OK] Stage 1 complete: fresh, branded executable verified ^(v%SRC_VERSION%^).
 
 REM ==========================================================================
+REM  STAGE 0b cleanup - the generated key module lives only for packaging.
+REM  It is git-ignored either way, but removing it right after PyInstaller
+REM  keeps the working tree clean while the pip/wheel builds below still run
+REM  from a source tree that never carries the secret.
+REM ==========================================================================
+%PY_CMD% "%~dp0embed_default_key.py" --clean >> "%LOG_FILE%" 2>&1
+
+REM ==========================================================================
 REM  STAGE 2 - installer
 REM ==========================================================================
 echo.
@@ -235,31 +276,32 @@ if not defined ISCC (
 )
 echo [INFO] Using ISCC: %ISCC%
 
-REM Delete the previous installer first: if SeedCodeSetup.exe exists after
+REM Delete the previous installer first: if the versioned setup exists after
 REM ISCC runs, it was provably produced by THIS compile of THIS build.
 if not exist "%REPO_ROOT%\Release" mkdir "%REPO_ROOT%\Release"
-if exist "%REPO_ROOT%\Release\SeedCodeSetup.exe" del /f /q "%REPO_ROOT%\Release\SeedCodeSetup.exe" >nul 2>&1
-if exist "%REPO_ROOT%\Release\SeedCodeSetup.exe" (
-    echo [ERROR] Could not delete the old Release\SeedCodeSetup.exe - locked.
+if exist "%REPO_ROOT%\Release\%SETUP_NAME%.exe" del /f /q "%REPO_ROOT%\Release\%SETUP_NAME%.exe" >nul 2>&1
+if exist "%REPO_ROOT%\Release\%SETUP_NAME%.exe" (
+    echo [ERROR] Could not delete the old Release\%SETUP_NAME%.exe - locked.
     exit /b 5
 )
 
 REM /DAppVersionFromBuild injects the verified source version, so the
 REM installer metadata can never disagree with the executable it packages.
-"%ISCC%" /DAppVersionFromBuild=%SRC_VERSION% /O"%REPO_ROOT%\Release" "%~dp0setup.iss" >> "%LOG_FILE%" 2>&1
+set "SETUP_NAME=SeedCode-CLI-Setup-%SRC_VERSION%"
+"%ISCC%" /DAppVersionFromBuild=%SRC_VERSION% /DOutputBaseName=%SETUP_NAME% /O"%REPO_ROOT%\Release" "%~dp0setup.iss" >> "%LOG_FILE%" 2>&1
 if errorlevel 1 (
     echo [ERROR] Inno Setup compilation failed. See "%LOG_FILE%".
     exit /b 1
 )
-if not exist "%REPO_ROOT%\Release\SeedCodeSetup.exe" (
-    echo [ERROR] ISCC succeeded but Release\SeedCodeSetup.exe is missing.
+if not exist "%REPO_ROOT%\Release\%SETUP_NAME%.exe" (
+    echo [ERROR] ISCC succeeded but Release\%SETUP_NAME%.exe is missing.
     exit /b 1
 )
 
 REM The installer must also carry the branding: its own icon resource comes
 REM from SetupIconFile, so the same PNG payload must be present inside it.
 echo [STEP] Verifying the installer embeds the Seed Code icon...
-%PY_CMD% "%~dp0build_assets.py" --verify-exe "%REPO_ROOT%\Release\SeedCodeSetup.exe"
+%PY_CMD% "%~dp0build_assets.py" --verify-exe "%REPO_ROOT%\Release\%SETUP_NAME%.exe"
 if errorlevel 1 (
     echo [ERROR] The installer does NOT contain the Seed Code icon.
     exit /b 5
@@ -276,7 +318,7 @@ if exist "%REPO_ROOT%\seedcode-cli-setup.exe" (
     echo [ERROR] Could not replace the existing seedcode-cli-setup.exe - it is locked.
     exit /b 5
 )
-copy /y "%REPO_ROOT%\Release\SeedCodeSetup.exe" "%REPO_ROOT%\seedcode-cli-setup.exe" >nul 2>&1
+copy /y "%REPO_ROOT%\Release\%SETUP_NAME%.exe" "%REPO_ROOT%\seedcode-cli-setup.exe" >nul 2>&1
 if not exist "%REPO_ROOT%\seedcode-cli-setup.exe" (
     echo [ERROR] Failed to copy the installer to "%REPO_ROOT%\seedcode-cli-setup.exe".
     exit /b 5
@@ -290,13 +332,26 @@ if errorlevel 1 (
     exit /b 5
 )
 
+REM ==========================================================================
+REM  STAGE 3 - versioned release directory + checksums
+REM  Collects the final artifacts into dist\release\<ver>\ and writes
+REM  SHA256SUMS.txt (real hashes only - never invented).
+REM ==========================================================================
+echo [STEP] Staging the release directory...
+%PY_CMD% "%~dp0stage_release.py" --version %SRC_VERSION% --dist "%REPO_ROOT%\dist" --installer "%REPO_ROOT%\Release\%SETUP_NAME%.exe" >> "%LOG_FILE%" 2>&1
+if errorlevel 1 (
+    echo [ERROR] Release staging failed. See "%LOG_FILE%".
+    exit /b 1
+)
+
 echo.
 echo ============================================================
 echo   [SUCCESS] Build pipeline complete.
 echo   Standalone exe : %REPO_ROOT%\dist\seedcode.exe
-echo   Installer      : %REPO_ROOT%\seedcode-cli-setup.exe  ^(v%SRC_VERSION%^)
-echo   Staging copy   : %REPO_ROOT%\Release\SeedCodeSetup.exe
-echo   Both verified: correct version + Seed Code icon embedded.
+echo   Installer      : %REPO_ROOT%\Release\%SETUP_NAME%.exe  ^(v%SRC_VERSION%^)
+echo   Published copy : %REPO_ROOT%\seedcode-cli-setup.exe
+echo   Release dir    : %REPO_ROOT%\dist\release\%SRC_VERSION%\  ^(with SHA256SUMS.txt^)
+echo   Both binaries verified: correct version + Seed Code icon embedded.
 echo ============================================================
 echo [SUCCESS] pipeline complete >> "%LOG_FILE%"
 exit /b 0

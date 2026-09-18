@@ -1,7 +1,7 @@
 # yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.9.0.schema.json
 # Created by scripts/winget/build_manifest.py - do not edit by hand.
 PackageIdentifier: SeedCode.CLI
-PackageVersion: 6.1.5
+PackageVersion: 6.2.0
 InstallerType: inno
 InstallModes:
   - interactive
@@ -13,8 +13,8 @@ Installers:
   - Architecture: x64
     Scope: machine
     InstallerLocale: en-US
-    InstallerUrl: https://github.com/Alshahriar-07/seedcode-cli/releases/download/v6.1.5/seedcode-cli-setup.exe
-    InstallerSha256: 04A7C68F8E7347750E1AFB6982E1DA950160FEC998B05AD859A476A1BA2AFF5F
+    InstallerUrl: https://github.com/Alshahriar-07/seedcode-cli/releases/download/v6.2.0/seedcode-cli-setup.exe
+    InstallerSha256: 42184138E8780A7CC87F57DDE245653FA134A9D521C67842ABA15999B87BBFA0
     InstallerSwitches:
       Silent: /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
       SilentWithProgress: /SILENT /SUPPRESSMSGBOXES /NORESTART
@@ -28,6 +28,6 @@ Installers:
     # DisplayVersion is omitted because it equals PackageVersion.
     AppsAndFeaturesEntries:
       - DisplayName: Seed Code
-        Publisher: Al Shahriar Sowan
+        Publisher: Eagox Studio
 ManifestType: installer
 ManifestVersion: 1.9.0

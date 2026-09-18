@@ -20,6 +20,13 @@ from typing import Any
 # full audit log (that's the logbook's job).
 _MAX_TRAIL = 12
 
+# v6.2.0: how long a refreshed window snapshot stays trusted. Window
+# enumeration is one of the slower driver calls and ``refresh()`` runs before
+# every skill dispatch; within the TTL the cached ``running_apps`` (and
+# focused window) are reused instead of re-walking the desktop. Mutating
+# skills call :meth:`invalidate` so a focus/launch/close is always reflected.
+_STATE_TTL_S = 1.5
+
 
 @dataclass
 class ComputerState:
@@ -98,13 +105,25 @@ class StateManager:
         self._windows = windows
         self._mouse = mouse
         self.state = ComputerState()
+        # v6.2.0: monotonic deadline for the cached window snapshot.
+        self._windows_valid_until = 0.0
+
+    def invalidate(self) -> None:
+        """Force the next :meth:`refresh` to re-read the live desktop."""
+        self._windows_valid_until = 0.0
 
     def refresh(self) -> ComputerState:
         """Re-read the live parts of the state from the drivers.
 
         Best-effort: a driver that raises (no desktop, flaky COM) leaves the
-        previous value in place rather than crashing the turn.
+        previous value in place rather than crashing the turn. Within
+        ``_STATE_TTL_S`` of a successful refresh the cached snapshot is
+        reused (v6.2.0) — repeated dispatches in one turn stop re-walking an
+        unchanged desktop.
         """
+        now = time.monotonic()
+        if now < self._windows_valid_until:
+            return self.state
         try:
             active = self._windows.active_window()
             if active is not None:
@@ -136,6 +155,7 @@ class StateManager:
                 self.state.open_browser_url = url
         except Exception:
             pass
+        self._windows_valid_until = now + _STATE_TTL_S
         return self.state
 
     def _browser_url(self) -> str | None:
@@ -183,6 +203,8 @@ class StateManager:
         if window_title:
             self.state.focused_window = window_title
             self.state.focused_app = _app_from_title(window_title)
+            # The desktop just changed: the cached snapshot is stale.
+            self.invalidate()
 
 
 def _app_from_title(title: str | None) -> str | None:

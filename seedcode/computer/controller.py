@@ -22,12 +22,22 @@ from . import screen as screen_driver
 from . import vision as vision_driver
 from . import windows as windows_driver
 
+# v6.2.0: open_app waits for real window evidence instead of a fixed sleep.
+_OPEN_APP_WAIT_S = 3.0
+_OPEN_APP_POLL_S = 0.1
+
 _log = get_logger("computer")
 
 # One agent turn may not wait forever; desktop_wait is clamped to this.
 MAX_WAIT_S = 30.0
 # Settle time after mutating actions before state is read for verification.
-_VERIFY_DELAY_S = 0.3
+# v6.2.0: 0.3s -> 0.12s. UI Automation state is re-read live for every verify,
+# so the fixed pause only needs to cover the input-synthesis-to-tree-update
+# gap, which is well under a tenth of a second on any healthy desktop.
+_VERIFY_DELAY_S = 0.12
+# v6.2.0: focus retry pause 0.4s -> 0.15s (same reasoning; the retry itself
+# already re-checks live state).
+_FOCUS_RETRY_PAUSE_S = 0.15
 
 
 class ComputerError(Exception):
@@ -158,7 +168,7 @@ class ComputerController:
                 last_error = None
             except Exception as exc:
                 last_error = exc
-            time.sleep(0.4)  # let the window manager settle, then retry
+            time.sleep(_FOCUS_RETRY_PAUSE_S)  # let the window manager settle, then retry
         if last_error is not None:
             raise ComputerError(f"Could not focus '{title}': {last_error}")
         active = self.windows.active_window()
@@ -168,11 +178,30 @@ class ComputerController:
         )
 
     def open_app(self, target: str) -> str:
+        """Launch and wait for evidence the app actually came up.
+
+        v6.2.0: the old fixed ``sleep(1.0)`` is replaced by a state-based wait
+        — poll for a matching window (300ms cadence) and return as soon as one
+        exists, capped at ``_OPEN_APP_WAIT_S``. Fast apps continue
+        immediately; slow apps get up to the cap instead of a one-size delay.
+        """
         try:
             message = self.windows.open_app(target)
         except Exception as exc:
             raise ComputerError(str(exc))
-        time.sleep(1.0)  # give the app a moment to show a window
+        deadline = time.monotonic() + _OPEN_APP_WAIT_S
+        needle = target.strip().lower()
+        while time.monotonic() < deadline:
+            try:
+                for win in self.windows.list_windows():
+                    if needle and needle in (getattr(win, "title", "") or "").lower():
+                        return message + "\n" + self._state_after()
+            except Exception:
+                break  # window enumeration unavailable: fall through to settle
+            time.sleep(_OPEN_APP_POLL_S)
+        # No window evidence yet: a short settle, then report (the verifier /
+        # recovery engine still checks and can replan).
+        time.sleep(_VERIFY_DELAY_S)
         return message + "\n" + self._state_after()
 
     def close_app(self, title: str, force: bool = False) -> str:

@@ -19,7 +19,8 @@ from __future__ import annotations
 
 import os
 import shutil
-from dataclasses import dataclass, field
+import time
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -50,7 +51,32 @@ _START_MENU_DIRS = (
 )
 
 
+# --- v6.2.0 discovery caches ----------------------------------------------------
+# Start Menu scans (rglob over two trees) and the registry walks (App Paths +
+# uninstall keys) are the slow part of discovery; installed software changes
+# on the scale of minutes, not milliseconds, so caching them briefly is safe.
+# Entries are copied on return so callers (find_app resolves the exe on an
+# uninstall entry) can never mutate the cached record.
+_START_MENU_TTL_S = 5.0
+_REGISTRY_TTL_S = 30.0
+_start_menu_cache: tuple[float, list[Path]] | None = None
+_app_paths_cache: tuple[float, dict[str, AppInfo]] | None = None
+_uninstall_cache: tuple[float, dict[str, AppInfo]] | None = None
+
+
+def _reset_discovery_cache() -> None:
+    """Drop all discovery caches (tests, session teardown)."""
+    global _start_menu_cache, _app_paths_cache, _uninstall_cache
+    _start_menu_cache = None
+    _app_paths_cache = None
+    _uninstall_cache = None
+
+
 def _iter_start_menu() -> list[Path]:
+    global _start_menu_cache
+    now = time.monotonic()
+    if _start_menu_cache is not None and now - _start_menu_cache[0] < _START_MENU_TTL_S:
+        return list(_start_menu_cache[1])
     shortcuts: list[Path] = []
     for base in _START_MENU_DIRS:
         try:
@@ -58,7 +84,8 @@ def _iter_start_menu() -> list[Path]:
                 shortcuts.extend(base.rglob("*.lnk"))
         except OSError:
             continue
-    return shortcuts
+    _start_menu_cache = (now, shortcuts)
+    return list(shortcuts)
 
 
 def _shortcut_display_name(path: Path) -> str:
@@ -76,6 +103,9 @@ def _match_name(haystack: str, needle: str) -> bool:
 # --- source 2: App Paths -----------------------------------------------------------
 def _app_paths() -> dict[str, AppInfo]:
     """``App Paths`` registrations: exe name -> full path (best-effort)."""
+    global _app_paths_cache
+    if _app_paths_cache is not None and time.monotonic() - _app_paths_cache[0] < _REGISTRY_TTL_S:
+        return {k: replace(v) for k, v in _app_paths_cache[1].items()}
     found: dict[str, AppInfo] = {}
     if os.name != "nt":
         return found
@@ -108,12 +138,16 @@ def _app_paths() -> dict[str, AppInfo]:
                     )
     except ImportError:
         pass
+    _app_paths_cache = (time.monotonic(), found)
     return found
 
 
 # --- source 3: uninstall registrations ----------------------------------------------
 def _uninstall_apps() -> dict[str, AppInfo]:
     """Display-name/install-location entries from the uninstall keys."""
+    global _uninstall_cache
+    if _uninstall_cache is not None and time.monotonic() - _uninstall_cache[0] < _REGISTRY_TTL_S:
+        return {k: replace(v) for k, v in _uninstall_cache[1].items()}
     found: dict[str, AppInfo] = {}
     if os.name != "nt":
         return found
@@ -158,6 +192,7 @@ def _uninstall_apps() -> dict[str, AppInfo]:
                         found.setdefault(name.lower(), entry)
     except ImportError:
         pass
+    _uninstall_cache = (time.monotonic(), found)
     return found
 
 

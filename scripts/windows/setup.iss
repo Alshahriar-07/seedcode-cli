@@ -29,7 +29,7 @@
 #ifdef AppVersionFromBuild
   #define MyAppVersion AppVersionFromBuild
 #else
-  #define MyAppVersion "6.1.5"
+  #define MyAppVersion "6.2.0"
 #endif
 ; Refuse to compile without the build outputs - packaging nothing (or a
 ; leftover) must fail loudly, not "succeed".
@@ -73,8 +73,14 @@ WizardStyle=modern
 UninstallDisplayName={#MyAppName}
 UninstallDisplayIcon={app}\seedcode.ico
 ; Default output; build.bat overrides with /O to target the repo-root Release\.
+; and /DOutputBaseName to stamp the versioned installer filename.
 OutputDir=..\..\Release
-OutputBaseFilename=SeedCodeSetup
+#ifdef OutputBaseName
+  #define OutBase OutputBaseName
+#else
+  #define OutBase "SeedCodeSetup"
+#endif
+OutputBaseFilename={#OutBase}
 Compression=lzma2
 SolidCompression=yes
 PrivilegesRequired=admin

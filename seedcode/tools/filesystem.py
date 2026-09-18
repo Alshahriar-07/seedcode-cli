@@ -23,10 +23,12 @@ if TYPE_CHECKING:
 _MAX_READ_BYTES = 256 * 1024
 _MAX_INDEX_ENTRIES = 400
 
-# Directories that never belong in a project index.
+# Directories that never belong in a project index. ".seedcode" is Code
+# Mode's own project memory — internal state, not source code (v6.2.0).
 _INDEX_SKIP = {
     ".git", "__pycache__", ".pytest_cache", "node_modules", ".venv", "venv",
     "dist", "build", ".mypy_cache", ".ruff_cache", ".idea", ".vscode",
+    ".seedcode",
 }
 
 

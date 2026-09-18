@@ -19,6 +19,28 @@ from .defaults import ENV_KEYS
 _log = get_logger("config")
 
 
+def _apply_default_api(config: AppConfig) -> None:
+    """v6.2.0 embedded default: a stored OpenRouter key wins over it.
+
+    Priority: explicit user key > OPENROUTER_API_KEY env var > embedded
+    default (release artifacts only). The embedded key is written into the
+    config's OpenRouter slot like any other key so every existing consumer
+    (dashboard status, validation, chat) sees a ready provider.
+    """
+    from ..default_api import resolve_openrouter_key
+
+    stored = config.get_api_key("openrouter")
+    env_key = ""
+    for env_name in ENV_KEYS.get("openrouter", ()):
+        env_key = os.environ.get(env_name, "").strip()
+        if env_key:
+            break
+    key, source = resolve_openrouter_key(stored, env_key)
+    if key and source != "user":
+        config.set_api_key("openrouter", key)
+        _log.info("openrouter key resolved from %s", source)
+
+
 def load_config() -> AppConfig:
     """Load configuration from disk, falling back to defaults on any error."""
     path = config_path()
@@ -44,6 +66,10 @@ def load_config() -> AppConfig:
                 config.set_api_key(provider_id, env_key)
                 _log.info("api key for %s taken from %s", provider_id, env_name)
                 break
+
+    # v6.2.0: embedded default key (release builds) fills the OpenRouter
+    # slot last — explicit user keys and env vars already won above.
+    _apply_default_api(config)
 
     return config
 

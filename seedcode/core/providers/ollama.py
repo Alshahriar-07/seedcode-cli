@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 
 import httpx
 
+from .. import http as pooled_http
 from .base import (
     ModelInfo,
     Provider,
@@ -99,14 +100,14 @@ class OllamaProvider(Provider):
     def detect(self, config: "AppConfig") -> bool:
         """True when the Ollama server answers on the configured host."""
         try:
-            response = httpx.get(f"{config.ollama_host}/api/tags", timeout=_DETECT_TIMEOUT)
+            response = pooled_http.get(f"{config.ollama_host}/api/tags", timeout=_DETECT_TIMEOUT)
             return response.status_code == 200
         except httpx.HTTPError:
             return False
 
     def list_models(self, config: "AppConfig") -> list[ModelInfo]:
         try:
-            response = httpx.get(f"{config.ollama_host}/api/tags", timeout=_DETECT_TIMEOUT)
+            response = pooled_http.get(f"{config.ollama_host}/api/tags", timeout=_DETECT_TIMEOUT)
             response.raise_for_status()
             entries = response.json().get("models", [])
         except httpx.HTTPError as exc:
@@ -140,7 +141,7 @@ class OllamaProvider(Provider):
             "stream": True,
         }
         try:
-            with httpx.stream(
+            with pooled_http.stream(
                 "POST", f"{config.ollama_host}/api/chat", json=payload, timeout=_CHAT_TIMEOUT
             ) as response:
                 if response.status_code == 404:
@@ -207,7 +208,7 @@ class OllamaProvider(Provider):
         }
         call_counter = 0
         try:
-            with httpx.stream(
+            with pooled_http.stream(
                 "POST", f"{config.ollama_host}/api/chat", json=payload, timeout=_CHAT_TIMEOUT
             ) as response:
                 if response.status_code == 404:

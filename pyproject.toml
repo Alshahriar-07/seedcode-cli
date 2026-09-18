@@ -84,8 +84,16 @@ seedcode = "seedcode.cli:main"
 [tool.hatch.version]
 path = "seedcode/__init__.py"
 
+# Safety net: refuse to build a wheel/sdist while the generated secret module
+# (release-EXE-only, git-ignored) exists in the tree.
+[tool.hatch.build.hooks.custom]
+path = "scripts/pyproject_build_hook.py"
+require-runtime-dependencies = false
+
 [tool.hatch.build.targets.wheel]
 packages = ["seedcode"]
 
 [tool.hatch.build.targets.sdist]
-include = ["seedcode", "README.md", "LICENSE"]
+# The build hook ships in the sdist: pip rebuilds the wheel from the
+# extracted sdist, and hatchling must be able to load the hook there.
+include = ["seedcode", "scripts/pyproject_build_hook.py", "README.md", "LICENSE"]

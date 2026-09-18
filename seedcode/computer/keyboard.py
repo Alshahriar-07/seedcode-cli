@@ -77,7 +77,15 @@ def _assert_safe_input() -> None:
         )
 
 
-def type_text(text: str, interval: float = 0.02) -> None:
+def type_text(text: str, interval: float = 0.008) -> None:
+    """Type ``text``; ``interval`` is the per-key delay.
+
+    v6.2.0: 20ms -> 8ms per key. Win32 synthesized input is processed
+    asynchronously by the target app, so 8ms still delivers every keystroke
+    in order while making long text entry (URLs, search queries, code) about
+    2.5x faster. Very short intervals caused dropped keys in some Java apps;
+    8ms keeps a safety margin.
+    """
     _assert_safe_input()
     if len(text) > MAX_TEXT_LENGTH:
         raise ValueError(

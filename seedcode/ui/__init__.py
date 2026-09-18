@@ -86,15 +86,20 @@ class UI:
     def streaming(self) -> Iterator["StreamRenderer"]:
         """Provide a live, incrementally-updating markdown renderer."""
         renderer = StreamRenderer(self.console)
-        with Live(
-            renderer.renderable(),
-            console=self.console,
-            refresh_per_second=15,
-            transient=False,
-        ) as live:
-            renderer.bind(live)
-            yield renderer
-        self.console.print()
+        try:
+            with Live(
+                renderer.renderable(),
+                console=self.console,
+                refresh_per_second=15,
+                transient=False,
+            ) as live:
+                renderer.bind(live)
+                yield renderer
+                # Final frame: show any tokens the throttle had not yet drawn.
+                renderer.flush()
+            self.console.print()
+        finally:
+            pass
 
     # --- messaging ---------------------------------------------------------
     def info(self, message: str) -> None:

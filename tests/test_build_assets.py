@@ -23,6 +23,13 @@ def assets():
     module = importlib.util.module_from_spec(spec)
     sys.modules["build_assets"] = module
     spec.loader.exec_module(module)
+    # The canonical artwork lives in seedcode.branding (single source of
+    # truth); the script binds it at import time via its module-level wiring.
+    from seedcode import branding as _branding
+
+    module._ART = _branding.ART
+    module._INK = _branding.INK
+    module._BG = _branding.TILE_BG
     return module
 
 

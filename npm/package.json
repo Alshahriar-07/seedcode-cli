@@ -1,0 +1,40 @@
+{
+  "name": "seedcode-cli",
+  "version": "6.2.0",
+  "description": "Seed Code CLI - a premium terminal-based AI coding assistant. Plant ideas. Grow code. (Launcher: downloads the official Seed Code binary for your platform.)",
+  "license": "MIT",
+  "author": "Al Shahriar Sowan <github@eagox.studio>",
+  "publisher": "Eagox Studio",
+  "homepage": "https://github.com/Alshahriar-07/seedcode-cli",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Alshahriar-07/seedcode-cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Alshahriar-07/seedcode-cli/issues"
+  },
+  "keywords": [
+    "ai",
+    "cli",
+    "terminal",
+    "coding-assistant",
+    "seedcode",
+    "agent"
+  ],
+  "files": [
+    "bin/seedcode.js",
+    "lib/download.js",
+    "lib/resolve.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "bin": {
+    "seedcode": "bin/seedcode.js"
+  },
+  "engines": {
+    "node": ">=16"
+  },
+  "scripts": {
+    "pack:check": "npm pack --dry-run"
+  }
+}
