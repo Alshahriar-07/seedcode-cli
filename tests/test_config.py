@@ -4,15 +4,22 @@ from __future__ import annotations
 
 from seedcode.core.models import DEFAULT_MAX_TOKENS, AppConfig
 
-_ALL = ("openrouter", "freemodel_claude", "freemodel_codex", "aerolink", "ollama")
+_ALL = (
+    "default",
+    "openrouter",
+    "freemodel_claude",
+    "freemodel_codex",
+    "aerolink",
+    "ollama",
+)
 
 
 def test_config_defaults() -> None:
     cfg = AppConfig()
     assert cfg.model == ""  # models are never hardcoded
-    assert cfg.provider == "freemodel_claude"
+    assert cfg.provider == "default"  # the built-in, zero-setup connection
     assert cfg.max_tokens == DEFAULT_MAX_TOKENS
-    assert not cfg.is_configured()
+    assert not cfg.is_configured()  # no model chosen yet
 
 
 def test_max_tokens_clamped() -> None:
@@ -68,17 +75,21 @@ def test_tool_message_round_trip() -> None:
 
 
 def test_per_provider_keys() -> None:
-    cfg = AppConfig()
+    cfg = AppConfig(provider="freemodel_claude")
     cfg.set_api_key("freemodel_claude", "fe_oa_abc")
     cfg.set_api_key("aerolink", "al-key")
     assert cfg.get_api_key("freemodel_claude") == "fe_oa_abc"
-    assert cfg.get_api_key() == "fe_oa_abc"  # active provider default
+    assert cfg.get_api_key() == "fe_oa_abc"  # active provider's own key
     cfg.provider = "aerolink"
     assert cfg.get_api_key() == "al-key"
+    # Default keeps its OWN slot; it never inherits another provider's key.
+    cfg.provider = "default"
+    assert cfg.get_api_key() == ""
+    assert cfg.get_api_key("freemodel_claude") == "fe_oa_abc"
 
 
 def test_is_configured_per_provider() -> None:
-    cfg = AppConfig(model="some/model")
+    cfg = AppConfig(provider="freemodel_claude", model="some/model")
     assert not cfg.is_configured()  # freemodel_claude without key
     cfg.set_api_key("freemodel_claude", "fe_oa_abc")
     assert cfg.is_configured()
@@ -86,8 +97,25 @@ def test_is_configured_per_provider() -> None:
     assert cfg.is_configured()  # ollama never needs a key
 
 
+def test_default_needs_no_user_key_but_needs_the_builtin(monkeypatch) -> None:
+    from seedcode import default_api
+
+    cfg = AppConfig(provider="default", model="some/model")
+    # No built-in credential in this build -> not usable, no fake readiness.
+    monkeypatch.setattr(default_api, "_load_embedded", lambda: ("", False, "none"))
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("SEEDCODE_DEFAULT_API_KEY", raising=False)
+    assert not cfg.is_configured()
+    # A packaged release carries the credential -> ready with no user key.
+    monkeypatch.setattr(
+        default_api, "_load_embedded", lambda: ("builtin-key", True, "release")
+    )
+    assert cfg.is_configured()
+    assert cfg.get_api_key() == ""  # ...still without storing a user key
+
+
 def test_model_memory_per_provider() -> None:
-    cfg = AppConfig(model="a/b")
+    cfg = AppConfig(provider="freemodel_claude", model="a/b")
     cfg.provider = "ollama"
     assert cfg.recall_model() == ""
     cfg.model = "llama3.2"
@@ -159,14 +187,14 @@ def test_v2_freemodel_default_backend_maps_to_codex() -> None:
 
 def test_unknown_active_provider_falls_back_to_default() -> None:
     cfg = AppConfig.model_validate({"active_provider": "bogus"})
-    assert cfg.active_provider == "freemodel_claude"
+    assert cfg.active_provider == "default"
 
 
 def test_stored_shape_is_nested() -> None:
     dumped = AppConfig().model_dump()
-    assert dumped["active_provider"] == "freemodel_claude"
+    assert dumped["active_provider"] == "default"
     assert set(dumped["providers"]) >= set(_ALL)
-    assert dumped["providers"]["freemodel_claude"] == {
+    assert dumped["providers"]["openrouter"] == {
         "api_key": "", "model": "", "options": {}
     }
     # Round-trips losslessly.
@@ -176,7 +204,7 @@ def test_stored_shape_is_nested() -> None:
     assert AppConfig.model_validate(cfg.model_dump()) == cfg
 
 
-def test_five_provider_keys_are_isolated() -> None:
+def test_six_provider_keys_are_isolated() -> None:
     cfg = AppConfig()
     cfg.set_api_key("openrouter", "sk-or-1")
     cfg.set_api_key("freemodel_claude", "fe_oa_2")
@@ -186,11 +214,13 @@ def test_five_provider_keys_are_isolated() -> None:
     assert cfg.get_api_key("freemodel_claude") == "fe_oa_2"
     assert cfg.get_api_key("freemodel_codex") == "fe_oa_3"
     assert cfg.get_api_key("aerolink") == "al-4"
+    # The key-less providers never borrow another provider's key.
     assert cfg.get_api_key("ollama") == ""
+    assert cfg.get_api_key("default") == ""
 
 
 def test_switching_never_overwrites_other_providers() -> None:
-    cfg = AppConfig(model="claude-one")
+    cfg = AppConfig(provider="freemodel_claude", model="claude-one")
     cfg.set_api_key("freemodel_claude", "fe_oa_abc")
     cfg.provider = "freemodel_codex"
     cfg.set_api_key("freemodel_codex", "fe_oa_xyz")
@@ -211,7 +241,7 @@ def test_switching_never_overwrites_other_providers() -> None:
 
 def test_masked_key() -> None:
     assert AppConfig().masked_key() == "(not set)"
-    cfg = AppConfig()
+    cfg = AppConfig(provider="freemodel_claude")
     cfg.set_api_key("freemodel_claude", "fe_oa_1234567890abcdef")
     masked = cfg.masked_key("freemodel_claude")
     assert masked.startswith("fe_oa_12") and masked.endswith("cdef")

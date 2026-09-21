@@ -54,6 +54,40 @@ class TestStreamingTerminal:
         result = run_command(perm, f'"{sys.executable}" -c "raise SystemExit(3)"', 30)
         assert not result.ok and "exit code 3" in result.output
 
+    def test_stderr_is_captured(self, perm):
+        """stderr is part of the result (merged with stdout, order preserved)."""
+        code = "import sys; sys.stdout.write('out\\n'); sys.stderr.write('err\\n')"
+        result = run_command(perm, f'"{sys.executable}" -c "{code}"', 30)
+        assert result.ok
+        assert "out" in result.output and "err" in result.output
+
+    def test_stderr_only_failure_is_reported_with_exit_code(self, perm):
+        code = "import sys; sys.stderr.write('kaboom\\n'); raise SystemExit(2)"
+        result = run_command(perm, f'"{sys.executable}" -c "{code}"', 30)
+        assert not result.ok
+        assert "exit code 2" in result.output and "kaboom" in result.output
+
+    def test_output_streams_while_the_command_is_still_running(self, perm):
+        """Live streaming: output is delivered before the process exits.
+
+        This is what keeps the UI responsive — the caller sees progress
+        instead of blocking until the command finishes.
+        """
+        code = (
+            "import time,sys; print('first', flush=True); "
+            "time.sleep(3); print('last')"
+        )
+        marks: list[float] = []
+        start = time.monotonic()
+        result = run_command(
+            perm,
+            f'"{sys.executable}" -c "{code}"',
+            30,
+            on_line=lambda _line: marks.append(time.monotonic() - start),
+        )
+        assert result.ok and "last" in result.output
+        assert marks and marks[0] < 2.0  # arrived long before the 3s sleep ended
+
     def test_timeout_kills_the_process(self, perm):
         start = time.monotonic()
         result = run_command(

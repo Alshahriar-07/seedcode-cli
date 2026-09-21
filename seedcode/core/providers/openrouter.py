@@ -53,6 +53,47 @@ _HEADERS = {
 MODE_FREE = "free"
 MODE_PRO = "pro"
 
+# Retry-After hints larger than this are treated as unparseable: the engine
+# caps the wait anyway, but an absurd value should never reach it raw.
+_MAX_RETRY_AFTER_S = 120.0
+
+
+def _retry_after_seconds(exc: Any) -> float | None:
+    """The provider's ``Retry-After`` hint for a 429, in seconds (or None).
+
+    The OpenAI SDK attaches the raw ``httpx.Response`` to its errors, so a
+    genuine HTTP 429 carries the header the server sent. Anything unusable —
+    missing response, missing header, non-numeric value, an HTTP-date form —
+    yields None and the engine falls back to its own backoff. Never raises.
+    """
+    try:
+        response = getattr(exc, "response", None)
+        raw = response.headers.get("retry-after") if response is not None else None
+        if not raw:
+            return None
+        seconds = float(str(raw).strip())
+        if seconds < 0 or seconds != seconds:  # negative or NaN
+            return None
+        return min(seconds, _MAX_RETRY_AFTER_S)
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
+def _rate_limited(exc: Any) -> ProviderError:
+    """The one 429 translation: specific, transient, and Retry-After aware.
+
+    429 here means exactly an HTTP 429 (or the SDK's RateLimitError, which is
+    raised only for that status) — never a timeout, DNS failure, or bad key.
+    """
+    retry_after = _retry_after_seconds(exc)
+    detail = "Rate limited by OpenRouter (HTTP 429). Please wait and try again."
+    if retry_after is not None:
+        detail = (
+            f"Rate limited by OpenRouter (HTTP 429). "
+            f"The provider asks to retry in ~{retry_after:g}s."
+        )
+    return ProviderError(detail, transient=True, retry_after=retry_after)
+
 
 def _entry_is_free(entry: dict[str, Any]) -> bool:
     """True when both prompt and completion pricing are exactly zero."""
@@ -99,6 +140,17 @@ class OpenRouterProvider(Provider):
             False, f"Unexpected response from OpenRouter (HTTP {response.status_code})."
         )
 
+    def _auth_message(self) -> str:
+        """Message for a rejected credential (overridden by Default).
+
+        Uses the provider's own label so a subclass speaking the same wire
+        protocol never tells the user to run /apikey on a provider that has
+        no API key at all.
+        """
+        return (
+            f"Authentication failed. Your {self.label} key may be invalid — run /apikey."
+        )
+
     def mode(self, config: "AppConfig") -> str:
         """Current model-list mode: 'free' (default) or 'pro'."""
         raw = (config.provider_options("openrouter").get("mode") or MODE_FREE).lower()
@@ -126,11 +178,11 @@ class OpenRouterProvider(Provider):
             data = response.json().get("data", [])
         except httpx.TimeoutException as exc:
             raise ProviderError(
-                "Timed out fetching the OpenRouter model list.", transient=True
+                f"Timed out fetching the {self.label} model list.", transient=True
             ) from exc
         except (httpx.HTTPError, ValueError) as exc:
             raise ProviderError(
-                "Could not fetch the OpenRouter model list. Check your connection.",
+                f"Could not fetch the {self.label} model list. Check your connection.",
                 transient=True,
             ) from exc
 
@@ -153,7 +205,7 @@ class OpenRouterProvider(Provider):
         models.sort(key=lambda m: m.id)
         if not models:
             raise ProviderError(
-                f"OpenRouter has no {self.mode(config)} models right now. "
+                f"{self.label} has no {self.mode(config)} models right now. "
                 "Switch mode in /settings (mode free|pro)."
             )
         return models
@@ -184,23 +236,20 @@ class OpenRouterProvider(Provider):
             )
             yield from iter_stream(stream)
         except AuthenticationError as exc:
-            raise ProviderError(
-                "Authentication failed. Your OpenRouter key may be invalid — run /apikey."
-            ) from exc
+            raise ProviderError(self._auth_message()) from exc
         except RateLimitError as exc:
-            raise ProviderError(
-                "Rate limited by OpenRouter. Please wait and try again.", transient=True
-            ) from exc
+            raise _rate_limited(exc) from exc
         except APITimeoutError as exc:
             raise ProviderError(
-                "The OpenRouter request timed out. Please try again.", transient=True
+                f"The {self.label} request timed out. Please try again.", transient=True
             ) from exc
         except APIConnectionError as exc:
             raise ProviderError(
-                "Network error reaching OpenRouter. Check your connection.", transient=True
+                f"Network error reaching {self.label}. Check your connection.",
+                transient=True,
             ) from exc
         except APIError as exc:
-            raise _friendly_api_error(exc, config.model) from exc
+            raise _friendly_api_error(exc, config.model, self.label) from exc
 
     # --- native tool calling -------------------------------------------------
     def supports_tools(self, config: "AppConfig") -> bool:
@@ -244,23 +293,20 @@ class OpenRouterProvider(Provider):
             )
             yield from _iter_tool_stream(stream)
         except AuthenticationError as exc:
-            raise ProviderError(
-                "Authentication failed. Your OpenRouter key may be invalid — run /apikey."
-            ) from exc
+            raise ProviderError(self._auth_message()) from exc
         except RateLimitError as exc:
-            raise ProviderError(
-                "Rate limited by OpenRouter. Please wait and try again.", transient=True
-            ) from exc
+            raise _rate_limited(exc) from exc
         except APITimeoutError as exc:
             raise ProviderError(
-                "The OpenRouter request timed out. Please try again.", transient=True
+                f"The {self.label} request timed out. Please try again.", transient=True
             ) from exc
         except APIConnectionError as exc:
             raise ProviderError(
-                "Network error reaching OpenRouter. Check your connection.", transient=True
+                f"Network error reaching {self.label}. Check your connection.",
+                transient=True,
             ) from exc
         except APIError as exc:
-            raise _friendly_api_error(exc, config.model) from exc
+            raise _friendly_api_error(exc, config.model, self.label) from exc
 
     def _get_client(self, config: "AppConfig") -> Any:
         """Cached OpenAI client for the current key (SDK import deferred)."""
@@ -364,31 +410,36 @@ def _iter_tool_stream(stream: Any) -> Iterator[StreamEvent]:
             )
 
 
-def _friendly_api_error(exc: Any, model: str) -> ProviderError:
-    """Translate OpenRouter API errors into actionable user messages."""
+def _friendly_api_error(exc: Any, model: str, label: str = "OpenRouter") -> ProviderError:
+    """Translate OpenAI-compatible API errors into actionable user messages.
+
+    ``label`` names the provider in the message; subclasses that speak the
+    same wire protocol pass their own label so the internal backend is never
+    named to the user (see :mod:`seedcode.core.providers.default`).
+    """
     status = getattr(exc, "status_code", None)
     detail = getattr(exc, "message", str(exc)) or "Unknown API error."
     if status == 402:
         return ProviderError(
-            "OpenRouter rejected the request for lack of credits (HTTP 402). "
+            f"{label} rejected the request for lack of credits (HTTP 402). "
             "Pick a free model with /model (filter: free), or add credits."
         )
     if status == 403:
         return ProviderError(
-            "OpenRouter refused the request (HTTP 403). Your key may lack access "
+            f"{label} refused the request (HTTP 403). Your key may lack access "
             "to this model — pick another with /model."
         )
     if status == 404:
         return ProviderError(
-            f"Model '{model}' was not found on OpenRouter. Pick another with /model."
+            f"Model '{model}' was not found on {label}. Pick another with /model."
         )
     if status == 408:
         return ProviderError(
-            "OpenRouter timed out handling the request. Please try again.", transient=True
+            f"{label} timed out handling the request. Please try again.", transient=True
         )
     if status is not None and status >= 500:
         return ProviderError(
-            f"OpenRouter had a server error (HTTP {status}). Please try again.",
+            f"{label} had a server error (HTTP {status}). Please try again.",
             transient=True,
         )
-    return ProviderError(f"OpenRouter error: {detail}")
+    return ProviderError(f"{label} error: {detail}")

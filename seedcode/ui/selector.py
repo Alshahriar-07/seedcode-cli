@@ -61,6 +61,9 @@ class Option:
     group: str = ""
     disabled: bool = False
     search_text: str = ""
+    # A ``Ctrl+<shortcut>`` key that selects this option directly (the
+    # reference main menu binds 1-6 to its six actions). Empty = no shortcut.
+    shortcut: str = ""
 
     def __post_init__(self) -> None:
         if self.value is None:
@@ -106,6 +109,9 @@ class Selector:
         max_rows: int = 12,
     ) -> None:
         self._all = list(options)
+        self._shortcuts: dict[str, Option] = {
+            o.shortcut: o for o in self._all if o.shortcut and not o.disabled
+        }
         self._title = title
         self._breadcrumbs = list(breadcrumbs)
         self._placeholder = placeholder
@@ -183,6 +189,10 @@ class Selector:
         if 0 <= self._cursor < len(self._rows):
             return self._rows[self._cursor].option
         return None
+
+    def option_for_shortcut(self, key: str) -> Option | None:
+        """The enabled option bound to ``Ctrl+<key>`` (None when unbound)."""
+        return self._shortcuts.get(key)
 
     # --- movement -------------------------------------------------------------
     def _move(self, step: int) -> None:
@@ -327,6 +337,10 @@ class Selector:
             frags.append((f"{line}class:sel.dim", "   " + col.ljust(width), handler))
         if opt.detail:
             frags.append((f"{line}class:sel.dim", f"   {opt.detail}", handler))
+        if opt.shortcut:
+            frags.append(
+                (f"{line}class:sel.dim", f"   Ctrl+{opt.shortcut}", handler)
+            )
         return frags
 
     # --- application ---------------------------------------------------------------
@@ -355,6 +369,16 @@ class Selector:
             current = self.current
             if current is not None and not current.disabled:
                 event.app.exit(result=current)
+
+        # Functional shortcuts: Ctrl+1..Ctrl+9 select the matching option
+        # directly (the reference main menu binds 1-6).
+        for _digit in tuple("123456789"):
+
+            @kb.add(f"c-{_digit}")
+            def _(event, digit: str = _digit) -> None:
+                chosen = self.option_for_shortcut(digit)
+                if chosen is not None:
+                    event.app.exit(result=chosen)
 
         @kb.add("escape", eager=True)
         @kb.add("c-c")

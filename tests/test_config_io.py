@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from seedcode.config import manager
+from seedcode.defaults import DEFAULT_MODEL, DEFAULT_PROVIDER
 
 
 @pytest.fixture(autouse=True)
@@ -24,8 +25,10 @@ def _use_config_file(monkeypatch: pytest.MonkeyPatch, path: Path) -> None:
 def test_missing_config_yields_defaults(tmp_path: Path, monkeypatch) -> None:
     _use_config_file(monkeypatch, tmp_path / "config.json")
     cfg = manager.load_config()
-    assert cfg.active_provider == "freemodel_claude"
-    assert not cfg.is_configured()
+    # v6.2.5: a first run is seeded with the shipped default provider/model.
+    assert cfg.active_provider == DEFAULT_PROVIDER
+    assert cfg.model == DEFAULT_MODEL
+    assert not cfg.is_configured()  # ...but with no key it is still unconfigured
 
 
 def test_corrupt_config_falls_back_to_defaults(tmp_path: Path, monkeypatch) -> None:
@@ -33,7 +36,7 @@ def test_corrupt_config_falls_back_to_defaults(tmp_path: Path, monkeypatch) -> N
     path.write_text("{this is not json", encoding="utf-8")
     _use_config_file(monkeypatch, path)
     cfg = manager.load_config()  # must not raise
-    assert cfg.active_provider == "freemodel_claude"
+    assert cfg.active_provider == DEFAULT_PROVIDER
 
 
 def test_save_and_load_round_trip(tmp_path: Path, monkeypatch) -> None:

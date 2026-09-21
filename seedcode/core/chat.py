@@ -7,6 +7,7 @@ switching providers or models mid-session takes effect on the next turn.
 
 from __future__ import annotations
 
+import os
 import time
 from collections.abc import Callable, Iterator
 from typing import Any
@@ -24,6 +25,24 @@ _log = get_logger("chat")
 # hammering politeness — a provider that is down stays down for 2s too.
 _MAX_RETRIES = 2
 _RETRY_BACKOFF_S = 0.5
+# Hard cap on any single wait, including a provider's Retry-After hint: a
+# bounded retry policy must never be tricked into sleeping for minutes.
+_MAX_WAIT_S = 30.0
+# Environment override for the retry count (SEEDCODE_MAX_RETRIES), clamped
+# to 0..5 so a bad value can never produce unbounded retrying.
+_MAX_RETRIES_ENV = "SEEDCODE_MAX_RETRIES"
+_MAX_RETRIES_LIMIT = 5
+
+
+def _max_retries() -> int:
+    """The configured retry count (env override, clamped; never raises)."""
+    raw = (os.environ.get(_MAX_RETRIES_ENV) or "").strip()
+    if not raw:
+        return _MAX_RETRIES
+    try:
+        return max(0, min(int(raw), _MAX_RETRIES_LIMIT))
+    except ValueError:
+        return _MAX_RETRIES
 
 
 class ChatError(Exception):
@@ -116,10 +135,21 @@ class ChatEngine:
                 _log.info("request complete: provider=%s", self.config.provider)
                 return
             except ProviderError as exc:
-                if exc.transient and not yielded and attempt < _MAX_RETRIES:
+                retries = _max_retries()
+                if exc.transient and not yielded and attempt < retries:
                     attempt += 1
-                    _log.warning("transient failure, retry %d: %s", attempt, exc)
-                    time.sleep(_RETRY_BACKOFF_S * attempt)
+                    # A real HTTP 429 carries the provider's own Retry-After:
+                    # honour it (capped) instead of the generic backoff.
+                    wait = _RETRY_BACKOFF_S * attempt
+                    hint = getattr(exc, "retry_after", None)
+                    if isinstance(hint, (int, float)) and hint > 0:
+                        wait = max(wait, float(hint))
+                    wait = min(wait, _MAX_WAIT_S)
+                    _log.warning(
+                        "transient failure, retry %d/%d in %.1fs: %s",
+                        attempt, retries, wait, exc,
+                    )
+                    time.sleep(wait)
                     continue
                 _log.error("request failed: %s", exc)
                 raise ChatError(str(exc)) from exc

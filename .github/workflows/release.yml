@@ -2,13 +2,21 @@ name: Release
 
 # Builds a full release from a git tag:
 #   1. tests
-#   2. PyPI package (wheel + sdist) + twine check
-#   3. Windows installer (PyInstaller + Inno Setup) -> seedcode-cli-setup.exe
-#   4. SHA256 + WinGet manifests for SeedCode.CLI
-#   5. GitHub Release with all artifacts attached
+#   2. Python distributions (wheel + sdist) + twine check
+#   3. Windows build pipeline (scripts\windows\build.bat): PyInstaller exe,
+#      Inno Setup installer, and the staged dist\release\<version>\ directory
+#      with SHA256SUMS.txt
+#   4. GitHub Release with every v<version> artifact attached
 #
-# Pushing a tag also triggers .github/workflows/publish.yml, which publishes
-# seedcode-cli to PyPI via trusted publishing once this release is created.
+# The attached artifact names follow scripts/windows/stage_release.py, which is
+# what IRM_INSTALL/install.ps1 and IRM_INSTALL/install.sh download:
+#   SeedCode-CLI-<version>-windows-x64.exe
+#   SeedCode-CLI-Setup-<version>.exe
+#   seedcode_cli-<version>-py3-none-any.whl
+#   seedcode-cli-<version>.tar.gz
+#   SHA256SUMS.txt   (checked by both installers before installing)
+#
+# Pushing a tag also triggers .github/workflows/publish.yml.
 
 on:
   push:
@@ -93,22 +101,6 @@ jobs:
         run: scripts\windows\build.bat
         shell: cmd
 
-      - name: Verify the published installer
-        run: |
-          if (-not (Test-Path "seedcode-cli-setup.exe")) {
-            Write-Error "seedcode-cli-setup.exe was not produced"
-            exit 1
-          }
-          .\seedcode-cli-setup.exe --version 2>$null | Out-Null
-
-      - name: Compute installer SHA256 and write checksum file
-        shell: powershell
-        run: |
-          $sha = (Get-FileHash -Algorithm SHA256 .\seedcode-cli-setup.exe).Hash
-          Set-Content -Path seedcode-cli-setup.exe.sha256 -Value "$sha  seedcode-cli-setup.exe"
-          Write-Host "SHA256=$sha"
-          Write-Output "SHA256=$sha" | Out-File -FilePath checksum.txt -Encoding ascii
-
       - name: Read source version
         id: version
         shell: powershell
@@ -116,31 +108,34 @@ jobs:
           $v = python -c "import seedcode; print(seedcode.__version__)"
           Write-Output "version=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding ascii -Append
 
-      - name: Generate WinGet manifests
+      - name: Verify the release artifacts match the source version
         shell: powershell
         run: |
-          $sha = (Get-Content checksum.txt).Split('=')[1]
-          python scripts\winget\build_manifest.py --version ${{ steps.version.outputs.version }} --sha256 $sha --out-dir "build\winget-manifests"
+          $v = "${{ steps.version.outputs.version }}"
+          $dir = "dist\release\$v"
 
-      - name: Upload installer artifact
+          $expected = @("SeedCode-CLI-$v-windows-x64.exe", "SeedCode-CLI-Setup-$v.exe", "SHA256SUMS.txt")
+          foreach ($name in $expected) {
+            if (-not (Test-Path (Join-Path $dir $name))) {
+              Write-Error "$dir\$name was not produced by the build pipeline"
+              exit 1
+            }
+          }
+
+          # The packaged exe must report this exact version (a running binary
+          # is not proof: a stale build would also run).
+          $reported = (& ".\dist\seedcode.exe" --version 2>&1 | Out-String).Trim()
+          if ($reported -notlike "*$v*") {
+            Write-Error "dist\seedcode.exe reported '$reported', not version $v"
+            exit 1
+          }
+          Write-Host "Release artifacts verified for v$v ($reported)"
+
+      - name: Upload the staged release directory
         uses: actions/upload-artifact@v4
         with:
-          name: installer
-          path: seedcode-cli-setup.exe
-          if-no-files-found: error
-
-      - name: Upload checksum artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: installer-sha256
-          path: seedcode-cli-setup.exe.sha256
-          if-no-files-found: error
-
-      - name: Upload WinGet manifests artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: winget-manifests
-          path: build/winget-manifests/*.yaml
+          name: windows-release
+          path: dist/release/*/*
           if-no-files-found: error
 
   release:
@@ -163,23 +158,39 @@ jobs:
           name: pypi-sdist
           path: dist
 
-      - name: Download installer artifact
+      - name: Download the staged Windows release artifacts
         uses: actions/download-artifact@v4
         with:
-          name: installer
-          path: installer
+          name: windows-release
+          path: windows-release
 
-      - name: Download checksum artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: installer-sha256
-          path: installer-sha256
-
-      - name: Download WinGet manifests
-        uses: actions/download-artifact@v4
-        with:
-          name: winget-manifests
-          path: winget-manifests
+      - name: Assemble the release asset directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          # One flat directory holding every published artifact, so
+          # SHA256SUMS.txt covers exactly what the release ships. Both remote
+          # installers check their download against this file.
+          mkdir -p assets
+          find windows-release -type f ! -name SHA256SUMS.txt -exec cp {} assets/ \;
+          shopt -s nullglob
+          for f in dist/*.whl dist/*.tar.gz; do cp "$f" "assets/$(basename "$f")"; done
+          # The staging step's own SHA256SUMS.txt only covers the Windows
+          # files; regenerate it over the complete asset set.
+          cd assets
+          : > SHA256SUMS.txt
+          for f in *; do
+            [ "$f" = "SHA256SUMS.txt" ] && continue
+            if command -v sha256sum >/dev/null 2>&1; then
+              sha256sum "$f" >> SHA256SUMS.txt
+            else
+              shasum -a 256 "$f" >> SHA256SUMS.txt
+            fi
+          done
+          echo "Release assets:"
+          ls -1
+          echo "Checksums:"
+          cat SHA256SUMS.txt
 
       - name: Write release body
         shell: bash
@@ -191,16 +202,27 @@ jobs:
 
           **Plant ideas. Grow code.**
 
-          ### Assets
-          - **Windows installer** — \`seedcode-cli-setup.exe\` (one-click Inno Setup installer; installs to Program Files, adds \`seedcode\` to PATH, works with CMD, PowerShell, and Windows Terminal).
-          - **Python package** — \`seedcode-cli-$VERSION\` wheel + sdist, installable via \`pip install seedcode-cli\`.
-          - **WinGet manifests** — for submission to \`microsoft/winget-pkgs\` (identifier \`SeedCode.CLI\`). The package is NOT available via \`winget install SeedCode.CLI\` until Microsoft accepts it.
+          ### Official installation
 
-          ### Install
-          \`\`\`bash
-          pip install seedcode-cli
+          Windows:
+
+          \`\`\`powershell
+          irm https://seedcode-cli.vercel.app/install.ps1 | iex
           \`\`\`
-          or run \`seedcode-cli-setup.exe\`.
+
+          Linux:
+
+          \`\`\`bash
+          curl -fsSL https://seedcode-cli.vercel.app/install.sh | bash
+          \`\`\`
+
+          ### Assets
+          - **Windows installer** — \`SeedCode-CLI-Setup-$VERSION.exe\` (one-click Inno Setup installer; installs to Program Files, adds \`seedcode\` to PATH, works with CMD, PowerShell, and Windows Terminal).
+          - **Windows standalone** — \`SeedCode-CLI-$VERSION-windows-x64.exe\` (self-contained; no Python needed). This is the artifact the Windows remote installer downloads.
+          - **Python distributions** — \`seedcode_cli-$VERSION-py3-none-any.whl\` and \`seedcode-cli-$VERSION.tar.gz\`. The wheel is the artifact the Linux remote installer downloads.
+          - \`SHA256SUMS.txt\` — SHA256 checksums for every artifact above. Both remote installers verify against this file before installing.
+
+          ### Verify
 
           \`\`\`bash
           seedcode --version
@@ -215,11 +237,4 @@ jobs:
           body_path: release-body.md
           draft: false
           prerelease: false
-          files: |
-            dist/*.whl
-            dist/*.tar.gz
-            installer/seedcode-cli-setup.exe
-            installer-sha256/seedcode-cli-setup.exe.sha256
-            winget-manifests/SeedCode.CLI.yaml
-            winget-manifests/SeedCode.CLI.installer.yaml
-            winget-manifests/SeedCode.CLI.locale.en-US.yaml
+          files: assets/*

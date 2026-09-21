@@ -74,10 +74,18 @@ def _to_api_ollama_tools(message: "Message") -> dict:
 class OllamaProvider(Provider):
     def __post_init__(self) -> None:
         self.id = "ollama"
-        self.label = "Ollama (local)"
+        self.label = "Ollama"
         self.base_url = ""  # per-user host lives in config.ollama_host
+        self.backend_label = "Local server"
         self.requires_key = False
+        self.local = True
         self.key_hint = ""
+
+    def unavailable_hint(self, config: "AppConfig") -> str:
+        return (
+            f"Ollama is not reachable at {config.ollama_host}. "
+            "Start it with 'ollama serve' — chatting will fail until it runs."
+        )
 
     def validate_key(self, api_key: str) -> ValidationResult:
         """No key needed; 'validation' means the local server responds."""

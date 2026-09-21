@@ -1,6 +1,10 @@
 #!/usr/bin/env node
 /**
- * Seed Code CLI launcher (npm install -g seedcode-cli).
+ * Seed Code CLI launcher (npm compatibility launcher).
+ *
+ * NOT an official installation method — see IRM_INSTALL/ and the README.
+ * Seed Code CLI is distributed through the official IRM installer system and
+ * GitHub Releases.
  *
  * Resolves the official Seed Code artifact for this platform/architecture,
  * downloads it from the GitHub release on first use (cached in
@@ -8,9 +12,9 @@
  * executes it with all arguments forwarded. This is a real launcher: it
  * runs the actual binary, it never prints fake "instructions".
  *
- * A local source/wheel install takes precedence: if `seedcode` already
- * resolves on PATH (pip install / Windows installer), that binary is used
- * directly and nothing is downloaded.
+ * An existing install takes precedence: if `seedcode` already resolves on
+ * PATH (Windows installer / IRM installer / source install), that binary is
+ * used directly and nothing is downloaded.
  */
 
 "use strict";

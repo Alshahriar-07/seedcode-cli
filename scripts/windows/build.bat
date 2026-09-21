@@ -75,7 +75,7 @@ if not exist "%ICON%" (
 echo [OK] Stage 0 complete: Seed Code icon and wizard art verified.
 
 REM ==========================================================================
-REM  STAGE 0b - embedded default API key (v6.2.0 out-of-the-box behavior)
+REM  STAGE 0b - embedded default API key (v6.2.5 out-of-the-box behavior)
 REM  Consumes the local .env (never printed) and generates the git-ignored
 REM  seedcode\_default_key.py that ships inside the frozen exe. A checkout
 REM  without OPENROUTER_API_KEY in .env builds a normal (setup-required)
@@ -234,9 +234,9 @@ set "EXE_VERSION="
 for /f "usebackq delims=" %%V in ("%TEMP%\seedcode-exe-version.txt") do set "EXE_VERSION=%%V"
 del /f /q "%TEMP%\seedcode-exe-version.txt" >nul 2>&1
 echo [INFO] Source: v%SRC_VERSION%   Executable reports: "%EXE_VERSION%"
-if /I not "%EXE_VERSION%"=="Seed Code v%SRC_VERSION%" (
+if /I not "%EXE_VERSION%"=="Seed Code CLI %SRC_VERSION%" (
     echo [ERROR] VERSION MISMATCH - the executable does not match the source.
-    echo         Expected "Seed Code v%SRC_VERSION%". The build is stale or broken.
+    echo         Expected "Seed Code CLI %SRC_VERSION%". The build is stale or broken.
     exit /b 5
 )
 
@@ -276,6 +276,11 @@ if not defined ISCC (
 )
 echo [INFO] Using ISCC: %ISCC%
 
+REM SETUP_NAME is defined BEFORE the stale-artifact guard below on purpose:
+REM with an empty name that guard tests "Release\.exe", skips the delete, and
+REM lets a previous installer sit there for ISCC to overwrite unverified.
+set "SETUP_NAME=SeedCode-CLI-Setup-%SRC_VERSION%"
+
 REM Delete the previous installer first: if the versioned setup exists after
 REM ISCC runs, it was provably produced by THIS compile of THIS build.
 if not exist "%REPO_ROOT%\Release" mkdir "%REPO_ROOT%\Release"
@@ -287,7 +292,6 @@ if exist "%REPO_ROOT%\Release\%SETUP_NAME%.exe" (
 
 REM /DAppVersionFromBuild injects the verified source version, so the
 REM installer metadata can never disagree with the executable it packages.
-set "SETUP_NAME=SeedCode-CLI-Setup-%SRC_VERSION%"
 "%ISCC%" /DAppVersionFromBuild=%SRC_VERSION% /DOutputBaseName=%SETUP_NAME% /O"%REPO_ROOT%\Release" "%~dp0setup.iss" >> "%LOG_FILE%" 2>&1
 if errorlevel 1 (
     echo [ERROR] Inno Setup compilation failed. See "%LOG_FILE%".

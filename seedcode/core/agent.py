@@ -254,7 +254,14 @@ class AgentEngine(ChatEngine):
             mode=self.permissions.mode.label,
         )
         if self._codemode_active():
+            # The behavioural instruction that makes the model a coding agent
+            # (not just a chat model with tools) — previously defined but
+            # never injected, so Code Mode lost its workflow guidance.
+            preamble += _CODEMODE_PREAMBLE.format(
+                workspace=self.permissions.workspace
+            )
             preamble += self._codemode_context()
+        preamble += self._terminal_context()
         if self._native_active():
             # The API carries the tool schemas; no manifest needed.
             instructions = _NATIVE_INSTRUCTIONS
@@ -273,7 +280,7 @@ class AgentEngine(ChatEngine):
     def _codemode_active(self) -> bool:
         """Code Mode is a session-level toggle read lazily (no import cycle)."""
         try:
-            from .. import codemode_state
+            from ..codemode_state import codemode_state
 
             state = codemode_state()
             return bool(state.enabled and state.workspace is not None)
@@ -288,7 +295,7 @@ class AgentEngine(ChatEngine):
         big repository never floods the context window.
         """
         try:
-            from .. import codemode_state
+            from ..codemode_state import codemode_state
 
             state = codemode_state()
             store = state.store
@@ -322,6 +329,27 @@ class AgentEngine(ChatEngine):
             )
         except Exception:
             _log.exception("codemode context failed")
+            return ""
+
+    def _terminal_context(self) -> str:
+        """Where the agent is running: host + active shell.
+
+        Telling the model the shell lets it emit POSIX or PowerShell syntax
+        correctly instead of guessing from the platform. Best-effort and
+        never fatal — an unknown host simply yields no extra text.
+        """
+        try:
+            from ..utils.terminal_env import detect_terminal
+
+            env = detect_terminal()
+            shell = env.shell or "system default"
+            return (
+                f"\n\nTERMINAL: running inside {env.host} with {shell}. "
+                "Use the run_command tool for builds/tests; pass its `shell` "
+                "argument when a command needs POSIX (bash) or PowerShell "
+                "syntax instead of the platform default."
+            )
+        except Exception:
             return ""
 
     def _project_context(self) -> str:

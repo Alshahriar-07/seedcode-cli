@@ -30,6 +30,7 @@ from typing import IO, TYPE_CHECKING, Any, Callable
 
 from .base import MAX_OUTPUT_CHARS, ToolResult, int_arg, register
 from .permissions import CATEGORY_SHELL
+from ..utils.terminal_env import run_command_shell
 
 if TYPE_CHECKING:
     from .permissions import PermissionManager
@@ -37,14 +38,24 @@ if TYPE_CHECKING:
 _DEFAULT_TIMEOUT_S = 60
 _MAX_TIMEOUT_S = 300
 
+# After the output pipe closes (normal: the child exited), wait at most this
+# long for the process itself before reaping its tree. A child that closes
+# stdout early and keeps running must never freeze the calling UI loop.
+_EXIT_GRACE_S = 5.0
+
 # Explicit shell -> argv builder. "" (default) uses shell=True instead.
+# "pwsh" shares the PowerShell builder; "auto" resolves via shell detection.
 _SHELLS: dict[str, Callable[[str], list[str]]] = {
     "cmd": lambda c: ["cmd", "/d", "/c", c],
     "powershell": lambda c: [
         "powershell", "-NoProfile", "-NonInteractive", "-Command", c
     ],
+    "pwsh": lambda c: ["pwsh", "-NoProfile", "-NonInteractive", "-Command", c],
     "bash": lambda c: ["bash", "-lc", c],
 }
+
+# Values that mean "use the detected active shell" instead of a fixed one.
+_AUTO_SHELLS = frozenset({"auto", "detect", "default"})
 
 _EOF = object()  # sentinel the reader thread puts when the pipe closes
 
@@ -94,10 +105,16 @@ def run_command(
     timeout_s = max(1, min(int(timeout_s), _MAX_TIMEOUT_S))
     on_line = on_line or perm.on_output
 
-    if shell:
-        builder = _SHELLS.get(shell.strip().lower())
+    key = shell.strip().lower()
+    if key in _AUTO_SHELLS:
+        # Resolve the shell the user is actually in (VS Code PowerShell/CMD,
+        # Git Bash, ...). Empty means "let the platform decide".
+        key = run_command_shell()
+
+    if key:
+        builder = _SHELLS.get(key)
         if builder is None:
-            choices = ", ".join(sorted(_SHELLS))
+            choices = ", ".join(sorted(set(_SHELLS) | {"auto"}))
             return ToolResult(False, f"Unknown shell '{shell}'. Choose one of: {choices}.")
         popen_args: str | list[str] = builder(command)
         use_shell = False
@@ -169,7 +186,15 @@ def run_command(
         tail = f"\nOutput before cancel:\n{partial}" if partial else ""
         return ToolResult(False, f"Command cancelled by user (Ctrl+C): {command}{tail}")
 
-    proc.wait()
+    # The reader hit EOF, which normally means the child exited. A child that
+    # closed its stdout but kept running (a detached helper, a stalled
+    # daemon) must not block this thread indefinitely — bound the wait, then
+    # reap the tree. Never longer than the command's own deadline.
+    remaining = max(1.0, deadline - time.monotonic())
+    try:
+        proc.wait(timeout=min(_EXIT_GRACE_S, remaining))
+    except subprocess.TimeoutExpired:
+        _kill_tree(proc)
     body = "".join(chunks).rstrip() or "(no output)"
 
     # Make exit code failure explicit
@@ -185,7 +210,7 @@ def run_command(
     {
         "command": "the shell command to run",
         "timeout": "(optional) seconds before the command is killed (default 60)",
-        "shell": "(optional) cmd, powershell, or bash (default: system shell)",
+        "shell": "(optional) cmd, powershell, pwsh, bash, or auto (default: system shell)",
     },
     mutates=True,
     types={"timeout": "integer"},

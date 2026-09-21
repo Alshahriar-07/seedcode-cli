@@ -46,14 +46,45 @@ def _resolve_provider(text: str) -> Provider | None:
     return matches[0] if len(matches) == 1 else None
 
 
+# Selector groups, in display order. Providers are grouped by what they need
+# from the user, so "Default" is never mistaken for "OpenRouter" (they can
+# share an underlying service but are separate choices with separate config).
+_GROUP_BUILTIN = "Built-in  ·  no API key needed"
+_GROUP_BYOK = "Your own API key"
+_GROUP_LOCAL = "Local  ·  runs on this machine"
+
+
+def _provider_group(provider: Provider) -> str:
+    if provider.local:
+        return _GROUP_LOCAL
+    if provider.id == "default":
+        return _GROUP_BUILTIN
+    return _GROUP_BYOK
+
+
 def _provider_backend(provider: Provider, config) -> str:
-    if provider.id == "ollama":
+    """Human connection type: 'Local' for on-machine backends, else the API family."""
+    if provider.local:
         return "Local"
     return provider.backend_label or f"{provider.label} API"
 
 
+def _provider_key_column(provider: Provider, config) -> str:
+    """What this provider needs from the user: no key, a masked key, or a prompt.
+
+    This is the column that makes the API-key rules visible before switching:
+    Default and Ollama read "no API key", configured providers show their
+    masked key, and the rest ask for one. A key is never shown in full.
+    """
+    if not provider.requires_key:
+        return "no API key"
+    if config.get_api_key(provider.id).strip():
+        return config.masked_key(provider.id)
+    return "API key needed"
+
+
 def _provider_menu(ui, config) -> Provider | None:
-    """Interactive provider selector: badge, backend, and current model."""
+    """Interactive provider selector: badge, backend, model, and key state."""
     options = []
     for p in PROVIDERS.values():
         entry = config.providers.get(p.id)
@@ -65,7 +96,12 @@ def _provider_menu(ui, config) -> Provider | None:
                 p.label,
                 value=p.id,
                 badge=badge_for_status(p.status),
-                columns=(_provider_backend(p, config), model),
+                columns=(
+                    _provider_backend(p, config),
+                    model,
+                    _provider_key_column(p, config),
+                ),
+                group=_provider_group(p),
             )
         )
     chosen = select(
@@ -113,22 +149,22 @@ def _collect_key(ui, config, provider: Provider, *, replacing: bool = False) -> 
 
 
 def _ensure_ready(ui, config, provider: Provider) -> bool:
-    """Make ``provider`` usable: collect+validate a key, or detect Ollama.
+    """Make ``provider`` usable: collect+validate a key, or probe a key-less one.
 
-    Returns False only when the user cancels key entry; a stopped Ollama
-    server is reported but not fatal (the user may start it later).
+    Returns False only when the user cancels key entry. An unreachable
+    key-less backend (local Ollama, or the built-in Default connection in a
+    build that carries no credential) is reported with its own actionable
+    message but is never fatal — the user may start Ollama or pick another
+    provider later.
     """
     if not provider.requires_key:
-        with ui.thinking("Checking Ollama"):
-            running = provider.detect(config)
-        provider.status = STATUS_CONNECTED if running else STATUS_OFFLINE
-        if running:
-            ui.success("Ollama server detected.")
+        with ui.thinking(f"Checking {provider.label}"):
+            reachable = provider.detect(config)
+        provider.status = STATUS_CONNECTED if reachable else STATUS_OFFLINE
+        if reachable:
+            ui.success(f"{provider.label} is ready.")
         else:
-            ui.warning(
-                f"Ollama is not reachable at {config.ollama_host}. "
-                "Start it with 'ollama serve' — chatting will fail until it runs."
-            )
+            ui.warning(provider.unavailable_hint(config))
         return True
 
     if config.get_api_key(provider.id).strip():
@@ -352,7 +388,7 @@ def select_model(ui, config, target: str = "") -> None:
 @command(
     "provider",
     "Select the active provider "
-    "(OpenRouter, FreeModel Claude, FreeModel Codex, AeroLink, Ollama)",
+    "(Default, OpenRouter, FreeModel Claude, FreeModel Codex, AeroLink, Ollama)",
 )
 def _provider_cmd(ctx: CommandContext, arg: str) -> CommandResult:
     select_provider(ctx.ui, ctx.config, arg.strip())

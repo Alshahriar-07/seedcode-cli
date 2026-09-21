@@ -14,9 +14,12 @@ Ctrl+L clear screen.
 
 from __future__ import annotations
 
+import sys
+
 from prompt_toolkit import PromptSession
 from prompt_toolkit.key_binding import KeyBindings
 
+from . import __version__
 from .commands import CommandContext, dispatch, is_command
 from .commands.about import show_about
 from .commands.help import show_shortcuts
@@ -29,13 +32,14 @@ from .core.agent import AgentEngine, strip_tool_blocks
 from .core.chat import ChatEngine, ChatError
 from .core.lifecycle import lifecycle
 from .core.models import AppConfig
-from .core.providers import PROVIDERS, provider_label
+from .core.providers import PROVIDERS, provider_label, provider_ready
 from .core.providers.freemodel import AUTO_MODEL
 from .memory import HistoryStore
 from .tools import PermissionManager, PermissionMode
 from .ui import UI
 from .ui.badges import badge_for_status
 from .ui.menu import MenuItem, run_menu
+from .ui.reference import CONTROLS_HINT, INPUT_HINT
 from .ui.textbox import prompt_label
 from .ui.theme import pt_style, set_active_theme
 from .utils.logger import get_logger
@@ -102,9 +106,14 @@ def _release_desktop_resources() -> None:
 
 
 def _provider_status(config: AppConfig) -> str:
-    """Menu status line: the active provider, or 'Not Configured'."""
-    ready = config.provider == "ollama" or bool(config.get_api_key().strip())
-    return provider_label(config.provider) if ready else "Not Configured"
+    """Menu status line: the active provider, or 'Not Configured'.
+
+    Uses the shared provider-ready rule, so the menu never disagrees with the
+    dashboard: Default and Ollama need no key, everyone else needs their own.
+    """
+    if provider_ready(config.provider, config):
+        return provider_label(config.provider)
+    return "Not Configured"
 
 
 def _model_status(config: AppConfig) -> str:
@@ -124,25 +133,73 @@ def _key_status(config: AppConfig) -> str:
     return config.masked_key()
 
 
+def _mode_status(config: AppConfig) -> str:
+    """Menu status for the Code Mode item (ON only when really active)."""
+    try:
+        from .codemode_state import codemode_state
+
+        if codemode_state().enabled:
+            return "ON"
+    except Exception:
+        pass
+    return "ON" if config.agent_mode else "OFF"
+
+
 def _main_menu(config: AppConfig):
-    """The interactive main menu; returns an action id or None (exit)."""
+    """The interactive main menu; returns an action id or None (exit).
+
+    v6.2.5 reference layout: the six mode/setup actions carry Ctrl+1..Ctrl+6
+    shortcuts that execute the real handlers (no decorative items), followed
+    by the chat/setup actions kept from earlier releases.
+    """
     provider = PROVIDERS.get(config.provider)
     badge = badge_for_status(provider.status if provider is not None else "")
     return run_menu(
         [
+            MenuItem("Code Mode", "codemode", status=_mode_status(config), shortcut="1"),
+            MenuItem("Agent Mode", "agent", shortcut="2"),
+            MenuItem("Assist Mode", "assist", shortcut="3"),
+            MenuItem("Project Memory", "memory", shortcut="4"),
+            MenuItem("Settings", "settings", shortcut="5"),
+            MenuItem("Exit", "exit", shortcut="6"),
             MenuItem("Start Chat", "chat", status=_model_status(config), badge=badge),
             MenuItem("Provider", "provider", status=_provider_status(config)),
             MenuItem("API Key", "apikey", status=_key_status(config)),
             MenuItem("Model", "model", status=_model_status(config)),
-            MenuItem("Settings", "settings"),
             MenuItem("Theme", "theme", status=config.theme),
             MenuItem("About", "about"),
-            MenuItem("Exit", "exit"),
         ],
-        title="Seed Code",
-        hint="↑↓ move   type to filter   Enter select   Esc exit",
+        title=f"Seed Code v{__version__}",
+        hint=CONTROLS_HINT,
         initial="chat",
     )
+
+
+def _dispatch_command(ui: UI, config: AppConfig, engine, command: str) -> None:
+    """Run a slash command from a menu action through the real router."""
+    dispatch(CommandContext(ui=ui, config=config, engine=engine), command)
+
+
+def _report_command_error(ui: UI, exc: Exception) -> None:
+    """Render a failed command/action without leaking a raw traceback.
+
+    A transport failure becomes one actionable ``[Network Error]`` line, mapped
+    by :mod:`seedcode.core.http` (which never includes request headers, so an
+    API key can never surface here). Anything else keeps its own message; the
+    full traceback is already written to the log file.
+    """
+    try:
+        import httpx
+
+        from .core.http import friendly_error
+
+        if isinstance(exc, httpx.HTTPError):
+            ui.error(f"[Network Error] {friendly_error(exc)}")
+            ui.dim("Action: check your network connection or provider configuration.")
+            return
+    except Exception:
+        pass  # error reporting must never itself raise
+    ui.error(f"[Command Error] {exc}")
 
 
 def _guided_setup(ui: UI, config: AppConfig) -> bool:
@@ -343,14 +400,11 @@ def _chat_loop(
     config: AppConfig,
     engine: ChatEngine,
     history: HistoryStore,
-    session: PromptSession,
+    session: PromptSession | _PlainSession,
 ) -> None:
     """Interactive chat until /exit (returns to the main menu)."""
     ctx = CommandContext(ui=ui, config=config, engine=engine)
-    ui.dim(
-        "Type /help for commands, /exit for the menu — "
-        "Ctrl+K palette, Ctrl+P files, Ctrl+/ shortcuts."
-    )
+    ui.dim(INPUT_HINT)
 
     # The Assist engine is built lazily on the first assist-mode turn and
     # rebuilt when the permission or desktop mode changes (its system
@@ -398,7 +452,7 @@ def _chat_loop(
                 continue
             except Exception as exc:  # a broken command must not kill the REPL
                 _log.exception("command failed: %s", text.split()[0])
-                ui.error(f"Command failed: {exc}")
+                _report_command_error(ui, exc)
                 continue
             if result.should_exit:
                 return
@@ -433,6 +487,56 @@ def _chat_loop(
                 _handle_agent(ui, agent, history, text)
             else:
                 _handle_chat(ui, engine, history, text)
+
+
+def _interactive() -> bool:
+    """True when a real console is attached (mirrors ``ui.selector._interactive``).
+
+    prompt_toolkit needs a console/PTY it can drive. Piped, redirected, or
+    console-less hosts (CI, ``seedcode < file``, some Git Bash/MSYS sessions)
+    cannot provide one, and constructing a prompt there raises instead of
+    degrading — so every interactive entry point checks this first.
+    """
+    try:
+        return sys.stdin.isatty() and sys.stdout.isatty()
+    except (AttributeError, ValueError):
+        return False
+
+
+class _PlainSession:
+    """Line-based stand-in for :class:`PromptSession` on non-console hosts.
+
+    The chat loop only needs ``prompt()``, so this shim keeps Seed Code usable
+    where prompt_toolkit cannot start. Reading raises ``EOFError`` /
+    ``KeyboardInterrupt`` exactly like the real session, so the loop's existing
+    Ctrl+C / Ctrl+D handling is unchanged.
+    """
+
+    def prompt(self, message=None, **_kwargs) -> str:
+        return input(_plain_text(message) or "> ")
+
+
+def _plain_text(message) -> str:
+    """Literal text of a prompt message (a prompt_toolkit ``FormattedText``)."""
+    if isinstance(message, str):
+        return message
+    try:
+        return "".join(fragment[1] for fragment in message)
+    except Exception:
+        return ""
+
+
+def _make_chat_session(ui: UI):
+    """A prompt_toolkit session when a console exists, else the plain shim."""
+    if not _interactive():
+        return _PlainSession()
+    try:
+        return _build_chat_session(ui)
+    except Exception:
+        # A console that exists but still cannot be driven (e.g. a MSYS/mintty
+        # TERM against a non-Windows console). Never fatal — degrade instead.
+        _log.warning("prompt_toolkit unavailable; using line-based input")
+        return _PlainSession()
 
 
 def _build_chat_session(ui: UI) -> PromptSession:
@@ -480,7 +584,7 @@ def run(ui: UI) -> None:
     active_backend = config.provider
     engine = ChatEngine(config)
     history = HistoryStore(provider_id=active_backend)
-    chat_session = _build_chat_session(ui)
+    chat_session = _make_chat_session(ui)
 
     # Best-effort teardown for the one legitimate shutdown path.
     lifecycle().on_shutdown(_release_desktop_resources)
@@ -530,6 +634,14 @@ def run(ui: UI) -> None:
                 apikey_menu(ui, config)
             elif choice == "model":
                 select_model(ui, config)
+            elif choice == "codemode":
+                _dispatch_command(ui, config, engine, "/codemode on")
+            elif choice == "agent":
+                _dispatch_command(ui, config, engine, "/agent on")
+            elif choice == "assist":
+                _dispatch_command(ui, config, engine, "/assist on")
+            elif choice == "memory":
+                _dispatch_command(ui, config, engine, "/codemode status")
             elif choice == "settings":
                 settings_menu(ui, config)
             elif choice == "theme":
@@ -543,4 +655,4 @@ def run(ui: UI) -> None:
             ui.dim("Cancelled.")
         except Exception as exc:  # menu actions must never crash the app
             _log.exception("menu action failed: %s", choice)
-            ui.error(f"Something went wrong: {exc}")
+            _report_command_error(ui, exc)

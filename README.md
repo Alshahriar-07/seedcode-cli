@@ -5,72 +5,70 @@
 > ### Faster. Smaller. Smarter. Workspace-aware.
 > *Plant ideas. Grow code.*
 
-Seed Code is a premium terminal-based AI coding assistant. v6.2.0 pairs
+Seed Code is a premium terminal-based AI coding assistant. v6.2.5 pairs
 streaming chat and permission-gated desktop control with **Code Mode** — a
 workspace-aware coding agent backed by persistent `.seedcode` project memory
-— on a compact, redesigned startup dashboard.
+— behind a compact, minimal startup header.
 
-- **Works out of the box (Windows release):** the Windows EXE and installer
-  ship with a built-in default OpenRouter configuration, so a fresh
-  installation can chat immediately — no API key required on first launch.
-  You can switch to your own key at any time (`/apikey`).
-- **Version:** 6.2.0 (`seedcode --version`)
+- **Works out of the box:** the shipped provider is **Default** — Seed Code's
+  own built-in connection. It needs **no API key**, so a fresh installation
+  can chat immediately. Bring your own key at any time with `/provider` →
+  OpenRouter, FreeModel or AeroLink.
+- **Version:** 6.2.5 (`seedcode --version`)
 
 ## Installation
 
-### Windows installer (recommended on Windows)
+Seed Code CLI is distributed through the official IRM installer system and
+[GitHub Releases](https://github.com/Alshahriar-07/seedcode-cli/releases).
+The installers download the official release artifact for your platform,
+verify its SHA256 against the release's `SHA256SUMS.txt`, and then verify the
+installed command.
 
-Download `SeedCode-CLI-Setup-6.2.0.exe` (or the stable-named
-`seedcode-cli-setup.exe`) from the
-[Releases page](https://github.com/Alshahriar-07/seedcode-cli/releases).
+### Windows
 
-The installer packages a fully self-contained `seedcode.exe` (no Python
-needed), adds Seed Code to the system `PATH`, creates a Start Menu shortcut
-with an optional desktop shortcut, verifies the installation before
-reporting success, and ships a clean uninstaller that never deletes your
-project data silently. SHA256 checksums for every release artifact are in
-the release's `SHA256SUMS.txt`.
-
-### WinGet
+PowerShell 5.1 or newer:
 
 ```powershell
-winget install SeedCode.CLI
+irm https://seedcode-cli.vercel.app/install.ps1 | iex
 ```
 
-> **Status:** the 6.2.0 manifests are prepared in
-> [`winget/manifests/s/SeedCode/CLI/6.2.0/`](winget/manifests/s/SeedCode/CLI/6.2.0/)
-> with the real installer SHA256, but the package is **NOT YET PUBLISHED**
-> to the Microsoft community repository — a `winget-pkgs` pull request has
-> not been submitted. Until it merges, use the Windows installer above.
+Installs for the current user (no administrator rights, no Python) into
+`%LOCALAPPDATA%\Programs\SeedCode`, adds `seedcode` to your user `PATH`, and
+prints the verified version when it finishes.
 
-### PyPI
+### Linux
+
+```bash
+curl -fsSL https://seedcode-cli.vercel.app/install.sh | bash
+```
+
+Installs for the current user. When a prebuilt binary is published for your
+platform it is used directly; otherwise the official wheel from the same
+release is installed with pip.
+
+### Windows installer (GUI alternative)
+
+If you prefer a graphical installer, download
+`SeedCode-CLI-Setup-6.2.5.exe` from the
+[Releases page](https://github.com/Alshahriar-07/seedcode-cli/releases). It
+packages a fully self-contained `seedcode.exe` (no Python needed), installs
+to Program Files, adds Seed Code to the system `PATH`, creates a Start Menu
+shortcut with an optional desktop shortcut, verifies the installation before
+reporting success, and ships a clean uninstaller that never deletes your
+project data silently.
+
+After installing by any route:
+
+```bash
+seedcode --version    # -> Seed Code CLI 6.2.5
+```
+
+> **`seedcode` not recognized?** Open a *new* terminal. `PATH` changes only
+> apply to fresh sessions; the installers verify this before they finish.
+
+### From source (development)
 
 Requires **Python 3.12 or newer**:
-
-```bash
-python -m pip install seedcode-cli
-seedcode
-```
-
-> **Status:** `seedcode-cli==6.2.0` wheel and sdist are built and verified
-> in this repository (see Release artifacts). **NOT YET PUBLISHED** to
-> PyPI — run `python -m twine upload dist/*` when ready.
-
-### npm (Windows launcher)
-
-```bash
-npm install -g seedcode-cli
-seedcode
-```
-
-> **Status:** the npm package is **NOT YET PUBLISHED** to the npm registry.
-> The package in [`npm/`](npm/) is a real launcher: on Windows it downloads
-> the official `SeedCode-CLI-6.2.0-windows-x64.exe` from the GitHub release,
-> verifies its SHA256 against `SHA256SUMS.txt`, caches it under
-> `~/.seedcode/npm/`, and runs the actual binary (it never prints fake
-> instructions). On Linux/macOS it points to the pip install.
-
-### From source
 
 ```bash
 git clone https://github.com/Alshahriar-07/seedcode-cli.git
@@ -81,68 +79,80 @@ seedcode
 
 ## First run
 
-Start the app:
-
 ```bash
 seedcode
 ```
 
-You land on the compact startup dashboard — provider, model, mode, and
-status in one branded panel — and the chat prompt appears immediately:
+You land on a compact, borderless startup header — provider, model, mode and
+status, with no ASCII logo and no box art — and the chat prompt appears
+immediately:
 
 ```text
-╭─ Seed code v6.2.0 ──────────────────────────────────────────────╮
-│   [logo]   SEEDCODE CLI              │  Seed Code | Eagox Studio│
-│            Plant ideas. Grow code.   │  Provider   OpenRouter   │
-│                                      │  Model      deepseek/…   │
-│                                      │  Mode       Assist       │
-│                                      │  Status     ● Ready      │
-╰─────────────────────────────────────────────────────────────────╯
+Seed Code CLI v6.2.5
+Provider  Default
+Model     nvidia/nemotron-3-super-120b-a12b:free
+Mode      Chat
+Status    ● Ready
+Commands  /help  /status  /codemode  /assist  /provider  /model
 You >
 ```
 
-### Default OpenRouter behavior (v6.2.0)
+The `API Key` row appears **only** for providers that actually require a key,
+so Default and Ollama never show one.
 
-The Windows release (EXE and installer) embeds a Seed Code default
-OpenRouter credential, so the provider is ready the moment the app starts.
-The resolution order is always:
+### Default provider (no API key)
 
-1. **Your own key** — entered via `/apikey` or guided setup (stored in
-   `~/.seedcode/config.json`, never in any project directory);
-2. **The `OPENROUTER_API_KEY` environment variable** (CI / power users);
-3. **The embedded Seed Code default** — used only when 1 and 2 are absent.
+**Default** is Seed Code's built-in API connection and the provider the app
+ships with. It is a first-class provider of its own — separate from
+OpenRouter everywhere: its own entry in `/provider`, its own saved model, its
+own status, and its own credential slot. It resolves its credential itself,
+in this order:
 
-When your own key or the environment variable is set, the embedded default
-is never used. The default is a temporary v6.2.0 arrangement; a server-side
-gateway will replace it in a later release. pip/source installs do not
-include a default credential and run guided setup on first launch.
+1. a key stored in Default's own slot (advanced/manual use);
+2. the embedded Seed Code release credential (release artifacts only);
+3. `OPENROUTER_API_KEY` / `SEEDCODE_DEFAULT_API_KEY` in the environment.
+
+It never reads or writes another provider's configuration, and no other
+provider inherits Default's credential. If a build carries no built-in
+credential (a source checkout, for example), Default says so plainly instead
+of failing with an authentication error — pick OpenRouter and add your own
+key.
 
 ### Your own API key
 
+Use `/apikey` (view / replace / remove / validate) or set an environment
+variable:
+
 ```bash
-export OPENROUTER_API_KEY="sk-or-..."     # Windows PowerShell: $env:OPENROUTER_API_KEY = "..."
+export OPENROUTER_API_KEY="sk-or-..."      # PowerShell: $env:OPENROUTER_API_KEY = "..."
 export FREEMODEL_API_KEY="fe_oa_..."
 export AEROLINK_API_KEY="..."
 ```
 
-Or manage keys interactively with `/apikey` (view / replace / remove /
-validate). Keys are validated with a real authenticated request before they
-are saved.
+Keys are validated with a real authenticated request before they are saved.
+They are stored per provider in `~/.seedcode/config.json`, never in any
+project directory, and never printed, logged, or included in an error
+message.
 
 ### Providers
 
-| Provider | Best for |
-| --- | --- |
-| [OpenRouter](https://openrouter.ai) | A broad catalogue of free and paid models |
-| FreeModel Claude | Claude-family models through FreeModel |
-| FreeModel Codex | GPT/Codex models through FreeModel |
-| [AeroLink](https://aerolink.lat) | Anthropic-compatible gateway access |
-| [Ollama](https://ollama.com) | Local, key-free models |
+Every provider is fully independent: its own API key, model, settings, and
+connection status. Switching providers never touches another one's
+configuration.
 
-Switch with `/provider`; pick models with `/model` (OpenRouter filters
-`free` vs `pro` models; FreeModel offers Auto mode). Custom provider
-configuration is unchanged in v6.2.0 — every provider keeps its own key,
-model, and settings.
+| Provider | API key | Best for |
+| --- | --- | --- |
+| **Default** | not required | Chatting immediately on a release install |
+| [OpenRouter](https://openrouter.ai) | required | A broad catalogue of free and paid models |
+| FreeModel Claude | required | Claude-family models through FreeModel |
+| FreeModel Codex | required | GPT/Codex models through FreeModel |
+| [AeroLink](https://aerolink.lat) | required | Anthropic-compatible gateway access |
+| [Ollama](https://ollama.com) | not required | Local, key-free models |
+
+Switch with `/provider` — the picker groups choices by what they need
+(*Built-in · no API key*, *Your own API key*, *Local*) and shows each
+provider's backend, current model, and key state. Pick models with `/model`
+(OpenRouter filters `free` vs `pro` models; FreeModel offers Auto mode).
 
 ## Assist Mode and permissions
 
@@ -161,12 +171,7 @@ Permission modes (view/set with `/permission`):
 | `desktop` | Add desktop automation capability after confirmation |
 | `full_system` | Allow broader computer and filesystem actions after confirmation |
 
-v6.2.0 performance work in Assist Mode: independent read-only tool calls
-run in parallel, mutating steps stay sequential for correctness, tool
-dispatch is faster, and desktop actions verify state live instead of
-sleeping fixed delays.
-
-## Code Mode (new in v6.2.0)
+## Code Mode
 
 Code Mode is Assist Mode sharpened into a real coding agent for the current
 project. Your working directory becomes the **workspace**:
@@ -177,10 +182,10 @@ project. Your working directory becomes the **workspace**:
 /codemode status    # workspace, memory, and index state
 ```
 
-In Code Mode the agent follows the coding-agent workflow: consult the
-project index, find relevant files with targeted searches, read only what
-it needs, plan, edit, run a relevant command or test, and report what
-changed. File operations stay inside the workspace root.
+In Code Mode the agent consults the project index, finds relevant files with
+targeted searches, reads only what it needs, plans, edits, runs a relevant
+command or test, and reports what changed. File operations stay inside the
+workspace root.
 
 ### `.seedcode` project memory
 
@@ -198,13 +203,28 @@ my-project/
 └── ...
 ```
 
-- **Incremental indexing** — every indexed file is hashed; only changed
-  files are re-summarized on the next run.
+- **Incremental indexing** — every indexed file is hashed; only changed files
+  are re-summarized on the next run.
 - **Secrets never land here** — writes pass a secret-key filter; API keys,
   tokens, and passwords are rejected at write time.
 - **Not source code** — `.seedcode/` is excluded from workspace search,
-  indexing, and the agent's project view (the repo `.gitignore` template
-  lists it too).
+  indexing, and the agent's project view.
+
+## Terminal execution
+
+The agent runs commands through the tool engine's `run_command` tool:
+
+- output streams line-by-line **while the command is still running**, so long
+  builds and test runs stay visible instead of blocking;
+- `stderr` is captured along with `stdout`, in order;
+- the exit code is reported, and a non-zero exit is an explicit failure the
+  model can react to;
+- commands have a bounded timeout (default 60s, up to 300s) and a timeout
+  kills the whole process tree;
+- `Ctrl+C` cancels the running command — its process tree is terminated — and
+  the agent turn continues with the cancellation reported as a failed result;
+- shells: `cmd`, `powershell`, `pwsh`, `bash`, or `auto` (the shell you are
+  actually in), on Windows and Linux.
 
 ## Command reference
 
@@ -214,10 +234,12 @@ my-project/
 | `/provider` | Switch the active AI provider |
 | `/apikey` | Add, replace, remove, or validate a provider key |
 | `/model` | Browse and select the provider's model catalogue |
+| `/mode` | Show or switch the mode: `chat` / `assist` / `code` / `agent` |
+| `/chat` | Switch to plain Chat Mode (`/chat on`) |
 | `/agent` | Enable or disable Assist Mode (alias `/assist`) |
 | `/codemode` | Workspace-aware Code Mode (`on` / `off` / `status`) |
 | `/workspace` | Show the active Code Mode workspace |
-| `/permission` | View or set the Assist permission mode |
+| `/permission` | View or set the Assist permission mode (alias `/permissions`) |
 | `/computer` | Show Computer Engine status and permissions |
 | `/screenshot` | Capture a screenshot |
 | `/windows` | List open windows |
@@ -237,20 +259,19 @@ Keyboard shortcuts: `Ctrl+K` command palette, `Ctrl+P` project file search,
 `Ctrl+R` history, `Ctrl+,` settings, `Ctrl+/` shortcut reference,
 `Ctrl+L` clear.
 
-All exit paths are clean in v6.2.0: `/exit` → menu, menu → Exit,
-`Ctrl+C` (cancels a response or the current line), and `Ctrl+D`/EOF.
-No traceback appears on normal exit.
+All exit paths are clean: `/exit` → menu, menu → Exit, `Ctrl+C` (cancels a
+response or the current line), and `Ctrl+D`/EOF. No traceback appears on
+normal exit.
 
 ## Desktop control
 
 With the `desktop`/`full_system` permission level, Seed Code can inspect
-windows, resolve UI elements semantically (accessibility tree, OCR, and
-image refinement — no brittle coordinates), launch and focus applications,
-and drive keyboard/mouse with per-action verification. v6.2.0 replaces
-hardcoded waits with state-based detection: `open_app` polls for real
-window evidence instead of sleeping, verification pauses are shorter
-because state is re-read live, and screenshots are taken only when
-information is genuinely needed.
+windows, resolve UI elements semantically (accessibility tree, OCR, and image
+refinement — no brittle coordinates), launch and focus applications, and
+drive keyboard/mouse with per-action verification. Waits are state-based:
+`open_app` polls for real window evidence instead of sleeping, verification
+pauses are short because state is re-read live, and screenshots are taken
+only when information is genuinely needed.
 
 ## Configuration and local data
 
@@ -262,16 +283,32 @@ information is genuinely needed.
 └── logs/             rotating diagnostic logs
 ```
 
-Credentials stay local and provider-scoped; environment variables take
-precedence over stored keys. Logs never record API keys or message content.
-`/doctor` checks configuration, connectivity, and provider health.
+`config.json` keeps **one isolated entry per provider**:
+
+```text
+config.json
+├── active_provider
+├── providers
+│   ├── default          { api_key(unused), model }
+│   ├── openrouter       { api_key, model }
+│   ├── freemodel_claude { api_key, model }
+│   ├── freemodel_codex  { api_key, model }
+│   ├── aerolink         { api_key, model }
+│   └── ollama           { api_key(unused), model }
+```
+
+Switching providers loads that provider's own key and model, and saving one
+provider never overwrites another's. Credentials stay local; environment
+variables take precedence over stored keys. Logs never record API keys or
+message content. `/doctor` checks configuration, connectivity, and provider
+health.
 
 ## Platform support
 
 - **Windows:** full experience — desktop control, one-click installer,
-  standalone EXE. Primary platform for v6.2.0.
+  standalone EXE. Primary platform.
 - **Linux / macOS:** terminal chat, providers, project tools, Code Mode.
-  Install with pip; prebuilt binaries are not published yet.
+  Install with the `install.sh` command above.
 
 ## Building from source
 
@@ -290,52 +327,71 @@ scripts\windows\build.bat
 ```
 
 Stage 0 generates the branding assets (icon, wizard art, exe version
-resource). Stage 0b embeds the default API configuration from a local
-`.env` (git-ignored; skipped when absent — never printed or committed).
-Stage 1 builds the self-contained `dist\seedcode.exe` with PyInstaller
-(icon + version resource embedded) and verifies it. Stage 2 compiles the
-Inno Setup installer and verifies it. Stage 3 stages everything into
-`dist\release\<version>\` and writes `SHA256SUMS.txt` with real hashes.
+resource). Stage 0b embeds the default API configuration from a local `.env`
+(git-ignored; skipped when absent — never printed or committed). Stage 1
+builds the self-contained `dist\seedcode.exe` with PyInstaller (icon +
+version resource embedded) and verifies it. Stage 2 compiles the Inno Setup
+installer and verifies it. Stage 3 stages everything into
+`dist\release\<version>\` and writes `SHA256SUMS.txt` with real hashes. Every
+stage fails loudly on a version mismatch, so a stale binary can never ship.
 
 Details: [`scripts/windows/README.md`](scripts/windows/README.md).
 
-### Release artifacts (v6.2.0)
+### Release artifacts (v6.2.5)
 
 | Artifact | Purpose |
 | --- | --- |
-| `SeedCode-CLI-Setup-6.2.0.exe` | Windows installer (Inno Setup) |
-| `SeedCode-CLI-6.2.0-windows-x64.exe` | Standalone Windows EXE |
-| `seedcode_cli-6.2.0-py3-none-any.whl` | pip wheel |
-| `seedcode-cli-6.2.0.tar.gz` | pip source distribution |
-| `seedcode-cli-6.2.0.tgz` | npm launcher package |
-| `SHA256SUMS.txt` | SHA256 checksums of the above |
+| `SeedCode-CLI-Setup-6.2.5.exe` | Windows installer (Inno Setup) |
+| `SeedCode-CLI-6.2.5-windows-x64.exe` | Standalone Windows EXE — downloaded by the Windows IRM installer |
+| `seedcode_cli-6.2.5-py3-none-any.whl` | Python wheel — downloaded by the Linux IRM installer |
+| `seedcode-cli-6.2.5.tar.gz` | Python source distribution |
+| `SHA256SUMS.txt` | SHA256 checksums; verified by both installers |
 
-Built artifacts are collected in `dist/release/6.2.0/` during a release
-build; publishing (GitHub release, PyPI, npm, winget-pkgs PR) is a separate
-manual step.
+Built artifacts are collected in `dist/release/6.2.5/` during a release
+build. Publishing (GitHub Release) is a separate step; the remote installers
+read the release named `v6.2.5`.
+
+### The remote installers
+
+[`IRM_INSTALL/`](IRM_INSTALL/) is the source of the scripts served at
+`https://seedcode-cli.vercel.app`:
+
+| File | Served at |
+| --- | --- |
+| `install.ps1` | `/install.ps1` (Windows) |
+| `install.sh` | `/install.sh` (Linux) |
+| `RELEASE_INFO.txt` | Official installation summary |
 
 ## Troubleshooting
 
-- **`seedcode` is not recognized** — open a *new* terminal after
-  installing; PATH changes only apply to fresh sessions. The installer
-  verifies this before it finishes.
-- **"Setup needed" on the dashboard** — run `/provider`, then `/model`.
-  Windows-release installs start with the default OpenRouter credential;
-  pip/source installs run guided setup on first launch.
+- **`seedcode` is not recognized** — open a *new* terminal after installing;
+  `PATH` changes only apply to fresh sessions. The installer verifies this
+  before it finishes.
+- **"Setup needed" on the header** — the active provider is not usable yet.
+  Run `/provider`. Default needs a built-in credential (release builds have
+  one); OpenRouter/FreeModel/AeroLink need your own key.
+- **Default says the built-in connection is unavailable** — this build has no
+  embedded credential. Run `/provider` and choose OpenRouter, or set
+  `OPENROUTER_API_KEY`.
 - **401/403 errors** — your key is invalid or lacks access; `/apikey` to
   replace it, `/doctor` for diagnostics.
 - **402 errors** — the model needs credits; `/model` and pick a free model.
-- **Rate limits (429)** — wait and retry; consider a different provider.
+- **Rate limits (429)** — wait and retry; Seed Code honors the provider's
+  `Retry-After` hint. Consider a different provider.
 - **Desktop actions fail** — check `/permission` (desktop requires the
-  `desktop` level) and `/computer` for engine status. OCR availability is
-  reported by `/doctor`.
+  `desktop` level) and `/computer` for engine status.
 - **Reset everything** — delete `~/.seedcode/` (settings, keys, history);
   `.seedcode/` project memory lives in each project and is separate.
 
 ## Security model
 
-- Credentials stay local and provider-scoped; the embedded default key
-  never overrides your own key or environment variable.
+- Credentials stay local and **provider-scoped**. Saving or switching one
+  provider never reads or writes another provider's key slot, so a key cannot
+  leak between Default, OpenRouter, FreeModel, AeroLink and Ollama.
+- The built-in Default credential is resolved per request and is never copied
+  into another provider's stored configuration.
+- Keys are shown masked (`sk-or-••••••••`) or not at all — never in full,
+  never in logs, never in error messages, never in a release artifact.
 - Computer actions pass permission checks, verification, and retry limits.
 - `.seedcode/` memory refuses secret-looking fields at write time.
 - The release build consumes the local `.env` only during packaging; the

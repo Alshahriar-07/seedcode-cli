@@ -51,7 +51,8 @@ def main() -> None:
     if len(sys.argv) > 1 and sys.argv[1] in ("--version", "-V"):
         from . import __version__
 
-        print(f"Seed Code v{__version__}")
+        # Installers verify the install by parsing this exact line.
+        print(f"Seed Code CLI {__version__}")
         return
     if len(sys.argv) > 1 and sys.argv[1] in ("--help", "-h"):
         print(_HELP)
@@ -65,18 +66,25 @@ def main() -> None:
     log = get_logger("cli")
 
     from . import __version__
+    from .utils.terminal_env import detect_terminal, workspace_root
 
+    # Detect the terminal host/shell once (VS Code, Windows Terminal, Git Bash
+    # or unknown) so a support log says exactly where this session ran. The
+    # workspace root is the launch directory and is never changed below.
+    terminal = detect_terminal()
     log.info(
-        "Seed Code v%s starting (python %s on %s)",
+        "Seed Code v%s starting (python %s on %s); terminal %s; cwd=%s",
         __version__,
         sys.version.split()[0],
         sys.platform,
+        terminal.describe(),
+        workspace_root(),
     )
 
     from .app import run
     from .ui import UI
 
-    ui = UI()
+    ui = UI(plain=terminal.plain)
     try:
         run(ui)
         log.info("Clean exit.")

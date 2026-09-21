@@ -5,6 +5,12 @@
 #  * creates an isolated virtualenv and installs Seed Code into it
 #  * exposes a global `seedcode` command
 #  * verifies the installation and reports success/failure
+#
+# NOTE: this is the REPO-LOCAL source installer - it requires a cloned
+# repository and Homebrew. End users should use the official remote
+# installer instead (see ../../IRM_INSTALL/):
+#
+#     curl -fsSL https://seedcode-cli.vercel.app/install.sh | bash
 # ==========================================================================
 set -euo pipefail
 

@@ -23,7 +23,8 @@ def _agent(ctx: CommandContext, arg: str) -> CommandResult:
     elif not raw:
         enable = not ctx.config.agent_mode  # bare /agent toggles
     else:
-        ctx.ui.warning("Usage: /agent [on|off]")
+        ctx.ui.warning("[Command Error] Invalid syntax.")
+        ctx.ui.dim("Expected: /agent on|off")
         return CommandResult()
 
     # Agent Mode was merged into Assist Mode — route there transparently.
@@ -35,7 +36,11 @@ def _agent(ctx: CommandContext, arg: str) -> CommandResult:
     return CommandResult()
 
 
-@command("permission", "Show or set the Assist permission mode", aliases=("perm",))
+@command(
+    "permission",
+    "Show or set the Assist permission mode",
+    aliases=("perm", "permissions"),
+)
 def _permission(ctx: CommandContext, arg: str) -> CommandResult:
     raw = arg.strip()
     detail = {

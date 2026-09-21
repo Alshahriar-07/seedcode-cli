@@ -24,6 +24,9 @@ class MenuItem:
     badge: str = ""
     group: str = ""
     disabled: bool = False
+    # A ``Ctrl+<shortcut>`` key that chooses this item directly (1-6 in the
+    # reference main menu). Passed through to the selector's shortcuts.
+    shortcut: str = ""
 
     def __post_init__(self) -> None:
         if self.value is None:
@@ -48,6 +51,7 @@ def run_menu(
             badge=item.badge,
             group=item.group,
             disabled=item.disabled,
+            shortcut=item.shortcut,
         )
         for item in items
     ]

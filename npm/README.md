@@ -1,22 +1,28 @@
 # seedcode-cli (npm launcher)
 
-Installs the `seedcode` command via npm. On Windows the launcher downloads
-the official self-contained `SeedCode-CLI-6.2.0-windows-x64.exe` from the
-[GitHub release](https://github.com/Alshahriar-07/seedcode-cli/releases),
-verifies its SHA256 against the release checksums, caches it under
-`~/.seedcode/npm/`, and runs it — Python is never required.
+> **Not an official installation method.** Seed Code CLI is installed with the
+> official IRM installer system — see the
+> [main README](https://github.com/Alshahriar-07/seedcode-cli#installation)
+> and [GitHub Releases](https://github.com/Alshahriar-07/seedcode-cli/releases).
 
-```bash
-npm install -g seedcode-cli
-seedcode
-```
+Seed Code CLI is distributed through the IRM installer system and GitHub
+Releases:
 
-- Windows x64: supported (standalone binary, SHA256-verified download).
-- Linux / macOS: not published as a prebuilt binary yet — the launcher
-  points to `python -m pip install seedcode-cli`.
+- **Windows:** `irm https://seedcode-cli.vercel.app/install.ps1 | iex`
+- **Linux:** `curl -fsSL https://seedcode-cli.vercel.app/install.sh | bash`
+
+## What this package is
+
+A compatibility launcher retained for users who already manage tooling through
+npm. It is a thin wrapper around the official release: on Windows it downloads
+the official `SeedCode-CLI-6.2.5-windows-x64.exe` from the GitHub release,
+verifies its SHA256 against the release's `SHA256SUMS.txt`, caches it under
+`~/.seedcode/npm/`, and runs it — Python is never required. On Linux and
+macOS it defers to the official installer rather than shipping a binary.
+
+If Seed Code is already on `PATH` (installed by the Windows installer or the
+IRM installer), the native `seedcode` command is used directly and this
+launcher is unnecessary.
 
 The launcher forwards every argument to the real binary
 (`seedcode --version`, `seedcode --help`, and the interactive app all work).
-A pip or Windows-installer install of Seed Code already on `PATH` is used
-directly by the native command; the npm launcher is only needed when npm is
-your preferred package manager.

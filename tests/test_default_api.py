@@ -60,13 +60,36 @@ def test_whitespace_only_keys_are_ignored(monkeypatch) -> None:
     assert source == "embedded"
 
 
-def test_config_load_applies_embedded_default(monkeypatch, tmp_path) -> None:
+def test_config_load_calls_the_default_api_hook(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(manager, "config_path", lambda: tmp_path / "config.json")
+    calls: list[object] = []
+    monkeypatch.setattr(manager, "_apply_default_api", lambda cfg: calls.append(cfg))
+
+    config = manager.load_config()
+
+    assert calls == [config]
+
+
+def test_embedded_default_is_not_written_into_the_openrouter_slot(
+    monkeypatch, tmp_path
+) -> None:
+    """The built-in credential belongs to Default only — never to OpenRouter.
+
+    Regression guard for the v6.2.5 separation: copying the embedded key into
+    OpenRouter's stored slot meant choosing OpenRouter silently inherited Seed
+    Code's built-in credential.
+    """
     monkeypatch.setattr(manager, "config_path", lambda: tmp_path / "config.json")
     monkeypatch.setattr(
-        manager, "_apply_default_api", lambda cfg: cfg.set_api_key("openrouter", "emb")
+        default_api, "_load_embedded", lambda: ("builtin-key", True, "release")
     )
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+
     config = manager.load_config()
-    assert config.get_api_key("openrouter") == "emb"
+
+    assert config.get_api_key("openrouter") == ""
+    assert config.get_api_key("default") == ""  # resolved per request, not stored
+    assert default_api.resolve_builtin_key() == ("builtin-key", "embedded")
 
 
 def test_stored_user_key_survives_default_application(monkeypatch, tmp_path) -> None:
@@ -85,16 +108,37 @@ def test_stored_user_key_survives_default_application(monkeypatch, tmp_path) -> 
     assert loaded.get_api_key("openrouter") == "sk-or-real-user-key"
 
 
-def test_apply_default_api_respects_env_override(monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr(manager, "config_path", lambda: tmp_path / "config.json")
+def test_apply_default_api_writes_no_provider_slot(monkeypatch) -> None:
+    """`_apply_default_api` only reports availability — it stores nothing.
+
+    The built-in credential is resolved by the Default provider per request,
+    so no provider's stored configuration is ever touched from here.
+    """
+    monkeypatch.setattr(
+        default_api, "_load_embedded", lambda: ("builtin-key", True, "release")
+    )
     monkeypatch.setenv("OPENROUTER_API_KEY", "env-value")
     config = AppConfig()
+
     manager._apply_default_api(config)
-    assert config.get_api_key("openrouter") == "env-value"
+
+    assert all(entry.api_key == "" for entry in config.providers.values())
 
 
-def test_apply_default_api_keeps_stored_key(monkeypatch) -> None:
+def test_apply_default_api_keeps_stored_keys(monkeypatch) -> None:
     config = AppConfig()
     config.set_api_key("openrouter", "stored-user")
+    config.set_api_key("default", "stored-default")
     manager._apply_default_api(config)
     assert config.get_api_key("openrouter") == "stored-user"
+    assert config.get_api_key("default") == "stored-default"
+
+
+def test_openrouter_env_var_still_configures_openrouter(monkeypatch, tmp_path) -> None:
+    """The documented OpenRouter environment key keeps working where it belongs."""
+    monkeypatch.setattr(manager, "config_path", lambda: tmp_path / "config.json")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "env-value")
+
+    config = manager.load_config()
+
+    assert config.get_api_key("openrouter") == "env-value"

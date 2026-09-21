@@ -1,4 +1,4 @@
-"""Stage the versioned release directory (v6.2.0 build.bat stage 3).
+"""Stage the versioned release directory (v6.2.5 build.bat stage 3).
 
 Collects the final artifacts into ``dist/release/<version>/`` and writes a
 real ``SHA256SUMS.txt`` — hashes are always computed from the staged files,
@@ -8,16 +8,16 @@ staging. Nothing here prints or logs any secret.
 
 Output layout::
 
-    dist/release/6.2.0/
-    ├── SeedCode-CLI-6.2.0-windows-x64.exe     (standalone exe, renamed)
-    ├── SeedCode-CLI-Setup-6.2.0.exe           (Inno Setup installer)
-    ├── seedcode_cli-6.2.0-py3-none-any.whl    (when built)
-    ├── seedcode-cli-6.2.0.tar.gz              (when built)
+    dist/release/6.2.5/
+    ├── SeedCode-CLI-6.2.5-windows-x64.exe     (standalone exe, renamed)
+    ├── SeedCode-CLI-Setup-6.2.5.exe           (Inno Setup installer)
+    ├── seedcode_cli-6.2.5-py3-none-any.whl    (when built)
+    ├── seedcode-cli-6.2.5.tar.gz              (when built)
     └── SHA256SUMS.txt
 
 Usage:
-    python scripts/windows/stage_release.py --version 6.2.0 \
-        --dist <repo>/dist --installer <repo>/Release/SeedCode-CLI-Setup-6.2.0.exe
+    python scripts/windows/stage_release.py --version 6.2.5 \
+        --dist <repo>/dist --installer <repo>/Release/SeedCode-CLI-Setup-6.2.5.exe
 """
 
 from __future__ import annotations
@@ -106,7 +106,12 @@ def main() -> int:
             print(f"[ERROR] Hash validation failed for {artifact.name}")
             return 2
         lines.append(f"{digest}  {artifact.name}")
-    sums_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    # newline="\n" is explicit: a checksum file staged on Windows must be
+    # byte-identical to one written on Linux. Python's default newline
+    # translation would write CRLF, and then `sha256sum -c` on macOS/Linux
+    # (and install.sh's awk lookup) rejects every entry over the stray CR.
+    with sums_path.open("w", encoding="utf-8", newline="\n") as handle:
+        handle.write("\n".join(lines) + "\n")
     print(f"[OK] {sums_path.name} ({len(lines)} entries, real hashes)")
 
     print("\nRelease directory ready:")

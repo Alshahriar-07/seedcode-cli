@@ -9,11 +9,13 @@ from seedcode.core.providers.openrouter import _entry_is_free
 
 
 def test_provider_status_not_configured() -> None:
-    assert _provider_status(AppConfig()) == "Not Configured"
+    # A key-requiring provider with no key is not ready.
+    cfg = AppConfig(provider="openrouter")
+    assert _provider_status(cfg) == "Not Configured"
 
 
 def test_provider_status_ready_with_key() -> None:
-    cfg = AppConfig()
+    cfg = AppConfig(provider="freemodel_claude")
     cfg.set_api_key("freemodel_claude", "fe_oa_abc")
     assert _provider_status(cfg) == "FreeModel Claude"
     cfg.provider = "freemodel_codex"
@@ -23,7 +25,13 @@ def test_provider_status_ready_with_key() -> None:
 
 def test_provider_status_ollama_needs_no_key() -> None:
     cfg = AppConfig(provider="ollama")
-    assert _provider_status(cfg) == "Ollama (local)"
+    assert _provider_status(cfg) == "Ollama"
+
+
+def test_provider_status_default_needs_no_user_key() -> None:
+    # The built-in Default provider is selectable without any API key.
+    cfg = AppConfig(provider="default")
+    assert _provider_status(cfg) == "Default"
 
 
 def test_model_status() -> None:

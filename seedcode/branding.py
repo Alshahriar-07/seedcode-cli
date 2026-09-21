@@ -4,9 +4,14 @@ The official Seed Code mark is the 16x16 pixel-art "sprouting seed" on a
 dark rounded tile (the Seed Green identity). This module owns the grid and
 the exact palette so every surface renders identical art:
 
-* ``seedcode/ui/logo.py``             — terminal rendering (half-block pixels)
 * ``scripts/windows/build_assets.py`` — ``seedcode.ico``, the Inno wizard
   bitmaps, the canonical ``assets/logo.png`` and the preview render
+* the installer wizard and the Windows taskbar/Explorer surfaces
+
+v6.2.5 note: the interactive CLI no longer renders any ASCII art. The mark
+is a packaging/desktop asset only (:mod:`seedcode.ui.dashboard` renders a
+borderless text header with no logo), so this module is not imported by the
+terminal UI at all.
 
 Stdlib only (struct/zlib): safe to import from anywhere in the package,
 costs nothing at startup, and keeps the brand byte-reproducible.

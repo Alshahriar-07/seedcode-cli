@@ -45,7 +45,8 @@ def _assist(ctx: CommandContext, arg: str) -> CommandResult:
         _show_status(ctx)
         return CommandResult()
     else:
-        ctx.ui.warning("Usage: /assist [on|off]")
+        ctx.ui.warning("[Command Error] Invalid syntax.")
+        ctx.ui.dim("Expected: /assist on|off")
         return CommandResult()
 
     if enable:

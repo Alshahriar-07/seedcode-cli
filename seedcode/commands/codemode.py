@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from rich.table import Table
 
-from .. import codemode_state
+from ..codemode_state import codemode_state
 from ..config import save_config
 from ..tools import PermissionMode
 from . import CommandContext, CommandResult, command
@@ -45,7 +45,8 @@ def _codemode(ctx: CommandContext, arg: str) -> CommandResult:
         _disable_codemode(ctx)
         return CommandResult()
 
-    ctx.ui.warning("Usage: /codemode [on|off|status]")
+    ctx.ui.warning("[Command Error] Invalid syntax.")
+    ctx.ui.dim("Expected: /codemode on|off|status")
     return CommandResult()
 
 

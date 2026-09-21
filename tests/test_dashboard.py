@@ -1,24 +1,35 @@
-"""Startup dashboard tests (v6.2.0 dimensional reference layout).
+"""Startup header tests (v6.2.5 minimal layout).
 
-No network, no real terminal. The 88-column grid is asserted literally:
-anchors at columns 5 (logo), 18 (brand), 42 (divider) and 47 (right
-content), 8 content rows, and a panel that never exceeds 88 columns.
+No network, no real terminal. The launch screen is a small borderless block:
+
+    Seed Code CLI v6.2.5
+    Provider  Default
+    Model     <model>
+    Mode      Chat
+    Status    ● Ready
+
+These tests lock in the v6.2.5 UI direction: **no ASCII logo**, no panel/box,
+no decorative art, real runtime state shown exactly once, and never a faked
+"Ready" for an unconfigured session.
 """
 
 from __future__ import annotations
 
+import re
+
 from rich.console import Console
 
+from seedcode import APP_NAME, __version__
 from seedcode.core.models import AppConfig
-from seedcode.ui.dashboard import PANEL_WIDTH, render_dashboard
+from seedcode.ui.dashboard import render_dashboard
 from seedcode.ui.theme import SEED_THEME
 
-# Min width for the full reference layout; below this the compact fallback
-# renders (same information, one content line).
-_REF_MIN_WIDTH = 64
+# Glyphs that would mean ASCII art came back: full/partial block shading and
+# every box-drawing corner or edge a banner would need.
+_ART_GLYPHS = set("█▓▒░▀▄▌▐■□▪▫") | set("╭╮╰╯┌┐└┘─│┃━┃")
 
 
-def _render(config: AppConfig, width: int, legacy: bool = False) -> str:
+def _render(config: AppConfig, width: int = 100, legacy: bool = False) -> str:
     console = Console(
         theme=SEED_THEME,
         width=width,
@@ -31,145 +42,176 @@ def _render(config: AppConfig, width: int, legacy: bool = False) -> str:
     return console.export_text()
 
 
-def _configured() -> AppConfig:
-    cfg = AppConfig()  # active provider is freemodel_claude by default
-    cfg.set_api_key("freemodel_claude", "fe_oa_test")
-    cfg.model = "claude-opus-4.1"
-    return cfg
+def _lines(config: AppConfig, width: int = 100, legacy: bool = False) -> list[str]:
+    return [ln for ln in _render(config, width, legacy).splitlines() if ln.strip()]
 
 
-# --- the 88-column dimensional grid ------------------------------------------
-def test_88_column_grid_matches_the_spec_anchors() -> None:
-    out = _render(_configured(), width=88)
-    lines = out.splitlines()
-    assert len(lines) == 10  # top border + 8 content rows + bottom border
-    assert len(lines[0]) == PANEL_WIDTH == 88
-    assert all(len(ln) == 88 for ln in lines)  # exact outer width
-
-    # Rows 1 and 8 (1-based content) are blank padding.
-    assert lines[1].strip("│").strip() == ""
-    assert lines[8].strip("│").strip() == ""
-
-    # Logo footprint occupies columns 5-12 (its top pixel row is
-    # transparent, so ink may start one cell in); brand text at column 18.
-    row2 = lines[2]
-    assert row2[4] in (" ", "▀", "▄")  # inside the icon footprint
-    assert any(c in "▀▄" for c in row2[4:12])  # ink within cols 5-12
-    assert all(c not in "▀▄" for c in row2[:4] + row2[12:17])  # footprint bounds
-    assert row2.find("SEEDCODE CLI") + 1 == 18
-
-    # Logo rows keep ink within the icon footprint on every content row.
-    for line in lines[2:8]:
-        assert all(c not in "▀▄" for c in line[:4] + line[12:17])
-    # Divider at column 42 on the six populated rows only.
-    for line in lines[2:8]:
-        assert line[41] == "│"  # 0-based index 41 == column 42
-    assert lines[1][41] != "│" and lines[8][41] != "│"
-
-    # Right content at column 47: studio header, tagline, then labels.
-    assert row2.find("Seed Code | Eagox Studio") + 1 == 47
-    assert lines[3].rfind("Plant ideas. Grow code.") + 1 == 47
-    for line, label in zip(lines[4:8], ("Provider", "Model", "Mode", "Status")):
-        assert line.find(label) + 1 == 47
-
-    # Label/value columns align vertically across all four rows.
-    starts = {lines[i].find(label) for i, label in zip(range(4, 8), ("Provider", "Model", "Mode", "Status"))}
-    assert len(starts) == 1
-
-
-def test_panel_never_stretches_past_the_design_width() -> None:
-    for width in (88, 100, 120, 200):
-        out = _render(_configured(), width=width)
-        lines = out.splitlines()
-        assert len(lines[0]) == 88, width  # capped at the design width
-        assert all(len(ln) <= width for ln in lines), width
-
-
-def test_reference_layout_is_compact() -> None:
-    out = _render(_configured(), width=100)
-    lines = out.splitlines()
-    # Border top + exactly 8 content rows + border bottom — no extra rows.
-    assert len(lines) == 10
-    nonblank = [ln for ln in lines[1:-1] if ln.strip("│ ")]
-    assert len(nonblank) == 6  # 6 populated rows; padding rows stay blank
-
-
-# --- dynamic content ---------------------------------------------------------
-def test_reference_layout_renders_branding_and_info() -> None:
-    out = _render(_configured(), width=100)
-    assert "Seed code v" in out  # version label in the top border
-    assert "SEEDCODE CLI" in out  # wordmark
-    assert "Plant ideas. Grow code." in out  # tagline
-    assert "FreeModel Claude" in out  # provider (dynamic)
-    assert "claude-opus-4.1" in out  # model (dynamic)
-    assert "Chat" in out  # mode (dynamic)
-    assert "Ready" in out  # status (dynamic)
-    assert "Eagox Studio" in out  # studio header
-
-
-def test_logo_mark_present_in_full_layout() -> None:
-    out = _render(_configured(), width=100)
-    # The half-block raster of the official mark draws with ▀/▄ cells.
-    assert "▀" in out or "▄" in out
-
-
-def test_assist_mode_is_shown() -> None:
-    cfg = _configured()
-    cfg.agent_mode = True
-    out = _render(cfg, width=100)
-    assert "Assist" in out
-
-
-def test_openrouter_provider_and_model_are_dynamic() -> None:
+def _byok() -> AppConfig:
+    """A configured provider that DOES need a key."""
     cfg = AppConfig(provider="openrouter")
     cfg.set_api_key("openrouter", "sk-or-test")
     cfg.model = "gpt-5.1-codex"
-    out = _render(cfg, width=100)
+    return cfg
+
+
+# --- no logo, no box, no art -------------------------------------------------
+def test_no_ascii_logo_or_box_art_anywhere() -> None:
+    for cfg in (_byok(), AppConfig()):
+        for width in (80, 100, 200):
+            for line in _lines(cfg, width):
+                assert not (_ART_GLYPHS & set(line)), line
+
+
+def test_logo_module_is_gone() -> None:
+    """v6.2.5 removed the ASCII logo outright — no logo module may return."""
+    import importlib.util
+
+    assert importlib.util.find_spec("seedcode.ui.logo") is None
+    assert importlib.util.find_spec("seedcode.ui.banner") is None
+
+
+def test_header_is_small() -> None:
+    # Title + four or five value rows; the caller adds one hint line on top.
+    assert len(_lines(_byok())) <= 6
+    assert len(_lines(AppConfig())) <= 6
+
+
+def test_title_is_the_brand_line() -> None:
+    lines = _lines(_byok())
+    assert lines[0] == f"{APP_NAME} CLI v{__version__}"
+    assert lines[0] == "Seed Code CLI v6.2.5"
+    assert "Seed code" not in "\n".join(lines)  # brand casing everywhere
+
+
+# --- dynamic content, shown once ---------------------------------------------
+def test_runtime_state_is_labelled_once_per_row() -> None:
+    out = _render(_byok())
+    # Whole words, so "Mode" is not matched inside "Model".
+    for label in ("Provider", "Model", "Mode", "Status"):
+        assert len(re.findall(rf"\b{label}\b", out)) == 1, label
+
+
+def test_byok_provider_values_are_dynamic() -> None:
+    out = _render(_byok())
     assert "OpenRouter" in out
     assert "gpt-5.1-codex" in out
-
-
-def test_unconfigured_placeholders() -> None:
-    out = _render(AppConfig(), width=100)
-    assert "Not configured" in out
-    assert "no model" in out
-    assert "Setup needed" in out
-
-
-def test_long_model_name_is_truncated() -> None:
-    cfg = _configured()
-    cfg.model = "deepseek/deepseek-v4-0528-chat-plus-ultra-long-suffix"
-    out = _render(cfg, width=100)
-    assert "…" in out  # ellipsis marks the clip
-    for line in out.splitlines():
-        assert len(line) <= 88  # the display value clips, never the grid
-    assert "deepseek/deepseek-v4-0528-chat-plus-ultra-long-suffix" in out or True
-
-
-def test_narrow_terminal_gets_compact_fallback() -> None:
-    out = _render(_configured(), width=60)
-    lines = [ln for ln in out.splitlines() if ln.strip()]
-    assert len(lines) == 3  # top border, status row, bottom border
-    assert "FreeModel Claude" in out
+    assert "Chat" in out
     assert "Ready" in out
 
 
+class _StubUI:
+    """Minimal UI stand-in: records messages, ignores rendering."""
+
+    def __init__(self) -> None:
+        self.messages: list[str] = []
+
+    def _record(self, message) -> None:
+        self.messages.append(str(message))
+
+    info = dim = success = warning = error = _record
+
+    def panel(self, body, title: str | None = None) -> None:
+        self.messages.append(title or "")
+
+    def blank(self) -> None:
+        self.messages.append("")
+
+    def confirm_desktop(self, category_label: str, description: str) -> str:
+        return "n"
+
+
+def test_code_mode_and_assist_mode_are_named(monkeypatch, tmp_path) -> None:
+    cfg = _byok()
+    cfg.agent_mode = True
+    assert "Assist Mode" in _render(cfg)
+
+    from seedcode import codemode_state as cms
+    from seedcode.commands import CommandContext, dispatch
+    from seedcode.commands import assist as assist_cmd
+    from seedcode.commands import codemode as codemode_cmd
+
+    cms.reset()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(codemode_cmd, "save_config", lambda config: None)
+    monkeypatch.setattr(assist_cmd, "save_config", lambda config: None)
+    monkeypatch.setattr(assist_cmd, "is_available", lambda: (False, "test"))
+    try:
+        dispatch(CommandContext(ui=_StubUI(), config=cfg, engine=None), "/codemode on")
+        assert "Code Mode" in _render(cfg)
+    finally:
+        cms.reset()
+
+
+# --- the API-key row follows the provider's REAL requirement -----------------
+def test_api_key_row_hidden_for_providers_that_need_no_key() -> None:
+    assert "API Key" not in _render(AppConfig(provider="default"))
+    assert "API Key" not in _render(AppConfig(provider="ollama", model="llama3.2"))
+
+
+def test_api_key_row_shown_masked_for_key_providers() -> None:
+    out = _render(_byok())
+    assert "API Key" in out
+    assert "sk-or-test" not in out  # never the raw key
+    assert "*" in out  # masked form
+
+
+def test_api_key_row_warns_when_missing() -> None:
+    cfg = AppConfig(provider="openrouter", model="gpt-5.1-codex")
+    assert "Not set" in _render(cfg)
+
+
+# --- unconfigured never fakes readiness -------------------------------------
+def test_unconfigured_placeholders() -> None:
+    out = _render(AppConfig())
+    # The built-in provider is named honestly, but with no model chosen there
+    # is nothing to chat with — and "Ready" is never faked.
+    assert "Default" in out
+    assert "no model" in out
+    assert "Setup needed" in out
+    assert "Ready" not in out
+
+
+def test_unconfigured_key_provider_shows_not_configured() -> None:
+    out = _render(AppConfig(provider="openrouter"))
+    assert "Not configured" in out
+    assert "Setup needed" in out
+
+
+def test_default_provider_shown_when_builtin_available(monkeypatch) -> None:
+    from seedcode import default_api
+
+    monkeypatch.setattr(
+        default_api, "_load_embedded", lambda: ("builtin-key", True, "release")
+    )
+    cfg = AppConfig(provider="default", model="nvidia/nemotron-3-super-120b-a12b:free")
+    out = _render(cfg)
+    assert "Default" in out
+    assert "Ready" in out
+
+
+# --- fits the terminal -------------------------------------------------------
+def test_long_model_name_is_clipped_to_display_width() -> None:
+    cfg = _byok()
+    cfg.model = "deepseek/" + "x" * 120
+    out = _render(cfg, width=100)
+    assert "…" in out  # ellipsis marks the clip
+    for line in out.splitlines():
+        assert len(line) <= 100
+
+
 def test_no_line_exceeds_terminal_width() -> None:
-    for width in (40, 50, 60, 64, 70, 76, 88, 90, 120, 200):
-        out = _render(_configured(), width=width)
-        assert all(len(line) <= width for line in out.splitlines()), width
+    for width in (40, 50, 60, 80, 88, 100, 200):
+        for cfg in (_byok(), AppConfig()):
+            out = _render(cfg, width=width)
+            assert all(len(line) <= width for line in out.splitlines()), (width, cfg.provider)
 
 
-def test_legacy_console_gets_ascii_fallback() -> None:
-    out = _render(_configured(), width=100, legacy=True)
-    lines = [ln for ln in out.splitlines() if ln.strip()]
-    assert len(lines) == 3  # compact ASCII banner
-    assert "Seed Code v" in out
-    assert "▀" not in out and "│" not in out  # no Unicode art anywhere
+def test_legacy_console_gets_ascii_marks_only() -> None:
+    out = _render(_byok(), legacy=True)
+    assert "o Ready" in out or "o Connected" in out
+    assert "●" not in out
 
 
-def test_wide_terminal_does_not_stretch_too_far() -> None:
-    out = _render(_configured(), width=200)
-    # The panel is capped at its 88-column design width, never fills 200.
-    nonblank = [ln for ln in out.splitlines() if ln.strip()]
-    assert all(len(ln.rstrip()) <= 88 for ln in nonblank)
+def test_wide_terminals_do_not_stretch_the_header() -> None:
+    narrow = _lines(_byok(), width=100)
+    assert _lines(_byok(), width=200) == narrow

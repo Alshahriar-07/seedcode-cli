@@ -20,7 +20,7 @@ truth shared with the terminal renderer ``seedcode/ui/logo.py``. Everything
 is deterministic: same inputs, byte-identical outputs.
 
 Usage:
-    python build_assets.py --version 6.2.0
+    python build_assets.py --version 6.2.5
     python build_assets.py --verify-exe ..\\..\\dist\\seedcode.exe
 """
 

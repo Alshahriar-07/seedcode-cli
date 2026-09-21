@@ -5,10 +5,16 @@
  *
  * Maps Node's platform/arch identifiers onto the official release artifact
  * names. Windows ships a self-contained exe (downloaded to the user's cache
- * directory); Linux/macOS currently install through pip, so the launcher
- * explains the pip path instead of downloading something that does not
- * exist — it must never pretend an artifact exists when it does not.
+ * directory); Linux/macOS have no published prebuilt binary yet, so the
+ * launcher points at the official installer instead of downloading
+ * something that does not exist — it must never pretend an artifact exists
+ * when it does not.
  */
+
+// The official installation method (see IRM_INSTALL/). Quoted verbatim in
+// error messages so the user is never sent to an unsupported path.
+const OFFICIAL_INSTALL =
+  "Install officially: curl -fsSL https://seedcode-cli.vercel.app/install.sh | bash";
 
 const VERSION = require("../package.json").version;
 
@@ -27,8 +33,7 @@ function resolveArtifact(platform, arch) {
   if (platform === "win32") {
     if (arch !== "x64" && arch !== "arm64") {
       throw new Error(
-        `Windows builds are x64-only; this machine is ${arch}. ` +
-          "Use pip: python -m pip install seedcode-cli"
+        `Windows builds are x64-only; this machine is ${arch}. ` + OFFICIAL_INSTALL
       );
     }
     return {
@@ -41,14 +46,10 @@ function resolveArtifact(platform, arch) {
   }
   if (platform === "linux" || platform === "darwin") {
     throw new Error(
-      `No prebuilt ${platform} binary is published yet. ` +
-        "Install with pip: python -m pip install seedcode-cli"
+      `No prebuilt ${platform} binary is published yet. ` + OFFICIAL_INSTALL
     );
   }
-  throw new Error(
-    `Unsupported platform ${platform}. ` +
-      "Install with pip: python -m pip install seedcode-cli"
-  );
+  throw new Error(`Unsupported platform ${platform}. ` + OFFICIAL_INSTALL);
 }
 
 /** The Seed Code version a cached artifact belongs to (cache key). */

@@ -23,9 +23,16 @@ DEFAULT_MAX_TOKENS = 1024
 # ``:free`` rule in :meth:`AppConfig.effective_max_tokens`).
 AGENT_MAX_TOKENS = 8192
 
-# The five supported backends (kept as a Literal so bad config fails loudly).
+# The six supported backends (kept as a Literal so bad config fails loudly).
+# "default" is Seed Code's built-in connection — a provider of its own, not an
+# alias of "openrouter" (see seedcode.core.providers.default).
 ProviderId = Literal[
-    "openrouter", "freemodel_claude", "freemodel_codex", "aerolink", "ollama"
+    "default",
+    "openrouter",
+    "freemodel_claude",
+    "freemodel_codex",
+    "aerolink",
+    "ollama",
 ]
 
 
@@ -70,10 +77,10 @@ class ProviderConfig(BaseModel):
     """Per-provider settings: each backend keeps its own key and model.
 
     Switching providers never touches another provider's entry, so keys and
-    model choices are always remembered. Ollama simply leaves ``api_key``
-    empty (it does not use one). ``options`` holds provider-specific extras
-    (e.g. OpenRouter's free/pro mode, FreeModel's claude/codex backend) so
-    new providers can add settings without schema changes.
+    model choices are always remembered. Ollama and the built-in ``default``
+    provider simply leave ``api_key`` empty (they do not need one).
+    ``options`` holds provider-specific extras (e.g. OpenRouter's free/pro
+    mode) so new providers can add settings without schema changes.
     """
 
     api_key: str = ""
@@ -82,8 +89,18 @@ class ProviderConfig(BaseModel):
 
 
 _ALL_PROVIDERS = (
-    "openrouter", "freemodel_claude", "freemodel_codex", "aerolink", "ollama"
+    "default",
+    "openrouter",
+    "freemodel_claude",
+    "freemodel_codex",
+    "aerolink",
+    "ollama",
 )
+
+# Fallback used by legacy migration for a provider that is missing or
+# unrecognised. Kept next to _ALL_PROVIDERS so the two can never drift: the
+# built-in Default provider needs no key, so it is the safe landing spot.
+_FALLBACK_PROVIDER = _ALL_PROVIDERS[0]
 
 
 def _default_providers() -> dict[str, ProviderConfig]:
@@ -95,14 +112,18 @@ class AppConfig(BaseModel):
 
     Stored shape (config.json)::
 
-        active_provider: "openrouter" | "freemodel_claude" | "freemodel_codex"
-                         | "aerolink" | "ollama"
+        active_provider: "default" | "openrouter" | "freemodel_claude"
+                         | "freemodel_codex" | "aerolink" | "ollama"
         providers:
+          default:          {api_key(unused), model}
           openrouter:       {api_key, model}
           freemodel_claude: {api_key, model}
           freemodel_codex:  {api_key, model}
           aerolink:         {api_key, model}
           ollama:           {api_key(unused), model}
+
+    Each provider's entry is fully isolated: writing one never touches
+    another, so a switch can never leak a key or a model between them.
 
     Models are never hardcoded — each provider's ``model`` starts empty and
     the user selects one from the live catalogue. Older config formats
@@ -111,7 +132,7 @@ class AppConfig(BaseModel):
     automatically on load.
     """
 
-    active_provider: ProviderId = "freemodel_claude"
+    active_provider: ProviderId = "default"
     providers: dict[str, ProviderConfig] = Field(default_factory=_default_providers)
     ollama_host: str = "http://localhost:11434"
     theme: str = "seed"
@@ -173,7 +194,7 @@ class AppConfig(BaseModel):
         # v1.x top-level model belongs to the active provider.
         top_model = data.pop("model", None)
         if top_model:
-            active = data.get("active_provider", "freemodel_claude")
+            active = data.get("active_provider", _FALLBACK_PROVIDER)
             providers.setdefault(active, {})["model"] = top_model
 
         # v0.x: single "api_key" string belonged to OpenRouter.
@@ -206,9 +227,10 @@ class AppConfig(BaseModel):
                     "freemodel_claude" if backend == "claude" else "freemodel_codex"
                 )
 
-        # Anything still unknown falls back to the default provider.
+        # Anything still unknown falls back to the built-in Default provider
+        # (the zero-setup option: no API key required).
         if "active_provider" in data and data["active_provider"] not in _ALL_PROVIDERS:
-            data["active_provider"] = "freemodel_claude"
+            data["active_provider"] = _FALLBACK_PROVIDER
 
         # vNext: the standalone ``desktop_mode`` flag folded into the unified
         # permission level. A legacy config with desktop_mode=true elevates a
@@ -302,12 +324,22 @@ class AppConfig(BaseModel):
     def is_configured(self) -> bool:
         """True when the active provider is usable and a model is chosen.
 
-        Ollama needs no key; the other providers need one.
+        Ollama needs no key at all. The built-in ``default`` provider needs no
+        USER key either, but its built-in credential must actually exist in
+        this build — without one it is not usable, so guided setup still runs
+        (the dashboard shows "Setup needed" rather than faking "Ready").
+        Every other provider needs its own stored key.
         """
         if not self.model:
             return False
         if self.active_provider == "ollama":
             return True
+        if self.active_provider == "default":
+            from ..default_api import builtin_api_available
+
+            return builtin_api_available() or bool(
+                self.get_api_key("default").strip()
+            )
         return bool(self.get_api_key().strip())
 
     def remember_model(self) -> None:

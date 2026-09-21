@@ -62,14 +62,16 @@ def dispatch(ctx: CommandContext, text: str) -> CommandResult:
 
     entry = _REGISTRY.get(name)
     if entry is None:
-        ctx.ui.warning(f"Unknown command: /{name}. Type /help for the list.")
+        # Never silently ignore a command: name it, then point at /help.
+        ctx.ui.warning(f"[Command Error] Unknown command: /{name}")
+        ctx.ui.dim("Run /help for available commands.")
         return CommandResult(handled=True)
     return entry[0](ctx, arg)
 
 
 # Import handler modules for their registration side effects. Deferred to the
 # bottom so ``command`` / ``_REGISTRY`` already exist when the handlers load.
-from . import about, agent, assist, clear, codemode, desktop, doctor, help, history, palette, provider, theme  # noqa: E402,F401
+from . import about, agent, assist, chat, clear, codemode, desktop, doctor, help, history, mode, palette, provider, status, theme  # noqa: E402,F401
 
 __all__ = [
     "CommandContext",

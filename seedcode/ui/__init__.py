@@ -19,6 +19,7 @@ from rich.text import Text
 
 from ..core.models import AppConfig
 from .dashboard import render_dashboard
+from .reference import render_command_hint
 from .renderer import StreamRenderer
 from .theme import SEED_THEME, rich_theme, set_active_theme
 
@@ -28,8 +29,13 @@ __all__ = ["UI", "StreamRenderer", "SEED_THEME"]
 class UI:
     """Thin wrapper around a Rich console with Seed Code styling helpers."""
 
-    def __init__(self) -> None:
-        self.console = Console(theme=rich_theme(), highlight=False)
+    def __init__(self, plain: bool = False) -> None:
+        # ``plain`` is the safe fallback for hosts that mangle ANSI (or when
+        # the user sets SEEDCODE_PLAIN): no colour, no cursor tricks — Rich is
+        # still used, it just emits nothing a terminal could corrupt.
+        self.console = Console(
+            theme=rich_theme(), highlight=False, no_color=plain
+        )
         # The active Live display (spinner/stream), if any — permission
         # dialogs pause it so interactive input works cleanly.
         self._live: Live | None = None
@@ -65,8 +71,15 @@ class UI:
 
     # --- startup -----------------------------------------------------------
     def banner(self, config: AppConfig) -> None:
-        """Render the startup dashboard (shown exactly once at launch)."""
+        """Render the compact startup screen (shown exactly once at launch).
+
+        A borderless text header (no logo, no box) carrying the runtime values,
+        plus one line of command hints. No decorative art, no quick-commands
+        box, no footer — so the prompt stays near the top and the whole screen
+        fits a standard 80x24 terminal without scrolling.
+        """
         render_dashboard(self.console, config)
+        render_command_hint(self.console)
 
     # --- chat rendering ----------------------------------------------------
     @contextmanager

@@ -22,12 +22,17 @@ class ProviderError(Exception):
 
     ``transient`` marks failures worth retrying automatically (timeouts,
     connection drops, rate limits) as opposed to permanent ones (bad key,
-    unknown model).
+    unknown model). ``retry_after`` optionally carries the provider's own
+    ``Retry-After`` hint in seconds (HTTP 429) so the retry backoff can
+    honour it instead of guessing — never larger than the engine's cap.
     """
 
-    def __init__(self, message: str, *, transient: bool = False) -> None:
+    def __init__(
+        self, message: str, *, transient: bool = False, retry_after: float | None = None
+    ) -> None:
         super().__init__(message)
         self.transient = transient
+        self.retry_after = retry_after
 
 
 @dataclass(slots=True)
@@ -124,6 +129,11 @@ class Provider(ABC):
     # Human name of the API family this backend speaks (e.g. "Claude API",
     # "Responses API"); shown on the dashboard. Empty means "<label> API".
     backend_label: str = field(init=False, default="")
+    # True for backends that run on the user's own machine (Ollama). Drives
+    # the "Local" connection label and the unreachable hint, so a key-less
+    # provider is never assumed to be Ollama and a remote key-less provider
+    # (Default) is never mislabelled as local.
+    local: bool = field(init=False, default=False)
     # True when the provider supports the 'auto' model sentinel (the best
     # model is resolved from the live catalogue per request).
     supports_auto: bool = field(init=False, default=False)
@@ -212,6 +222,18 @@ class Provider(ABC):
     def detect(self, config: "AppConfig") -> bool:
         """Backend reachability for key-less providers (default: unknown)."""
         return False
+
+    def unavailable_hint(self, config: "AppConfig") -> str:
+        """Actionable message for a key-less backend that is not reachable.
+
+        Key-requiring providers never reach this (a missing key is a
+        different, more actionable problem), so only Default and Ollama
+        override it.
+        """
+        return (
+            f"{self.label} is not reachable right now. "
+            "Check your connection and try again."
+        )
 
     # --- provider-specific settings -------------------------------------------
     def extra_settings(self, config: "AppConfig") -> dict[str, str]:

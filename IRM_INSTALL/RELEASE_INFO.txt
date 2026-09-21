@@ -1,0 +1,17 @@
+SEED CODE CLI v6.2.5
+====================
+
+Official Installation
+
+Windows:
+irm https://seedcode-cli.vercel.app/install.ps1 | iex
+
+Linux:
+curl -fsSL https://seedcode-cli.vercel.app/install.sh | bash
+
+Distribution:
+Official Seed Code CLI releases are distributed through
+the IRM installer system and GitHub Releases.
+
+Version:
+6.2.5
