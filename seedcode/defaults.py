@@ -14,6 +14,8 @@ from __future__ import annotations
 # The provider Seed Code ships with: the built-in Default connection, which
 # needs no API key from the user (see seedcode.core.providers.default). It is
 # a first-class provider, separate from OpenRouter in the UI and in config.
+# A fresh install therefore needs no key AND no model choice: it ships with
+# DEFAULT_MODEL below and is ready to work immediately.
 DEFAULT_PROVIDER = "default"
 
 # The backend the default provider speaks to. Separate from DEFAULT_PROVIDER
@@ -21,10 +23,12 @@ DEFAULT_PROVIDER = "default"
 # OpenRouter's OpenAI-compatible API as infrastructure.
 DEFAULT_BACKEND = "openrouter"
 
-# The model chosen on first run. Free tier, so a valid key is enough to start
-# chatting without picking a paid model. Users can change it any time with
-# /model — this is only the *default*, never forced.
-DEFAULT_MODEL = "nvidia/nemotron-3-super-120b-a12b:free"
+# The model chosen on first run for the built-in Default provider: a free
+# coding model, so a fresh install can work immediately without picking a paid
+# one. Users can change it any time with /model — this is only the *default*
+# for the Default provider, never forced onto OpenRouter, FreeModel, Ollama,
+# or any other provider (each keeps its own model slot).
+DEFAULT_MODEL = "cohere/north-mini-code:free"
 
 # The environment variable that supplies the default connection's API key.
 DEFAULT_API_ENV = "OPENROUTER_API_KEY"

@@ -69,17 +69,43 @@ class UI:
     def blank(self) -> None:
         self.console.print()
 
+    # --- external live displays -------------------------------------------
+    def register_live(self, live) -> None:
+        """Let a component own the pausable Live display (the task view).
+
+        Permission dialogs call :meth:`_confirm`, which stops ``self._live``
+        while the user answers and restarts it afterwards, so an external
+        display registers here to keep that behaviour.
+        """
+        self._live = live
+
+    def unregister_live(self, live) -> None:
+        """Release a display registered with :meth:`register_live`."""
+        if self._live is live:
+            self._live = None
+
     # --- startup -----------------------------------------------------------
     def banner(self, config: AppConfig) -> None:
-        """Render the compact startup screen (shown exactly once at launch).
+        """Render the startup dashboard (shown exactly once at launch).
 
-        A borderless text header (no logo, no box) carrying the runtime values,
-        plus one line of command hints. No decorative art, no quick-commands
-        box, no footer — so the prompt stays near the top and the whole screen
-        fits a standard 80x24 terminal without scrolling.
+        The restored structured Seed Code dashboard — a bordered reference
+        panel with the brand block, a divider and the live session values —
+        plus one line of command hints. The ASCII logo is permanently gone;
+        the brand is plain text. On a standard 80x24 terminal the panel and
+        the prompt fit with room to spare.
         """
         render_dashboard(self.console, config)
         render_command_hint(self.console)
+
+    def statusbar(self, config: AppConfig) -> None:
+        """One-line session summary: provider · model · mode · status.
+
+        Used after mode switches, where re-rendering the whole dashboard would
+        be noise. Never prints a value that is not in the live config.
+        """
+        from .dashboard import status_line
+
+        self.console.print(status_line(self.console, config))
 
     # --- chat rendering ----------------------------------------------------
     @contextmanager

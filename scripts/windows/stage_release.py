@@ -12,7 +12,7 @@ Output layout::
     ├── SeedCode-CLI-6.2.5-windows-x64.exe     (standalone exe, renamed)
     ├── SeedCode-CLI-Setup-6.2.5.exe           (Inno Setup installer)
     ├── seedcode_cli-6.2.5-py3-none-any.whl    (when built)
-    ├── seedcode-cli-6.2.5.tar.gz              (when built)
+    ├── seedcode_cli-6.2.5.tar.gz              (when built)
     └── SHA256SUMS.txt
 
 Usage:
@@ -81,7 +81,9 @@ def main() -> int:
     staged += [_copy(installer, release_dir)]
 
     # pip artifacts, when the wheel/sdist build ran first.
-    for pattern in (f"seedcode_cli-{version}-*.whl", f"seedcode-cli-{version}.tar.gz"):
+    # PEP 625: hatchling normalises the sdist name to `seedcode_cli-<version>.tar.gz`
+    # (underscore), not `seedcode-cli-<version>.tar.gz` — match what is really built.
+    for pattern in (f"seedcode_cli-{version}-*.whl", f"seedcode_cli-{version}.tar.gz"):
         matches = sorted(dist.glob(pattern))
         staged += [_copy(matches[-1], release_dir) if matches else None]
 

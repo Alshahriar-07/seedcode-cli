@@ -30,7 +30,7 @@ import json
 import re
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Callable
+from typing import Any, Callable
 
 from .chat import ChatEngine, ChatError
 from .identity import build_system_prompt
@@ -220,9 +220,13 @@ def _downgrade_for_text(messages: list[Message]) -> list[Message]:
 class AgentEngine(ChatEngine):
     """ChatEngine that runs the detect → execute → validate → retry loop.
 
-    ``on_event(kind, detail)`` reports progress ('call', 'result', 'error',
-    'limit') so the UI can narrate tool activity without this module
-    importing any UI code.
+    Two observers, both optional and UI-agnostic:
+
+    * ``on_event(kind, detail)`` reports human-readable progress ('call',
+      'result', 'error', 'limit') for narration;
+    * ``on_step(payload)`` reports the SAME activity structurally —
+      ``{"phase": "tool_start"|"tool_done"|"say", ...}`` — so a step-by-step
+      task view can be driven by what actually happened instead of guesswork.
     """
 
     def __init__(
@@ -230,10 +234,12 @@ class AgentEngine(ChatEngine):
         config: AppConfig,
         permissions: PermissionManager,
         on_event: Callable[[str, str], None] | None = None,
+        on_step: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         super().__init__(config)
         self.permissions = permissions
         self._on_event = on_event or (lambda kind, detail: None)
+        self._on_step = on_step or (lambda payload: None)
         # Native tool calling: None = untried, False = fell back to the text
         # protocol for this session, True = at least one native step worked.
         self._native: bool | None = None
@@ -487,6 +493,7 @@ class AgentEngine(ChatEngine):
         shown = reply.strip()
         if shown:
             self._on_event("say", shown)
+            self._notify("say", text=shown)
 
         results, step_failed = self._execute_calls(executed)
         images = self._drain_images()
@@ -560,6 +567,7 @@ class AgentEngine(ChatEngine):
         shown = strip_tool_blocks(reply)
         if shown:
             self._on_event("say", shown)
+            self._notify("say", text=shown)
 
         results, step_failed = self._execute_calls(calls[:_MAX_CALLS_PER_STEP])
         if len(calls) > _MAX_CALLS_PER_STEP:
@@ -611,6 +619,13 @@ class AgentEngine(ChatEngine):
             pass
         return []
 
+    def _notify(self, phase: str, **fields: Any) -> None:
+        """Report structured progress to the UI (a UI bug must never break a turn)."""
+        try:
+            self._on_step({"phase": phase, **fields})
+        except Exception:
+            _log.exception("step observer failed")
+
     def _execute_one(self, call: ToolCall) -> ToolResult:
         """Run one tool call through the registry, converting failures."""
         try:
@@ -641,6 +656,7 @@ class AgentEngine(ChatEngine):
                 continue
             label = f"{call.tool}({json.dumps(call.args, ensure_ascii=False)[:120]})"
             self._on_event("call", label)
+            self._notify("tool_start", name=call.tool, args=call.args)
             runnable.append((index, call))
 
         outcomes: dict[int, ToolResult] = {}
@@ -669,10 +685,18 @@ class AgentEngine(ChatEngine):
                 any_failed = True
                 results.append(f"[ERROR] {call.error}")
                 self._on_event("error", call.error)
+                self._notify(
+                    "tool_done", name=call.tool, args=call.args, ok=False,
+                    output=call.error,
+                )
                 continue
             result = outcomes[index]
             if not result.ok:
                 any_failed = True
             self._on_event("result" if result.ok else "error", result.output[:200])
+            self._notify(
+                "tool_done", name=call.tool, args=call.args, ok=result.ok,
+                output=result.output,
+            )
             results.append(f"{call.tool} -> {result.for_model()}")
         return results, any_failed

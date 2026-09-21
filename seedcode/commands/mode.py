@@ -12,7 +12,7 @@ this command is the single entry point that understands all of them.
 
 from __future__ import annotations
 
-from . import CommandContext, CommandResult, command
+from . import CommandContext, CommandResult, command, show_session_bar
 from .status import mode_label
 
 
@@ -46,5 +46,7 @@ def _mode(ctx: CommandContext, arg: str) -> CommandResult:
     else:
         ctx.ui.warning("[Command Error] Invalid syntax.")
         ctx.ui.dim("Expected: /mode chat|assist|code|agent")
+        return CommandResult()
 
+    show_session_bar(ctx.ui, ctx.config)
     return CommandResult()

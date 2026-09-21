@@ -4,7 +4,14 @@ from __future__ import annotations
 
 from rich.text import Text
 
-from .. import TAGLINE, __author__, __version__
+from .. import (
+    TAGLINE,
+    __author__,
+    __portfolio_url__,
+    __publisher__,
+    __studio_url__,
+    __version__,
+)
 from ..core.providers import provider_label
 from . import CommandContext, CommandResult, command
 
@@ -16,6 +23,8 @@ def show_about(ui, config) -> None:
     body.append(f"{TAGLINE}\n\n", style="seed.accent")
     body.append(f"Version   {__version__}\n", style="seed.text")
     body.append(f"Author    {__author__}\n", style="seed.text")
+    body.append(f"Studio    {__publisher__}  {__studio_url__}\n", style="seed.text")
+    body.append(f"Portfolio {__portfolio_url__}\n", style="seed.text")
     body.append(f"Provider  {provider_label(config.provider)}\n", style="seed.text")
     body.append(f"Model     {config.model or '(none)'}\n\n", style="seed.text")
     body.append("A premium terminal-based AI coding assistant.", style="seed.dim")

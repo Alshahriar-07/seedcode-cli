@@ -7,8 +7,11 @@ Plant ideas. Grow code.
 # the PyPI build (via [tool.hatch.version]), the CLI --version flag, the
 # Windows installer metadata, the GitHub release tag, and the WinGet manifest.
 __version__ = "6.2.5"
-__author__ = "Al shahriar sowan"
+__author__ = "Al Shahriar Sowan"
 __publisher__ = "Eagox Studio"
+# Current author/company links, surfaced by /about and the README credits.
+__portfolio_url__ = "https://alshahriarsayon.vercel.app/"
+__studio_url__ = "https://eagoxstudio.vercel.app/"
 
 APP_NAME = "Seed Code"
 TAGLINE = "Plant ideas. Grow code."

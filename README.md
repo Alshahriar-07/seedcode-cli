@@ -8,12 +8,20 @@
 Seed Code is a premium terminal-based AI coding assistant. v6.2.5 pairs
 streaming chat and permission-gated desktop control with **Code Mode** — a
 workspace-aware coding agent backed by persistent `.seedcode` project memory
-— behind a compact, minimal startup header.
+— behind a structured startup dashboard that carries the brand, the live
+session state and the task flow, with no ASCII logo.
 
 - **Works out of the box:** the shipped provider is **Default** — Seed Code's
-  own built-in connection. It needs **no API key**, so a fresh installation
-  can chat immediately. Bring your own key at any time with `/provider` →
-  OpenRouter, FreeModel or AeroLink.
+  own built-in connection. It needs **no API key** and ships pointed at
+  `cohere/north-mini-code:free`, so a fresh installation can work
+  immediately. Bring your own key at any time with `/provider` → OpenRouter,
+  FreeModel or AeroLink.
+- **Structured dashboard:** the brand on the left, identity (`Seed Code |
+  Eagox Studio`), the tagline and the live provider, model, mode and status on
+  the right, behind a responsive bordered panel — and no ASCII logo anywhere.
+- **Step-by-step tasks:** Code, Assist and Agent Mode show a live task flow
+  (analyze → inspect → plan → implement → test → verify) that reflects what
+  the agent really did, and hands the prompt back when the task ends.
 - **Version:** 6.2.5 (`seedcode --version`)
 
 ## Installation
@@ -42,20 +50,28 @@ prints the verified version when it finishes.
 curl -fsSL https://seedcode-cli.vercel.app/install.sh | bash
 ```
 
-Installs for the current user. When a prebuilt binary is published for your
-platform it is used directly; otherwise the official wheel from the same
-release is installed with pip.
+Installs for the current user. No prebuilt Linux/macOS binary is published in
+this release: `install.sh` installs the official Python wheel from the same
+release with `pip install --user`, so it needs **Python 3.12 or newer (with
+pip)** on the machine. If a prebuilt binary for your platform is ever
+published, it is used directly instead. Either way `install.sh` installs only
+what it can verify against the release's `SHA256SUMS.txt` — a missing
+checksum entry, a mismatching digest, or a host with no SHA256 tool makes it
+stop instead of installing unverified code.
 
 ### Windows installer (GUI alternative)
 
-If you prefer a graphical installer, download
-`SeedCode-CLI-Setup-6.2.5.exe` from the
-[Releases page](https://github.com/Alshahriar-07/seedcode-cli/releases). It
-packages a fully self-contained `seedcode.exe` (no Python needed), installs
-to Program Files, adds Seed Code to the system `PATH`, creates a Start Menu
-shortcut with an optional desktop shortcut, verifies the installation before
-reporting success, and ships a clean uninstaller that never deletes your
-project data silently.
+The release publishes two Windows binaries; both are fully self-contained (no
+Python required) and both run the same CLI:
+
+| Download | What it is |
+| --- | --- |
+| `SeedCode-CLI-Setup-6.2.5.exe` | **Setup installer (recommended).** A wizard that installs to Program Files, adds Seed Code to the system `PATH`, creates a Start Menu shortcut with an optional desktop shortcut, verifies the installation before reporting success, and ships a clean uninstaller that never deletes your project data silently. |
+| `SeedCode-CLI-6.2.5-windows-x64.exe` | **Standalone executable.** A single portable `seedcode.exe` — no installation and no admin rights. The Windows IRM installer above downloads exactly this file. Run it directly from wherever you put it. |
+
+Both are published on the
+[Releases page](https://github.com/Alshahriar-07/seedcode-cli/releases) with
+their SHA256 in `SHA256SUMS.txt`.
 
 After installing by any route:
 
@@ -83,22 +99,36 @@ seedcode
 seedcode
 ```
 
-You land on a compact, borderless startup header — provider, model, mode and
-status, with no ASCII logo and no box art — and the chat prompt appears
-immediately:
+You land on the Seed Code dashboard — the structured startup panel: branding
+on the left, a divider, and the live session state on the right. The ASCII
+logo is permanently gone (the brand is plain text); the layout, sections and
+status indicators stay:
 
 ```text
-Seed Code CLI v6.2.5
-Provider  Default
-Model     nvidia/nemotron-3-super-120b-a12b:free
-Mode      Chat
-Status    ● Ready
+╭─ Seed Code CLI v6.2.5 ───────────────────────────────────────────────────────────────────────╮
+│                                                                                              │
+│   Seed Code                                │ Seed Code  |  Eagox Studio                      │
+│   AI CODING AGENT                          │ Plant ideas. Grow code.                         │
+│                                            │ Provider   Default                              │
+│                                            │ Model      cohere/north-mini-code:free          │
+│                                            │ Mode       Chat  •  ● Ready                     │
+╰──────────────────────────────────────────────────────────────────────────────────────────────╯
 Commands  /help  /status  /codemode  /assist  /provider  /model
 You >
 ```
 
+The panel is 96 columns wide on a wide terminal — wide enough that the whole
+`cohere/north-mini-code:free` model name fits without clipping — and kept
+deliberately short (one blank row under the title, then the live rows; no
+padding rows to scroll past). Narrower terminals slide the info section left
+so the whole model name still fits (80 columns shows it in full), then fall
+back to a compact one-row panel, then to plain lines. Consoles that cannot
+draw (or encode) the glyphs get the same layout in ASCII.
+
 The `API Key` row appears **only** for providers that actually require a key,
-so Default and Ollama never show one.
+so Default and Ollama never show one. `cohere/north-mini-code:free` is the
+ships-with default for **Default only**; every other provider keeps its own
+model, and switching providers never copies one model onto another.
 
 ### Default provider (no API key)
 
@@ -142,7 +172,7 @@ configuration.
 
 | Provider | API key | Best for |
 | --- | --- | --- |
-| **Default** | not required | Chatting immediately on a release install |
+| **Default** | not required | Working immediately on a release install (`cohere/north-mini-code:free`) |
 | [OpenRouter](https://openrouter.ai) | required | A broad catalogue of free and paid models |
 | FreeModel Claude | required | Claude-family models through FreeModel |
 | FreeModel Codex | required | GPT/Codex models through FreeModel |
@@ -210,12 +240,58 @@ my-project/
 - **Not source code** — `.seedcode/` is excluded from workspace search,
   indexing, and the agent's project view.
 
+## Task flow (Code / Assist / Agent Mode)
+
+Every task in Code Mode, Assist Mode or Agent Mode is shown as a compact live
+flow, and each step changes state only when the work behind it really
+happened:
+
+```text
+Task  ·  Code Mode
+Fix authentication persistence
+────────────────────────────────────────────
+✓ Analyze project  request understood
+✓ Inspect files  read_file seedcode/config.py
+✓ Plan implementation  I'll patch the persistence layer…
+● Implement changes  edit_file seedcode/config.py
+○ Run tests
+○ Verify result
+  Working…
+```
+
+The five states are `pending`, `running`, `completed`, `failed` and
+`skipped`. A step the task never needed is reported as **skipped** — “Run
+tests” is never marked done unless a recognised test command actually ran, and
+a failing run is shown as failed, showing what failed instead of a passing
+count:
+
+```text
+✓ Task completed
+  2 file(s) changed: seedcode/config.py, seedcode/providers.py
+  Tests: 773 passed — pytest tests -q
+Ready for next task.
+```
+
+```text
+✗ Task failed  —  tests failed
+  1 step(s) failed: Run tests
+Ready for another task.
+```
+
+A task never closes the CLI: success, failure and `Ctrl+C` all return to the
+prompt (or the menu) so you can inspect the result, run another task, switch
+mode or provider, or `/exit` yourself. Plain Chat Mode is unaffected — it
+answers with the ordinary spinner.
+
 ## Terminal execution
 
 The agent runs commands through the tool engine's `run_command` tool:
 
 - output streams line-by-line **while the command is still running**, so long
-  builds and test runs stay visible instead of blocking;
+  builds and test runs stay visible instead of blocking. The live view is
+  compact: the first few lines of each command are echoed, then one summary
+  line. The agent and `~/.seedcode/logs/seedcode.log` still receive the full
+  output, and failures are never hidden;
 - `stderr` is captured along with `stdout`, in order;
 - the exit code is reported, and a non-zero exit is an explicit failure the
   model can react to;
@@ -308,7 +384,9 @@ health.
 - **Windows:** full experience — desktop control, one-click installer,
   standalone EXE. Primary platform.
 - **Linux / macOS:** terminal chat, providers, project tools, Code Mode.
-  Install with the `install.sh` command above.
+  Install with the `install.sh` command above — it installs the official
+  Python wheel, so **Python 3.12+ (with pip)** is required. No prebuilt
+  Linux/macOS binary is published in this release.
 
 ## Building from source
 
@@ -339,12 +417,14 @@ Details: [`scripts/windows/README.md`](scripts/windows/README.md).
 
 ### Release artifacts (v6.2.5)
 
+Release: [v6.2.5](https://github.com/Alshahriar-07/seedcode-cli/releases/tag/v6.2.5)
+
 | Artifact | Purpose |
 | --- | --- |
 | `SeedCode-CLI-Setup-6.2.5.exe` | Windows installer (Inno Setup) |
 | `SeedCode-CLI-6.2.5-windows-x64.exe` | Standalone Windows EXE — downloaded by the Windows IRM installer |
 | `seedcode_cli-6.2.5-py3-none-any.whl` | Python wheel — downloaded by the Linux IRM installer |
-| `seedcode-cli-6.2.5.tar.gz` | Python source distribution |
+| `seedcode_cli-6.2.5.tar.gz` | Python source distribution |
 | `SHA256SUMS.txt` | SHA256 checksums; verified by both installers |
 
 Built artifacts are collected in `dist/release/6.2.5/` during a release
@@ -375,7 +455,8 @@ read the release named `v6.2.5`.
   `OPENROUTER_API_KEY`.
 - **401/403 errors** — your key is invalid or lacks access; `/apikey` to
   replace it, `/doctor` for diagnostics.
-- **402 errors** — the model needs credits; `/model` and pick a free model.
+- **402 errors** — the model needs credits; `/model` and pick a free model
+  (Default ships with `cohere/north-mini-code:free`).
 - **Rate limits (429)** — wait and retry; Seed Code honors the provider's
   `Retry-After` hint. Consider a different provider.
 - **Desktop actions fail** — check `/permission` (desktop requires the
@@ -402,8 +483,9 @@ projects or with sensitive applications.
 
 ## Credits
 
-- **Created by:** Al Shahriar Sowan
-- **Publisher:** Eagox Studio
+- **Created by:** Al Shahriar Sowan — <https://alshahriarsayon.vercel.app/>
+- **Studio:** Eagox Studio — <https://eagoxstudio.vercel.app/>
+- **Contact:** github@eagox.studio
 
 ## License
 

@@ -10,7 +10,7 @@ always get back to it directly, without hunting through menus.
 
 from __future__ import annotations
 
-from . import CommandContext, CommandResult, command
+from . import CommandContext, CommandResult, command, show_session_bar
 from .status import mode_label
 
 
@@ -28,6 +28,7 @@ def _chat(ctx: CommandContext, arg: str) -> CommandResult:
         return CommandResult()
 
     _enter_chat(ctx)
+    show_session_bar(ctx.ui, ctx.config)
     return CommandResult()
 
 
@@ -40,7 +41,6 @@ def _enter_chat(ctx: CommandContext) -> None:
         cms.disable()
         ctx.ui.dim("Code Mode OFF — .seedcode memory kept for next session")
 
-    was_assist = ctx.config.agent_mode
-    if was_assist:
+    if ctx.config.agent_mode:
         disable_assist(ctx.ui, ctx.config)
     ctx.ui.success("Chat Mode ON — plain conversation, no tools")

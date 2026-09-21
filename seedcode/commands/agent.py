@@ -11,7 +11,7 @@ from ..config import save_config
 from ..tools import TOOL_REGISTRY, PermissionManager, PermissionMode
 from ..tools.filesystem import build_index
 from ..ui.selector import Option, select
-from . import CommandContext, CommandResult, command
+from . import CommandContext, CommandResult, command, show_session_bar
 from .assist import disable_assist, enable_assist
 
 
@@ -33,6 +33,7 @@ def _agent(ctx: CommandContext, arg: str) -> CommandResult:
         enable_assist(ctx.ui, ctx.config)
     else:
         disable_assist(ctx.ui, ctx.config)
+    show_session_bar(ctx.ui, ctx.config)
     return CommandResult()
 
 

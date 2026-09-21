@@ -30,7 +30,7 @@ from .commands.theme import pick_theme
 from .config import load_config
 from .core.agent import AgentEngine, strip_tool_blocks
 from .core.chat import ChatEngine, ChatError
-from .core.lifecycle import lifecycle
+from .core.lifecycle import LifecycleError, lifecycle
 from .core.models import AppConfig
 from .core.providers import PROVIDERS, provider_label, provider_ready
 from .core.providers.freemodel import AUTO_MODEL
@@ -40,6 +40,7 @@ from .ui import UI
 from .ui.badges import badge_for_status
 from .ui.menu import MenuItem, run_menu
 from .ui.reference import CONTROLS_HINT, INPUT_HINT
+from .ui.tasks import TaskFlow, TaskState
 from .ui.textbox import prompt_label
 from .ui.theme import pt_style, set_active_theme
 from .utils.logger import get_logger
@@ -256,39 +257,105 @@ def _handle_chat(ui: UI, engine: ChatEngine, history: HistoryStore, text: str) -
             ui.dim("(no response)")
 
 
-def _handle_agent(ui: UI, agent: AgentEngine, history: HistoryStore, text: str) -> None:
-    """Run one full Assist turn (tool loop) and render the final answer.
+class _TaskPresenter:
+    """Bridges engine activity to the live step view (and plain narration).
 
-    Lifecycle note: every outcome — success, tool failure, provider error,
-    Ctrl+C — ends with a rendered message and a return. Nothing here may
-    terminate the process; the surrounding ``task_span`` guarantees the
-    lifecycle returns to IDLE and the REPL keeps prompting.
+    One presenter per chat session; ``flow`` is set for the duration of a turn
+    so the engine's callbacks land in that turn's task view. Everything here is
+    best-effort: the presenter can never fail a task.
     """
-    lc = lifecycle()
 
+    # Live command output is echoed compactly; the full output still goes to
+    # the model and the log file, and errors are never hidden.
+    MAX_ECHO_LINES = 8
+
+    def __init__(self, ui: UI) -> None:
+        self.ui = ui
+        self.flow: TaskFlow | None = None
+        self._echo_lines = 0
+        self._echo_elided = False
+
+    # --- one command's live output ------------------------------------------
+    def reset_echo(self) -> None:
+        self._echo_lines = 0
+        self._echo_elided = False
+
+    def on_output(self, line: str) -> None:
+        """Compact live echo: the first few lines, then a single elision note."""
+        if self._echo_lines < self.MAX_ECHO_LINES:
+            self.ui.dim(f"  │ {line[:200]}")
+        elif not self._echo_elided:
+            self._echo_elided = True
+            self.ui.dim(
+                f"  │ … output continues (first {self.MAX_ECHO_LINES} lines shown; "
+                "the agent and the log file get it all)"
+            )
+        self._echo_lines += 1
+
+    # --- narration (human-readable) -----------------------------------------
+    def on_event(self, kind: str, detail: str) -> None:
+        flow = self.flow
+        if kind == "say" and flow is not None:
+            flow.observe_text(detail)
+            return
+        if kind == "error":
+            self.ui.dim(f"  ✖ {detail.splitlines()[0][:120]}")
+        elif kind == "limit":
+            self.ui.warning(f"Assist stopped: {detail}")
+        elif kind == "call" and flow is None:
+            # With a task view on screen the step list already shows the tool
+            # work; without one, narrate it (the plain/legacy experience).
+            self.ui.dim(f"  ⚒ {detail}")
+
+    # --- structured activity -> step states ---------------------------------
+    def on_step(self, payload: dict) -> None:
+        flow = self.flow
+        if flow is None:
+            return
+        phase = str(payload.get("phase") or "")
+        name = str(payload.get("name") or "")
+        args = payload.get("args") or {}
+        if phase == "tool_start":
+            self.reset_echo()
+            flow.observe_tool_start(name, args)
+        elif phase == "tool_done":
+            flow.observe_tool_done(
+                name,
+                bool(payload.get("ok")),
+                str(payload.get("output") or ""),
+                args,
+            )
+        elif phase == "say":
+            flow.observe_text(str(payload.get("text") or ""))
+
+
+def _advance(lc, method: str) -> None:
+    """Best-effort lifecycle transition around one turn.
+
+    The REPL owns the turn span (``PLANNING`` → … → ``IDLE``); this lets the
+    turn *narrate* where it is without ever turning a phase mismatch into a
+    task failure — a lifecycle bookkeeping problem must not stop the work.
+    """
     try:
-        with ui.thinking("Working"):
-            lc.to_executing()
-            reply = agent.run_turn(text)
-        lc.to_verifying()
-    except ChatError as exc:
-        ui.error(str(exc))
-        return
-    except KeyboardInterrupt:
-        # Ctrl+C aborts the remaining Assist steps; work already done stays.
-        ui.blank()
-        ui.dim("(assist turn cancelled — completed tool actions were kept)")
-        return
+        getattr(lc, method)()
+    except LifecycleError:
+        _log.debug("lifecycle transition %s skipped", method)
 
-    lc.to_responding()
-    final = strip_tool_blocks(reply)
-    if final.strip():
-        with ui.streaming() as renderer:
-            renderer.feed(final)
-    else:
-        ui.dim("(no response)")
-    history.save(agent.transcript)
-    # v6.2.0: Code Mode sessions leave a compact summary in .seedcode/sessions.
+
+def _task_mode_label(config: AppConfig) -> str:
+    """The mode named in a task header (Code Mode sharpens Assist Mode)."""
+    try:
+        from .codemode_state import codemode_state
+
+        if codemode_state().enabled:
+            return "Code Mode"
+    except Exception:
+        pass
+    return "Assist Mode"
+
+
+def _save_codemode_summary(agent: AgentEngine, text: str, outcome: str) -> None:
+    """v6.2.0: Code Mode sessions leave a compact summary in .seedcode/sessions."""
     try:
         from . import codemode_state as _cms
 
@@ -296,16 +363,101 @@ def _handle_agent(ui: UI, agent: AgentEngine, history: HistoryStore, text: str) 
         if state.enabled and state.store is not None:
             state.store.save_session_summary({
                 "goal": text[:200],
-                "outcome": (final.strip() or "(no response)")[:400],
-                "tool_calls": sum(
-                    1 for m in agent.messages if m.role == "tool"
-                ),
+                "outcome": (outcome or "(no response)")[:400],
+                "tool_calls": sum(1 for m in agent.messages if m.role == "tool"),
             })
     except Exception:
         pass
 
 
-def _make_agent(ui: UI, config: AppConfig) -> AgentEngine:
+def _handle_agent(
+    ui: UI,
+    agent: AgentEngine,
+    history: HistoryStore,
+    text: str,
+    presenter: _TaskPresenter | None = None,
+) -> None:
+    """Run one full Assist/Code turn (tool loop) and render the final answer.
+
+    The turn is shown as a compact live task flow whose step states follow real
+    engine activity (see :mod:`seedcode.ui.tasks`) — never a fake progress bar.
+
+    Lifecycle note: every outcome — success, tool failure, provider error,
+    Ctrl+C — ends by printing a status, finishing the task view and RETURNING.
+    Nothing here may terminate the process; the surrounding ``task_span``
+    guarantees the lifecycle returns to IDLE and the REPL keeps prompting, and
+    the explicit task-flow finish line always says the CLI is ready for more.
+    """
+    lc = lifecycle()
+    flow = TaskFlow.for_ui(
+        ui, mode_label=_task_mode_label(agent.config), task=text
+    )
+    if presenter is not None:
+        presenter.flow = flow
+    if flow is not None:
+        flow.begin()
+        flow.start()
+
+    outcome = "completed"
+    reason = ""
+    reply: str | None = None
+    try:
+        if flow is None:  # the task view already shows that work is happening
+            with ui.thinking("Working"):
+                _advance(lc, "to_executing")
+                reply = agent.run_turn(text)
+        else:
+            _advance(lc, "to_executing")
+            reply = agent.run_turn(text)
+        _advance(lc, "to_verifying")
+    except ChatError as exc:
+        outcome, reason = "failed", str(exc)
+    except KeyboardInterrupt:
+        # Ctrl+C aborts the remaining steps; work already done stays.
+        outcome = "cancelled"
+    except Exception as exc:  # an engine bug must not kill the session either
+        outcome, reason = "failed", f"{type(exc).__name__}: {exc}"
+        _log.exception("assist turn failed")
+    finally:
+        if presenter is not None:
+            presenter.flow = None
+
+    if outcome != "completed":
+        if reason:
+            ui.error(reason)
+        else:
+            ui.blank()
+            ui.dim("(task cancelled — completed tool actions were kept)")
+        _save_codemode_summary(agent, text, reason or "task cancelled")
+        if flow is not None:
+            flow.finish(outcome, reason)
+        return
+
+    _advance(lc, "to_responding")
+    if flow is not None:
+        flow.update("verify", TaskState.RUNNING, "checking the result")
+        # Hand the screen back before streaming the answer: one live display at
+        # a time, and the answer deserves the full width.
+        flow.stop()
+    final = strip_tool_blocks(reply or "")
+    if final.strip():
+        with ui.streaming() as renderer:
+            renderer.feed(final)
+    else:
+        ui.dim("(no response)")
+    if flow is not None:
+        flow.update("verify", TaskState.COMPLETED, "answer produced")
+    history.save(agent.transcript)
+    _save_codemode_summary(agent, text, final.strip() or "(no response)")
+    if flow is not None:
+        # Prints the persistent final block and leaves the prompt ready for the
+        # next task — the terminal is never closed from here.
+        flow.finish("completed")
+
+
+def _make_agent(
+    ui: UI, config: AppConfig, presenter: "_TaskPresenter | None" = None
+) -> AgentEngine:
     """Build an Assist engine bound to the CWD and the configured permissions."""
     # Lazy import (matching _make_desktop_session): the optional, platform-
     # specific computer package stays out of app.py's top-level import graph.
@@ -318,18 +470,17 @@ def _make_agent(ui: UI, config: AppConfig) -> AgentEngine:
     if permissions.level.allows_desktop and is_available()[0]:
         permissions.desktop = _make_desktop_session(ui)
     permissions.gate = _make_action_gate(ui)
-    # Live terminal output: echo each line a running command prints.
-    permissions.on_output = lambda line: ui.dim(f"  │ {line[:200]}")
 
-    def narrate(kind: str, detail: str) -> None:
-        if kind == "call":
-            ui.dim(f"  ⚒ {detail}")
-        elif kind == "error":
-            ui.dim(f"  ✖ {detail.splitlines()[0][:120]}")
-        elif kind == "limit":
-            ui.warning(f"Assist stopped: {detail}")
+    presenter = presenter or _TaskPresenter(ui)
+    # Live terminal output: a compact echo of what a running command prints.
+    permissions.on_output = presenter.on_output
 
-    return AgentEngine(config, permissions, on_event=narrate)
+    return AgentEngine(
+        config,
+        permissions,
+        on_event=presenter.on_event,
+        on_step=presenter.on_step,
+    )
 
 
 def _make_action_gate(ui: UI):
@@ -402,14 +553,22 @@ def _chat_loop(
     history: HistoryStore,
     session: PromptSession | _PlainSession,
 ) -> None:
-    """Interactive chat until /exit (returns to the main menu)."""
+    """Interactive chat until /exit (returns to the main menu).
+
+    Only an explicit exit leaves here: a finished task (Code Mode, Assist
+    Mode, Agent Mode or a plain chat turn) returns to the prompt with
+    ``Ready for next task.`` and the session keeps running.
+    """
     ctx = CommandContext(ui=ui, config=config, engine=engine)
     ui.dim(INPUT_HINT)
 
     # The Assist engine is built lazily on the first assist-mode turn and
     # rebuilt when the permission or desktop mode changes (its system
-    # prompt and permission gates reflect both).
+    # prompt and permission gates reflect both). The presenter that owns the
+    # live step view lives for the whole chat session, so each turn can bind
+    # its own task flow to the same engine callbacks.
     agent: AgentEngine | None = None
+    presenter = _TaskPresenter(ui)
     agent_perm = config.permission_mode
     # v6.2.0: track Code Mode so a /codemode toggle rebuilds the agent with
     # workspace context (the engine is constructed lazily per turn).
@@ -481,10 +640,12 @@ def _chat_loop(
                     or agent_perm != config.permission_mode
                     or agent_codemode != codemode_now
                 ):
-                    agent = _make_agent(ui, config)
+                    agent = _make_agent(ui, config, presenter)
                     agent_perm = config.permission_mode
                     agent_codemode = codemode_now
-                _handle_agent(ui, agent, history, text)
+                # One task flow per turn: the engine reports real activity into
+                # it, and the REPL keeps prompting when the turn ends.
+                _handle_agent(ui, agent, history, text, presenter)
             else:
                 _handle_chat(ui, engine, history, text)
 

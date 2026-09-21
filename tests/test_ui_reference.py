@@ -34,9 +34,7 @@ def _console(width: int = 120) -> Console:
 
 
 def _configured() -> AppConfig:
-    cfg = AppConfig(
-        provider="openrouter", model="nvidia/nemotron-3-super-120b-a12b:free"
-    )
+    cfg = AppConfig(provider="openrouter", model="cohere/north-mini-code:free")
     cfg.set_api_key("openrouter", "sk-or-test")
     return cfg
 
@@ -79,8 +77,10 @@ def test_runtime_state_is_shown_exactly_once() -> None:
     assert out.count("OpenRouter") == 1
     assert out.count("Chat") == 1
     # Match each label as a whole word, so "Mode" is not found inside "Model".
-    for label in ("Provider", "Model", "Mode", "Status"):
+    for label in ("Provider", "Model", "Mode"):
         assert len(re.findall(rf"\b{label}\b", out)) == 1, label
+    # The status shares the mode row — there is no second, standalone row.
+    assert "Status" not in out
 
 
 def test_banner_title_uses_brand_casing() -> None:

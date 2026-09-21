@@ -66,10 +66,11 @@ def test_version_is_625() -> None:
 
 def test_defaults_are_a_single_source() -> None:
     # The shipped provider is the built-in Default connection (no user key),
-    # which routes to OpenRouter's API as its backend.
+    # which routes to OpenRouter's API as its backend, and a fresh install
+    # ships already pointed at the required free coding model.
     assert defaults.DEFAULT_PROVIDER == "default"
     assert defaults.DEFAULT_BACKEND == "openrouter"
-    assert defaults.DEFAULT_MODEL == "nvidia/nemotron-3-super-120b-a12b:free"
+    assert defaults.DEFAULT_MODEL == "cohere/north-mini-code:free"
     assert defaults.DEFAULT_API_ENV == "OPENROUTER_API_KEY"
 
 
@@ -77,6 +78,37 @@ def test_default_provider_is_registered() -> None:
     from seedcode.core.providers import PROVIDERS
 
     assert defaults.DEFAULT_PROVIDER in PROVIDERS
+
+
+def test_fresh_config_ships_the_default_model_and_needs_no_key() -> None:
+    """First run: Default provider + the required model, still no user key."""
+    from seedcode.core.providers import provider_requires_key
+
+    config = AppConfig()
+    manager.apply_default_selection(config)
+
+    assert config.provider == "default"
+    assert config.model == "cohere/north-mini-code:free"
+    assert provider_requires_key("default") is False
+    assert config.get_api_key("openrouter") == ""  # no key borrowed anywhere
+
+
+def test_default_model_is_only_the_default_providers_model() -> None:
+    """The new default must not leak into any other provider's model slot."""
+    config = AppConfig()
+    manager.apply_default_selection(config)
+    config.set_api_key("openrouter", "sk-or-test")
+
+    config.provider = "openrouter"
+    assert config.model == ""  # OpenRouter has no model of its own yet
+    config.model = "deepseek/deepseek-v4-flash-0731:free"
+
+    config.provider = "default"
+    assert config.model == "cohere/north-mini-code:free"
+    config.provider = "openrouter"
+    assert config.model == "deepseek/deepseek-v4-flash-0731:free"
+    config.provider = "ollama"
+    assert config.model == ""  # untouched, never seeded from elsewhere
 
 
 # --- .env parsing ------------------------------------------------------------

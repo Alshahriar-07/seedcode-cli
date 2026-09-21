@@ -53,6 +53,23 @@ def is_command(text: str) -> bool:
     return text.strip().startswith("/")
 
 
+def show_session_bar(ui, config) -> None:
+    """Reprint the one-line session summary after a mode switch.
+
+    Restores the previous UI's habit of restating where the session stands
+    (provider · model · mode · status) at the one moment it changes, without
+    reprinting the whole startup dashboard. Best-effort by contract: a UI
+    double that has no ``statusbar`` is simply left alone.
+    """
+    statusbar = getattr(ui, "statusbar", None)
+    if not callable(statusbar):
+        return
+    try:
+        statusbar(config)
+    except Exception:
+        pass  # a cosmetic line must never break a mode switch
+
+
 def dispatch(ctx: CommandContext, text: str) -> CommandResult:
     """Route ``text`` (a '/...' string) to its handler."""
     parts = text.strip().split(maxsplit=1)
@@ -79,5 +96,6 @@ __all__ = [
     "command",
     "dispatch",
     "is_command",
+    "show_session_bar",
     "_REGISTRY",
 ]

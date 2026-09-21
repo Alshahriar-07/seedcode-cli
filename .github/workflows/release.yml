@@ -13,7 +13,7 @@ name: Release
 #   SeedCode-CLI-<version>-windows-x64.exe
 #   SeedCode-CLI-Setup-<version>.exe
 #   seedcode_cli-<version>-py3-none-any.whl
-#   seedcode-cli-<version>.tar.gz
+#   seedcode_cli-<version>.tar.gz
 #   SHA256SUMS.txt   (checked by both installers before installing)
 #
 # Pushing a tag also triggers .github/workflows/publish.yml.
@@ -219,7 +219,7 @@ jobs:
           ### Assets
           - **Windows installer** — \`SeedCode-CLI-Setup-$VERSION.exe\` (one-click Inno Setup installer; installs to Program Files, adds \`seedcode\` to PATH, works with CMD, PowerShell, and Windows Terminal).
           - **Windows standalone** — \`SeedCode-CLI-$VERSION-windows-x64.exe\` (self-contained; no Python needed). This is the artifact the Windows remote installer downloads.
-          - **Python distributions** — \`seedcode_cli-$VERSION-py3-none-any.whl\` and \`seedcode-cli-$VERSION.tar.gz\`. The wheel is the artifact the Linux remote installer downloads.
+          - **Python distributions** — \`seedcode_cli-$VERSION-py3-none-any.whl\` and \`seedcode_cli-$VERSION.tar.gz\`. The wheel is the artifact the Linux remote installer downloads.
           - \`SHA256SUMS.txt\` — SHA256 checksums for every artifact above. Both remote installers verify against this file before installing.
 
           ### Verify

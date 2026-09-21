@@ -14,7 +14,7 @@ from rich.table import Table
 from ..codemode_state import codemode_state
 from ..config import save_config
 from ..tools import PermissionMode
-from . import CommandContext, CommandResult, command
+from . import CommandContext, CommandResult, command, show_session_bar
 
 
 @command("codemode", "Workspace-aware Code Mode. Usage: /codemode [on|off|status]")
@@ -39,10 +39,12 @@ def _codemode(ctx: CommandContext, arg: str) -> CommandResult:
 
     if raw == "on":
         _enable_codemode(ctx)
+        show_session_bar(ctx.ui, ctx.config)
         return CommandResult()
 
     if raw == "off":
         _disable_codemode(ctx)
+        show_session_bar(ctx.ui, ctx.config)
         return CommandResult()
 
     ctx.ui.warning("[Command Error] Invalid syntax.")

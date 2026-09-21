@@ -102,9 +102,26 @@ function Get-DefaultInstallDir {
     return (Join-Path $base "Programs\SeedCode")
 }
 
+# One SHA256SUMS.txt entry, as a regex:
+#   ^<64 hex digits><one or more spaces/tabs>[*]<file name><optional trailing ws>$
+# The separator is deliberately NOT assumed to be a single space: GNU
+# sha256sum writes two spaces, other tools emit tabs, and a checksum file
+# staged on Windows can arrive with CRLF line endings. '*' is the binary-mode
+# marker some sha256sum builds write; it is not part of the file name.
+$SumsEntryPattern = '^([0-9A-Fa-f]{64})[ \t]+[*]?(.+?)[ \t]*$'
+
 function Get-RemoteText([string] $Url) {
     try {
-        return (Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec 60).Content
+        $response = Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec 60
+        $content = $response.Content
+        # GitHub serves release assets as application/octet-stream, and on
+        # Windows PowerShell 5.1 Invoke-WebRequest then hands back a byte[]
+        # instead of text. Decoding it here is what makes the checksum lookup
+        # see real lines instead of a string of byte values.
+        if ($content -is [byte[]]) {
+            $content = [Text.Encoding]::UTF8.GetString($content)
+        }
+        return [string] $content
     } catch {
         return $null
     }
@@ -120,14 +137,30 @@ function Save-RemoteFile([string] $Url, [string] $Destination) {
     if (-not (Test-Path -LiteralPath $Destination)) { Fail "Download produced no file: $Url" }
 }
 
-function Get-ExpectedHash([string] $SumsText, [string] $FileName) {
+function Get-ExpectedHash($SumsText, [string] $FileName) {
+    # $SumsText is untyped on purpose: Windows PowerShell 5.1 hands back a
+    # byte[] for a GitHub release asset (served as application/octet-stream),
+    # and a [string] parameter would coerce it to "System.Byte[]" before the
+    # check below could ever run.
+    # Returns the expected lowercase SHA256 for $FileName, or $null when the
+    # release does not list it. Parsing is whitespace-tolerant (spaces, tabs,
+    # CRLF) and matches the file name exactly, case-insensitively; the hash
+    # itself must still be 64 hex digits or the line is ignored.
     if (-not $SumsText) { return $null }
-    foreach ($line in ($SumsText -split "`n")) {
+    if ($SumsText -is [byte[]]) {
+        $SumsText = [Text.Encoding]::UTF8.GetString($SumsText)
+    }
+    $want = "$FileName".Trim()
+    if (-not $want) { return $null }
+    foreach ($line in ([string] $SumsText -split "\r?\n")) {
         $trimmed = $line.Trim()
         if (-not $trimmed) { continue }
-        $parts = $trimmed -split "\s+", 2
-        if ($parts.Count -eq 2 -and $parts[1].Trim() -eq $FileName) {
-            return $parts[0].Trim().ToLowerInvariant()
+        if ($trimmed.StartsWith("#")) { continue }  # comment/digest header lines
+        $match = [regex]::Match($trimmed, $SumsEntryPattern)
+        if (-not $match.Success) { continue }
+        $listed = $match.Groups[2].Value.Trim()
+        if ($listed -ieq $want) {
+            return $match.Groups[1].Value.ToLowerInvariant()
         }
     }
     return $null

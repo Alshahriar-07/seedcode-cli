@@ -115,30 +115,61 @@ fetch_file() {
 }
 
 sha256_of() {
+  # Prints the bare lowercase-able digest. `tr -d '\\'` removes the escape
+  # marker GNU coreutils prepends when the FILE NAME itself needs escaping -
+  # which happens on MSYS/Git Bash, where the temp path contains backslashes.
+  # Without it, a perfectly valid download on Git Bash would look like a
+  # mismatch ('\<hash>' != '<hash>') and be refused.
   if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$1" | awk '{print $1}'
+    sha256sum "$1" | awk '{print $1}' | tr -d '\\'
   elif command -v shasum >/dev/null 2>&1; then
-    shasum -a 256 "$1" | awk '{print $1}'
+    shasum -a 256 "$1" | awk '{print $1}' | tr -d '\\'
   elif command -v openssl >/dev/null 2>&1; then
-    openssl dgst -sha256 "$1" | awk '{print $NF}'
+    openssl dgst -sha256 "$1" | awk '{print $NF}' | tr -d '\\'
   else
     return 1
   fi
 }
 
+sums_lookup() {
+  # $1 = SHA256SUMS.txt contents, $2 = exact file name to find.
+  # Prints the expected lowercase SHA256, or nothing when absent.
+  #
+  # Parsing is deliberately whitespace-agnostic: GNU sha256sum writes two
+  # spaces, other tools emit tabs, and a checksum file staged on Windows can
+  # arrive with CRLF line endings. Leading/trailing whitespace is trimmed,
+  # the hash is validated as exactly 64 hex digits, and the '*' binary-mode
+  # marker is stripped before the file name is compared exactly.
+  printf '%s\n' "$1" | awk -v want="$2" '
+    {
+      line = $0
+      sub(/\r$/, "", line)
+      sub(/^[ \t]+/, "", line)
+      sub(/[ \t]+$/, "", line)
+      if (line == "") next
+      if (substr(line, 1, 1) == "#") next
+      hash = substr(line, 1, 64)
+      if (length(hash) != 64) next
+      if (hash !~ /^[0-9A-Fa-f]+$/) next
+      name = substr(line, 65)
+      sub(/^[ \t]+/, "", name)
+      sub(/^\*/, "", name)
+      sub(/[ \t]+$/, "", name)
+      if (name == want) { print tolower(hash); exit }
+    }'
+}
+
 verify_sha256() {
   # $1 = file, $2 = sums text, $3 = file name (as listed in SHA256SUMS.txt)
-  # tr -d '\r': the sums file may have been published with CRLF line endings
-  # (a Windows staging run). Without this every lookup misses and the installer
-  # would refuse a perfectly valid download.
-  expected="$(printf '%s\n' "$2" | tr -d '\r' | awk -v want="$3" '$2 == want {print $1; exit}')"
+  expected="$(sums_lookup "$2" "$3")"
   [ -n "$expected" ] \
     || die "No SHA256 checksum for $3 in the release's SHA256SUMS.txt. Refusing to install an unverified artifact."
 
-  if ! actual="$(sha256_of "$1")"; then
-    warn "No SHA256 tool found (sha256sum/shasum/openssl); skipping checksum verification."
-    return 0
-  fi
+  # A missing hashing tool is NOT an excuse to install unverified code: the
+  # artifact is refused instead of silently accepted (never bypass verification).
+  actual="$(sha256_of "$1")" \
+    || die "No SHA256 tool found (sha256sum/shasum/openssl). Install one and re-run; refusing to install an unverified artifact."
+  actual="$(printf '%s' "$actual" | tr 'A-F' 'a-f')"
   [ "$actual" = "$expected" ] \
     || die "Checksum mismatch for $3
       expected $expected
@@ -210,44 +241,42 @@ TMP_DIR="$(mktemp -d 2>/dev/null || mktemp -d -t seedcode)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
 # Prefer a published prebuilt binary for this platform; fall back to the
-# official Python wheel (pure Python, so architecture-independent).
+# official Python wheel (pure Python, so architecture-independent). The asset
+# is chosen by an exact checksum-file lookup, not a substring match.
 BINARY_ASSET="SeedCode-CLI-${VERSION}-${OS}-${ARCH}"
-case "$SUMS" in
-  *"$BINARY_ASSET"*)
-    step "Downloading prebuilt binary ${BINARY_ASSET}"
-    fetch_file "${RELEASE_BASE}/${BINARY_ASSET}" "${TMP_DIR}/${BINARY_ASSET}"
-    verify_sha256 "${TMP_DIR}/${BINARY_ASSET}" "$SUMS" "$BINARY_ASSET"
-    log "Installing"
-    mkdir -p "$INSTALL_DIR" 2>/dev/null || die "Could not create ${INSTALL_DIR}"
-    install -m 0755 "${TMP_DIR}/${BINARY_ASSET}" "${INSTALL_DIR}/${BIN_NAME}" 2>/dev/null \
-      || { cp "${TMP_DIR}/${BINARY_ASSET}" "${INSTALL_DIR}/${BIN_NAME}" && chmod 0755 "${INSTALL_DIR}/${BIN_NAME}"; }
-    ok "Installed to ${INSTALL_DIR}/${BIN_NAME}"
-    ;;
-  *)
-    WHEEL="seedcode_cli-${VERSION}-py3-none-any.whl"
-    step "No prebuilt binary published for ${OS}-${ARCH}; installing the official wheel ${WHEEL}"
-    fetch_file "${RELEASE_BASE}/${WHEEL}" "${TMP_DIR}/${WHEEL}"
-    verify_sha256 "${TMP_DIR}/${WHEEL}" "$SUMS" "$WHEEL"
+if [ -n "$(sums_lookup "$SUMS" "$BINARY_ASSET")" ]; then
+  step "Downloading prebuilt binary ${BINARY_ASSET}"
+  fetch_file "${RELEASE_BASE}/${BINARY_ASSET}" "${TMP_DIR}/${BINARY_ASSET}"
+  verify_sha256 "${TMP_DIR}/${BINARY_ASSET}" "$SUMS" "$BINARY_ASSET"
+  log "Installing"
+  mkdir -p "$INSTALL_DIR" 2>/dev/null || die "Could not create ${INSTALL_DIR}"
+  install -m 0755 "${TMP_DIR}/${BINARY_ASSET}" "${INSTALL_DIR}/${BIN_NAME}" 2>/dev/null \
+    || { cp "${TMP_DIR}/${BINARY_ASSET}" "${INSTALL_DIR}/${BIN_NAME}" && chmod 0755 "${INSTALL_DIR}/${BIN_NAME}"; }
+  ok "Installed to ${INSTALL_DIR}/${BIN_NAME}"
+else
+  WHEEL="seedcode_cli-${VERSION}-py3-none-any.whl"
+  step "No prebuilt binary published for ${OS}-${ARCH}; installing the official wheel ${WHEEL}"
+  fetch_file "${RELEASE_BASE}/${WHEEL}" "${TMP_DIR}/${WHEEL}"
+  verify_sha256 "${TMP_DIR}/${WHEEL}" "$SUMS" "$WHEEL"
 
-    PYTHON=""
-    for candidate in python3 python; do
-      if command -v "$candidate" >/dev/null 2>&1; then PYTHON="$candidate"; break; fi
-    done
-    [ -n "$PYTHON" ] || die "Python 3.12+ is required for this artifact, and no python3 was found on PATH."
+  PYTHON=""
+  for candidate in python3 python; do
+    if command -v "$candidate" >/dev/null 2>&1; then PYTHON="$candidate"; break; fi
+  done
+  [ -n "$PYTHON" ] || die "Python 3.12+ is required for this artifact, and no python3 was found on PATH."
 
-    log "Installing"
-    "$PYTHON" -m pip install --user --upgrade "${TMP_DIR}/${WHEEL}" \
-      || die "pip install failed. Install Python 3.12+ (with pip) and try again."
+  log "Installing"
+  "$PYTHON" -m pip install --user --upgrade "${TMP_DIR}/${WHEEL}" \
+    || die "pip install failed. Install Python 3.12+ (with pip) and try again."
 
-    # The console script lands in pip's per-user scripts directory; use that
-    # as the install directory so PATH is updated for the right location.
-    USER_SCRIPTS="$("$PYTHON" -c 'import sysconfig; print(sysconfig.get_path("scripts", "posix_user") or "")' 2>/dev/null || true)"
-    if [ -n "$USER_SCRIPTS" ] && [ -d "$USER_SCRIPTS" ]; then
-      INSTALL_DIR="$USER_SCRIPTS"
-    fi
-    ok "Installed ${WHEEL}"
-    ;;
-esac
+  # The console script lands in pip's per-user scripts directory; use that
+  # as the install directory so PATH is updated for the right location.
+  USER_SCRIPTS="$("$PYTHON" -c 'import sysconfig; print(sysconfig.get_path("scripts", "posix_user") or "")' 2>/dev/null || true)"
+  if [ -n "$USER_SCRIPTS" ] && [ -d "$USER_SCRIPTS" ]; then
+    INSTALL_DIR="$USER_SCRIPTS"
+  fi
+  ok "Installed ${WHEEL}"
+fi
 
 if [ "$NO_PATH_UPDATE" = 0 ]; then
   add_to_path

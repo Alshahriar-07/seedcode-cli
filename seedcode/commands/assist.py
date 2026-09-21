@@ -16,7 +16,7 @@ from rich.table import Table
 from ..computer import is_available
 from ..config import save_config
 from ..tools import TOOL_REGISTRY, PermissionMode
-from . import CommandContext, CommandResult, command
+from . import CommandContext, CommandResult, command, show_session_bar
 
 # The Assist capability set, in display order. Desktop-engine rows are
 # marked so they can be dimmed when the Computer Engine is unavailable.
@@ -53,6 +53,7 @@ def _assist(ctx: CommandContext, arg: str) -> CommandResult:
         enable_assist(ctx.ui, ctx.config)
     else:
         disable_assist(ctx.ui, ctx.config)
+    show_session_bar(ctx.ui, ctx.config)
     return CommandResult()
 
 

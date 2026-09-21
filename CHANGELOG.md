@@ -7,20 +7,78 @@ and the project adheres to [Semantic Versioning](https://semver.org/).
 ## [6.2.5] — 2026-09-21
 
 A UI, provider and distribution release: the startup screen lost its ASCII
-logo, the built-in **Default** connection became a first-class provider
-separate from OpenRouter, and installation moved to the official IRM
-installer system.
+logo (and gained a compact, structured header), the built-in **Default**
+connection became a first-class provider separate from OpenRouter, tasks
+became step-by-step, and installation moved to the official IRM installer
+system.
 
 ### UI
 
 - Removed the large ASCII logo from the CLI interface; `seedcode.ui.logo` no
-  longer exists and nothing renders block or box art at startup.
-- Simplified and compacted the startup screen to a borderless five-line
-  header (`Seed Code CLI v6.2.5` plus Provider / Model / Mode / Status).
+  longer exists and nothing renders pixel or block art anywhere. This is the
+  one permanent change to the startup screen. The orphaned artwork it used
+  (`seedcode/assets/logo.txt`) was deleted too — the 16x16 mark in
+  `seedcode/branding.py` stays, because it is packaging only (`.ico`, the
+  installer wizard, Explorer/search surfaces) and the terminal UI never
+  renders it.
+- Restored the previous, richer startup dashboard around that change: a
+  bordered reference panel (96-column design width) with the `Seed Code`
+  wordmark and the `AI CODING AGENT` descriptor on the left, a divider, and
+  identity (`Seed Code | Eagox Studio`), the tagline and the live session
+  state on the right — Provider, Model, and Mode with its status on one row,
+  plus `API Key` only when the provider actually needs one.
+- Final proportions of that panel: wider and shorter. The design width is 96
+  columns (the whole `cohere/north-mini-code:free` model name fits without
+  clipping), and the two padding rows were dropped — one blank row under the
+  title is kept for breathing room, the live rows follow, then the border. The
+  panel is eight lines at full width instead of ten.
+- The dashboard is responsive: the info section slides left below the design
+  width so the whole model value still fits (80 columns shows
+  `cohere/north-mini-code:free` in full), then the value clips, then a compact
+  one-row panel renders under 64 columns, then plain lines under 40 — never
+  overflowing or breaking its border.
+- The panel and the state marks fall back to ASCII automatically on consoles
+  that cannot draw or encode them (raster-font `cmd.exe`, redirected streams
+  on a cp1252 host), so the header never breaks mid-render.
+- Mode switches reprint the one-line session summary (`provider · model ·
+  mode · status`) rather than the whole dashboard.
 - The `API Key` row is rendered **only** for providers that actually require
   a key, so Default and Ollama never show one.
 - `mode_label()` remains the single source of truth for the active mode, and
   the header, `/mode`, `/chat` and `/status` all name it identically.
+
+### Task flow (Code / Assist / Agent Mode)
+
+- Added `seedcode.ui.tasks`: a reusable task-progress abstraction with the
+  states `pending`, `running`, `completed`, `failed` and `skipped`, and a
+  compact live view (`analyze → inspect → plan → implement → test → verify`).
+- Step state is driven by real engine activity. `AgentEngine` now reports
+  structured activity (`tool_start` / `tool_done` / `say`) through an optional
+  `on_step` callback, and the flow uses it: a read tool completes *Inspect
+  files*, a mutating tool completes *Implement changes*, and *Run tests* only
+  completes when a recognised test command actually ran and exited 0 — a
+  failing run is shown as failed with what failed, never as a passing count.
+- Steps the task never needed are reported as **skipped**, so progress is
+  never fabricated; failed steps stay visible after the task ends.
+- Tasks now end with a persistent summary (files changed, test result) and a
+  status line — `✓ Task completed` / `✗ Task failed` / `■ Task cancelled` —
+  followed by `Ready for next task.` The CLI is only exited by the user.
+- The task block uses the dashboard's visual language (primary-toned rule,
+  `Task  ·  Code Mode` heading, indented step details) so progress reads as
+  part of the UI rather than a separate debug pane.
+- Live command output is echoed compactly (first lines, then one elision
+  note). The model and `~/.seedcode/logs/seedcode.log` still receive every
+  line, and errors are never hidden.
+- Plain Chat Mode is unchanged: same fast spinner, no task view.
+
+### Default model
+
+- `defaults.DEFAULT_MODEL` is now `cohere/north-mini-code:free`, and a fresh
+  install seeds it onto the Default provider's own slot — so a release build
+  needs neither a key nor a model choice to start working.
+- The default is never forced onto another provider: OpenRouter, FreeModel
+  Claude/Codex, AeroLink and Ollama keep their own models, and switching
+  providers still cannot leak a model or a key between them.
 
 ### Providers
 
@@ -69,6 +127,19 @@ installer system.
 
 ### Distribution
 
+- Fixed the Windows installer's `SHA256SUMS.txt` parser, which reported
+  "No SHA256 checksum for …" for artifacts the release actually listed. It now
+  tolerates any whitespace padding (one space, two, tabs), CRLF line endings
+  and the `*` binary-mode marker; it matches the file name exactly and
+  case-insensitively, still requires a 64-hex-digit digest, and **never**
+  skips verification. `Invoke-WebRequest`'s byte[] response (GitHub serves
+  release assets as `application/octet-stream`) is decoded instead of being
+  treated as text.
+- Hardened the Linux installer the same way: `sums_lookup` parses the checksum
+  file with an awk program that trims whitespace, validates the digest, strips
+  the binary marker and matches the exact name. A missing hashing tool now
+  **refuses** the install instead of skipping verification, and the
+  coreutils escape marker on MSYS/Git Bash no longer looks like a mismatch.
 - Added the official **IRM installer system** in `IRM_INSTALL/`:
   `install.ps1` (Windows, PowerShell 5.1+), `install.sh` (Linux, bash) and
   `RELEASE_INFO.txt`.
@@ -83,6 +154,12 @@ installer system.
   mismatch.
 - Removed stale v6.2.0 release artifacts, the old v6.2.0 WinGet manifests and
   the associated untracked build output from the repository.
+- Removed the WinGet manifest builder (`scripts/winget/build_manifest.py`),
+  which nothing referenced after the WinGet channel was dropped, and the
+  unused duplicate GitHub PyPI workflow (`.github/workflows/python-publish.yml`
+  — the stock, unmodified template). `publish.yml` remains the single PyPI
+  publish path; the wheel and sdist it builds are release assets that the
+  Linux installer verifies, not a documented install channel.
 
 ### Documentation
 

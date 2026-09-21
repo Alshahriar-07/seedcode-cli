@@ -15,9 +15,10 @@ plus the canonical ``assets/logo.png`` — the official 256px mark committed
 to source control.
 
 The artwork itself lives in ``seedcode/branding.py`` (the 16x16 pixel-art
-"sprouting seed" grid and its Seed Green palette) — the single source of
-truth shared with the terminal renderer ``seedcode/ui/logo.py``. Everything
-is deterministic: same inputs, byte-identical outputs.
+"sprouting seed" grid and its Seed Green palette). It is a packaging/desktop
+asset only: the terminal UI renders no art at all (``seedcode.ui.logo`` no
+longer exists), so nothing here is shared with the CLI header. Everything is
+deterministic: same inputs, byte-identical outputs.
 
 Usage:
     python build_assets.py --version 6.2.5
@@ -41,8 +42,8 @@ from seedcode.branding import CLEAR, INK, logo_pixels, render_logo_png  # noqa: 
 ASSETS_DIR = Path(__file__).resolve().parents[2] / "assets" / "windows"
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-# Canonical 256px logo committed to source control (the official asset the
-# dashboard/UI references).
+# Canonical 256px logo committed to source control (the packaging/desktop
+# asset; the terminal UI itself renders no logo).
 LOGO_PNG = REPO_ROOT / "assets" / "logo.png"
 
 # Historical aliases kept so any external references keep resolving.
