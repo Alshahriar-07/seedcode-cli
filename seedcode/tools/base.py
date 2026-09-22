@@ -11,6 +11,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable
 
+from ..utils.text import safe_text
+
 if TYPE_CHECKING:
     from .permissions import PermissionManager
 
@@ -45,6 +47,14 @@ class ToolResult:
     ok: bool
     output: str
 
+    def __post_init__(self) -> None:
+        # v7.1.0: a tool's output may contain a lone surrogate (a command that
+        # emitted invalid UTF-8 bytes, a file read back with surrogates, a
+        # model-supplied string). Every result is normalized at construction so
+        # no consumer — model request, JSON, file, console — can ever fail to
+        # encode it.
+        self.output = safe_text(self.output)
+
     def for_model(self) -> str:
         """Result text as the model sees it, truncated to a safe size."""
         text = self.output if self.output.strip() else "(no output)"
@@ -52,7 +62,7 @@ class ToolResult:
             omitted = len(text) - MAX_OUTPUT_CHARS
             text = text[:MAX_OUTPUT_CHARS] + f"\n... [truncated {omitted} chars]"
         status = "OK" if self.ok else "ERROR"
-        return f"[{status}] {text}"
+        return safe_text(f"[{status}] {text}")
 
 
 Runner = Callable[["PermissionManager", dict[str, Any]], ToolResult]

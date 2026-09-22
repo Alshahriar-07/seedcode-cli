@@ -75,9 +75,10 @@ Python runtime and every dependency inside it.
 `build.bat` compiles `Release\SeedCode-CLI-Setup-<version>.exe` (staging),
 publishes a verified copy to the repository root as the stable
 **`seedcode-cli-setup.exe`**, and stages the versioned copy for release as
-**`SeedCode-CLI-Setup-6.2.5.exe`** — the name attached to the v6.2.5 GitHub
-release, alongside the standalone `SeedCode-CLI-6.2.5-windows-x64.exe` and
-`SHA256SUMS.txt` (which is what the remote installers verify against).
+**`SeedCode-CLI-Setup-<version>.exe`** — the name attached to the GitHub
+release for that version (currently **7.1.0**), alongside the standalone
+`SeedCode-CLI-<version>-windows-x64.exe` and `SHA256SUMS.txt` (which is what
+the remote installers verify against).
 
 - **Branding everywhere.** The setup.exe, the installed seedcode.exe, the
   Start Menu / Desktop shortcuts, the taskbar, Explorer, and Add/Remove

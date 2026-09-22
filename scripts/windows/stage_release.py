@@ -1,4 +1,4 @@
-"""Stage the versioned release directory (v6.2.5 build.bat stage 3).
+"""Stage the versioned release directory (v7.1.0 build.bat stage 3).
 
 Collects the final artifacts into ``dist/release/<version>/`` and writes a
 real ``SHA256SUMS.txt`` — hashes are always computed from the staged files,
@@ -8,16 +8,16 @@ staging. Nothing here prints or logs any secret.
 
 Output layout::
 
-    dist/release/6.2.5/
-    ├── SeedCode-CLI-6.2.5-windows-x64.exe     (standalone exe, renamed)
-    ├── SeedCode-CLI-Setup-6.2.5.exe           (Inno Setup installer)
-    ├── seedcode_cli-6.2.5-py3-none-any.whl    (when built)
-    ├── seedcode_cli-6.2.5.tar.gz              (when built)
+    dist/release/7.1.0/
+    ├── SeedCode-CLI-7.1.0-windows-x64.exe     (standalone exe, renamed)
+    ├── SeedCode-CLI-Setup-7.1.0.exe           (Inno Setup installer)
+    ├── seedcode_cli-7.1.0-py3-none-any.whl    (when built)
+    ├── seedcode_cli-7.1.0.tar.gz              (when built)
     └── SHA256SUMS.txt
 
 Usage:
-    python scripts/windows/stage_release.py --version 6.2.5 \
-        --dist <repo>/dist --installer <repo>/Release/SeedCode-CLI-Setup-6.2.5.exe
+    python scripts/windows/stage_release.py --version 7.1.0 \
+        --dist <repo>/dist --installer <repo>/Release/SeedCode-CLI-Setup-7.1.0.exe
 """
 
 from __future__ import annotations

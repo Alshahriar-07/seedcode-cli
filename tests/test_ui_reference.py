@@ -84,7 +84,7 @@ def test_runtime_state_is_shown_exactly_once() -> None:
 
 
 def test_banner_title_uses_brand_casing() -> None:
-    """The header line must read "Seed Code CLI v6.2.5" (not "Seed code")."""
+    """The header line must read "Seed Code CLI v<version>" (not "Seed code")."""
     from seedcode import APP_NAME, __version__
 
     out = _banner(_configured())

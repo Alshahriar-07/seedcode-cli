@@ -32,6 +32,7 @@ from seedcode.core.lifecycle import lifecycle
 from seedcode.core.models import AppConfig, Message
 from seedcode.tools import PermissionLevel, PermissionManager
 from seedcode.ui import UI
+from seedcode.core.tasks import TurnEvidence
 from seedcode.ui.tasks import TaskFlow, TaskState, _test_summary, step_glyph
 from seedcode.ui.theme import SEED_THEME
 
@@ -548,16 +549,23 @@ class _ScriptedSession:
 
 
 class _RecordingAgent:
-    """Engine double that records the tasks it was handed."""
+    """Engine double that records the tasks it was handed.
+
+    It reports real evidence (a changed file) for every turn, because the
+    persistent Code Mode session verifies tasks against evidence — a double
+    that only returns text would be reported as an unverified task.
+    """
 
     def __init__(self, calls: list[str]) -> None:
         self.calls = calls
         self.config = AppConfig(agent_mode=True)
         self.messages = [Message(role="system", content="system")]
         self.transcript = list(self.messages)
+        self.last_evidence = TurnEvidence(changed_files=["app.py"])
 
     def run_turn(self, text: str) -> str:
         self.calls.append(text)
+        self.last_evidence = TurnEvidence(changed_files=["app.py"])
         return f"Finished: {text}"
 
 
@@ -580,7 +588,15 @@ def test_chat_loop_runs_task_after_task_and_exits_only_on_command(
     session = _ScriptedSession(["fix the bug", "now run the tests", "/exit"])
     app._chat_loop(ui, config, ChatEngine(config), _FakeHistory(), session)
 
-    assert calls == ["fix the bug", "now run the tests"]
+    # Both turns really ran. In Code Mode the session wraps the request in a
+    # plan prompt and a task prompt (that is the point of v7.1.0), so the
+    # request is asserted to have been carried into a call, not to be the
+    # literal argument.
+    if code_mode:
+        assert any("fix the bug" in c for c in calls)
+        assert any("now run the tests" in c for c in calls)
+    else:
+        assert calls == ["fix the bug", "now run the tests"]
     assert session.prompts == 3  # the third prompt was /exit, not an EOF
     assert lifecycle().is_running()  # /exit only returns to the menu
     out = ui.console.export_text()

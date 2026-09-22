@@ -3,11 +3,13 @@
 When Code Mode is enabled, the project root gains a ``.seedcode/`` directory::
 
     .seedcode/
-    ├── memory/     durable project knowledge (architecture, decisions…)
-    ├── index/      per-file summaries + a file map (incremental, hashed)
-    ├── context/    reusable project context (conventions, snippets)
-    ├── sessions/   compact per-session summaries (never raw transcripts)
-    └── config.json safe project configuration
+    ├── memory/       durable project knowledge (architecture, decisions…)
+    ├── index/        per-file summaries + a file map (incremental, hashed)
+    ├── context/      reusable project context (conventions, snippets)
+    ├── sessions/     compact per-session summaries (never raw transcripts)
+    ├── checkpoints/  resumable Code Mode session state (v7.1.0)
+    ├── plan.json     the current task graph (v7.1.0)
+    └── config.json   safe project configuration
 
 Design rules:
 
@@ -32,6 +34,8 @@ import re
 import time
 from pathlib import Path
 from typing import Any
+
+from .utils.text import safe_text
 
 # Keys that must never be persisted into .seedcode (mirrors memory.store).
 _SECRET_KEY_RE = re.compile(
@@ -80,8 +84,11 @@ def _write_json(path: Path, payload: dict[str, Any]) -> bool:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(path.suffix + ".tmp")
+        # v7.1.0: json.dumps happily emits lone surrogates (from model/tool
+        # text); normalizing first keeps the write from failing on encode.
         tmp.write_text(
-            json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8"
+            safe_text(json.dumps(payload, indent=2, ensure_ascii=False)),
+            encoding="utf-8",
         )
         tmp.replace(path)
         return True
@@ -100,7 +107,7 @@ def _read_json(path: Path) -> dict[str, Any] | None:
 def _write_text(path: Path, text: str) -> bool:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text, encoding="utf-8")
+        path.write_text(safe_text(text), encoding="utf-8")
         return True
     except OSError:
         return False
@@ -118,7 +125,7 @@ class SeedcodeStore:
     def ensure(self) -> bool:
         """Create the full directory skeleton when missing; True when ready."""
         try:
-            for sub in ("memory", "index", "context", "sessions"):
+            for sub in ("memory", "index", "context", "sessions", "checkpoints"):
                 (self.root / sub).mkdir(parents=True, exist_ok=True)
             config_path = self.root / "config.json"
             if not config_path.exists():
@@ -184,6 +191,39 @@ class SeedcodeStore:
             if data:
                 out.append(data)
         return out
+
+    # --- plan & checkpoints (v7.1.0) ---------------------------------------------
+    def plan_path(self) -> Path:
+        return self.root / "plan.json"
+
+    def save_plan(self, plan: dict[str, Any]) -> bool:
+        """Persist the current task graph (the session's TODO plan)."""
+        self.ensure()
+        assert_no_secrets(plan)
+        return _write_json(self.plan_path(), plan)
+
+    def load_plan(self) -> dict[str, Any] | None:
+        return _read_json(self.plan_path())
+
+    def save_checkpoint(self, checkpoint: dict[str, Any], name: str = "latest") -> bool:
+        """Persist a resumable session checkpoint (never a raw transcript)."""
+        self.ensure()
+        assert_no_secrets(checkpoint)
+        safe = re.sub(r"[^a-zA-Z0-9._-]", "_", name)[:40] or "latest"
+        return _write_json(self.root / "checkpoints" / f"{safe}.json", checkpoint)
+
+    def load_checkpoint(self, name: str = "latest") -> dict[str, Any] | None:
+        safe = re.sub(r"[^a-zA-Z0-9._-]", "_", name)[:40] or "latest"
+        return _read_json(self.root / "checkpoints" / f"{safe}.json")
+
+    def clear_checkpoint(self, name: str = "latest") -> bool:
+        """Remove a finished session's checkpoint; True when it is gone."""
+        safe = re.sub(r"[^a-zA-Z0-9._-]", "_", name)[:40] or "latest"
+        try:
+            (self.root / "checkpoints" / f"{safe}.json").unlink(missing_ok=True)
+            return True
+        except OSError:
+            return False
 
     # --- config -----------------------------------------------------------------
     def load_config(self) -> dict[str, Any]:

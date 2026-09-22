@@ -4,7 +4,7 @@ The startup screen is the previous structured Seed Code dashboard — a
 bordered reference panel with a branding cell, a divider and a live info
 section::
 
-    ╭─ Seed Code CLI v6.2.5 ───────────────────────────────────────────────────────────────────────╮
+    ╭─ Seed Code CLI v7.1.0 ───────────────────────────────────────────────────────────────────────╮
     │                                                                                              │
     │   Seed Code                                │ Seed Code  |  Eagox Studio                      │
     │   AI CODING AGENT                          │ Plant ideas. Grow code.                         │
@@ -97,7 +97,7 @@ def test_brand_is_plain_text() -> None:
 def test_dashboard_is_structured_and_compact() -> None:
     lines = _lines(_byok())
     assert 6 <= len(lines) <= 12, lines  # richer than 5 lines, no splash screen
-    assert lines[0].startswith("╭─ Seed Code CLI v6.2.5")
+    assert lines[0].startswith(f"╭─ Seed Code CLI v{__version__}")
     assert lines[-1].startswith("╰")
     assert any("│" in line for line in lines)  # the section divider is drawn
 

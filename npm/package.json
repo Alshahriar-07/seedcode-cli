@@ -1,6 +1,6 @@
 {
   "name": "seedcode-cli",
-  "version": "6.2.5",
+  "version": "7.1.0",
   "description": "Seed Code CLI - a premium terminal-based AI coding assistant. Plant ideas. Grow code. (Launcher: downloads the official Seed Code binary for your platform.)",
   "license": "MIT",
   "author": "Al Shahriar Sowan <github@eagox.studio>",

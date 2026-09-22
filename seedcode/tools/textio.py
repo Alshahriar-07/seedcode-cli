@@ -17,6 +17,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from ..utils.text import safe_text
+
 
 @dataclass(slots=True)
 class TextFile:
@@ -54,6 +56,12 @@ def read_text_file(path: Path) -> TextFile:
 
 
 def write_text_file(path: Path, tf: TextFile) -> None:
-    """Write normalized text back with the original newline and encoding."""
+    """Write normalized text back with the original newline and encoding.
+
+    v7.1.0: the text is normalized first, so a lone surrogate (from model or
+    tool output) becomes U+FFFD instead of raising ``UnicodeEncodeError`` here
+    — a bad character must never fail an edit or crash a session.
+    """
     text = tf.text.replace("\n", tf.newline) if tf.newline != "\n" else tf.text
-    path.write_bytes(text.encode(tf.encoding))
+    text = safe_text(text)
+    path.write_bytes(text.encode(tf.encoding, "replace"))

@@ -150,13 +150,33 @@ class BrowserEngine:
         return self.open_url(target, new_tab=True)
 
     def close_tab(self) -> WorkflowResult:
-        """Close the active tab."""
+        """Close the active tab (never the browser window itself).
+
+        v7.1.0: without a DevTools connection, ``Ctrl+W`` cannot tell the last
+        tab from the tenth — on the last tab Windows closes the browser, which
+        is exactly the auto-close behaviour being fixed. The blind hotkey is
+        therefore only used when a DevTools connection confirms another tab
+        exists; otherwise the workflow fails with an explanation instead of
+        closing the user's browser.
+        """
         if self._cdp_live():
             tab = self._safe(lambda: self._cdp.active_tab())
             if tab is not None and self._safe(lambda: self._cdp.close_tab(tab.target_id)):
                 return WorkflowResult(f"closed tab {tab.describe()}", None, tab.title)
-        self._hotkey(["ctrl", "w"], "close the active tab")
-        return WorkflowResult("closed the active browser tab")
+            tabs = self._safe(lambda: self._cdp.list_tabs()) or []
+            if len(tabs) <= 1:
+                raise BrowserWorkflowError(
+                    "Not closing the active tab: it is the browser's only tab, "
+                    "so closing it would close the browser window itself. "
+                    "Applications stay open unless you explicitly ask to close "
+                    "them (close_app / browser_close)."
+                )
+        raise BrowserWorkflowError(
+            "Cannot close that tab reliably: no DevTools connection is "
+            "available to distinguish a tab from the browser's last window. "
+            "Applications are never closed implicitly — use close_app or "
+            "browser_close to close a window explicitly."
+        )
 
     def switch_tab(self, target: str = "") -> WorkflowResult:
         """Focus another tab, chosen by title/URL fragment (or the next one)."""

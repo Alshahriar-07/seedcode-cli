@@ -9,9 +9,22 @@ from __future__ import annotations
 import time
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+from ..utils.text import strip_surrogates
 
 Role = Literal["system", "user", "assistant", "tool"]
+
+
+def clean_values(value: Any) -> Any:
+    """Recursively neutralise surrogates in strings inside a JSON-ish value."""
+    if isinstance(value, str):
+        return strip_surrogates(value)
+    if isinstance(value, dict):
+        return {clean_values(key): clean_values(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [clean_values(item) for item in value]
+    return value
 
 # Safe completion budget sent with chat requests when the user has not
 # overridden it. Free-tier accounts are rejected (HTTP 402) when the requested
@@ -48,6 +61,17 @@ class ToolCallRecord(BaseModel):
     name: str
     arguments: dict[str, Any] = Field(default_factory=dict)
 
+    @field_validator("arguments")
+    @classmethod
+    def _clean_arguments(cls, value: dict[str, Any]) -> dict[str, Any]:
+        """Neutralise surrogates anywhere in tool arguments (v7.1.0).
+
+        A lone surrogate in a model-supplied path or file body would otherwise
+        raise on the first ``encode("utf-8")`` — in a file write, an HTTP
+        request, or the console.
+        """
+        return clean_values(value)
+
 
 class Message(BaseModel):
     """A single chat message in a conversation."""
@@ -67,6 +91,18 @@ class Message(BaseModel):
     tool_calls: list[ToolCallRecord] = Field(default_factory=list)
     tool_call_id: str = ""
     tool_name: str = ""
+
+    @field_validator("content", "tool_name", "tool_call_id")
+    @classmethod
+    def _clean_text(cls, value: str) -> str:
+        """Repair/replace lone surrogates in every message body (v7.1.0).
+
+        This is the single boundary for model output, tool results and loaded
+        history: after this validator, no message can carry text that fails to
+        encode as UTF-8. Valid Unicode (Bangla, emoji, CJK, Arabic…) is
+        preserved exactly.
+        """
+        return strip_surrogates(value) if isinstance(value, str) else value
 
     def to_api(self) -> dict[str, str]:
         """Return the minimal shape chat-completions style APIs expect."""

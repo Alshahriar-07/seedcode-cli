@@ -1,19 +1,18 @@
-# Seed Code CLI v6.2.5 — Release Notes
+# Seed Code CLI v7.1.0 — Release Notes
 
-**Version:** 6.2.5 · **Tag:** `v6.2.5`
+**Version:** 7.1.0 · **Tag:** `v7.1.0`
 
-v6.2.5 is a UI, provider and distribution release. The startup screen lost its
-ASCII logo (and gained a compact, structured header), tasks became
-step-by-step, the built-in **Default** connection became a first-class provider
-separate from OpenRouter and now ships with `cohere/north-mini-code:free`, and
-installation moved to the official IRM installer system.
+v7.1.0 makes **Code Mode a real long-running software-engineering agent**. One
+model response is no longer a task result: a request becomes a plan — a task
+graph with dependencies and acceptance criteria — and the session works each
+task through as many model/tool cycles as it needs, verifies it against
+observed evidence, repairs its own failures, and only then starts the next one.
+The Code Mode UI was redesigned into a compact professional header with a live
+action line and a `/session` inspection view, and the desktop-control cleanup
+paths can no longer close an application the agent opened.
 
-This pass also includes a **distribution fix**: the Windows installer's
-`SHA256SUMS.txt` parser reported "No SHA256 checksum for …" for artifacts the
-release did list. Both installers now parse the checksum file
-whitespace-agnostically (one space, several spaces, tabs, CRLF, the `*`
-binary-mode marker) and match the file name exactly — while still refusing to
-install anything whose digest is missing or wrong.
+Everything below is behavior that is implemented and covered by the test suite
+in this repository.
 
 ## Official installation
 
@@ -30,22 +29,22 @@ curl -fsSL https://seedcode-cli.vercel.app/install.sh | bash
 ```
 
 Both installers download the official release artifact, verify its SHA256
-against the release's `SHA256SUMS.txt` before installing, install per-user,
+against the release's `SHA256SUMS.txt` **before** installing, install per-user,
 configure `PATH`, and finish by running `seedcode --version`. Verification is
 mandatory: a missing checksum entry, a mismatching digest, or a host with no
 SHA256 tool makes the installer stop instead of installing unverified code.
 
 ## Release assets
 
-Version **6.2.5**, tag **`v6.2.5`** —
-<https://github.com/Alshahriar-07/seedcode-cli/releases/tag/v6.2.5>
+Version **7.1.0**, tag **`v7.1.0`** —
+<https://github.com/Alshahriar-07/seedcode-cli/releases/tag/v7.1.0>
 
 | Asset | Kind |
 | --- | --- |
-| `SeedCode-CLI-6.2.5-windows-x64.exe` | Standalone Windows executable (portable; downloaded by the Windows IRM installer) |
-| `SeedCode-CLI-Setup-6.2.5.exe` | Windows setup installer (Inno Setup wizard, uninstaller, Start Menu entry) |
-| `seedcode_cli-6.2.5-py3-none-any.whl` | Python wheel (downloaded by the Linux IRM installer when no prebuilt binary is published for the platform) |
-| `seedcode_cli-6.2.5.tar.gz` | Python source distribution |
+| `SeedCode-CLI-7.1.0-windows-x64.exe` | Standalone Windows executable (portable; downloaded by the Windows IRM installer) |
+| `SeedCode-CLI-Setup-7.1.0.exe` | Windows setup installer (Inno Setup wizard, uninstaller, Start Menu entry) |
+| `seedcode_cli-7.1.0-py3-none-any.whl` | Python wheel (downloaded by the Linux IRM installer when no prebuilt binary is published for the platform) |
+| `seedcode_cli-7.1.0.tar.gz` | Python source distribution |
 | `SHA256SUMS.txt` | SHA256 digest for every attached asset; verified by both installers |
 
 Artifact names are part of the release contract — the installers look each one
@@ -53,237 +52,238 @@ up by exact name in `SHA256SUMS.txt`, so they must not be renamed. Every
 release must attach the full set above, including the wheel: `install.sh` has
 no verifiable artifact to install on Linux/macOS without it.
 
-## Highlights
+## Session engine
 
-### UI
+Code Mode now drives a **task graph** instead of a single agent turn:
 
-- The large ASCII logo is gone: `seedcode.ui.logo` was removed and nothing
-  renders block or box art at startup.
-- The startup screen is the restored structured dashboard — a bordered
-  reference panel with the branding cell, a divider and the live session
-  state — with **one permanent change: the ASCII logo is gone.** The brand is
-  plain text; nothing draws pixel or block art.
+```
+request → plan → task graph → for each task (dependency order):
+            work → model/tool cycles → verify acceptance criteria
+            → repair and re-verify on failure → COMPLETED
+          → final verification → project completed
+```
+
+- **Explicit task lifecycle.** `PENDING · RUNNING · VERIFYING · BLOCKED ·
+  RECOVERING · FAILED · COMPLETED · CANCELLED`, with the state shown in the UI
+  and persisted with the plan.
+- **Dependencies.** A task is not started until its prerequisites are
+  completed; the scheduler activates the next runnable task automatically, so
+  Task 1 → Task 2 → Task 3 proceeds without a second user message.
+- **Acceptance criteria are machine-checked.** `file: <path>`,
+  `file: <path> | contains: <text>`, `run: <command>`, `tests`, `no-errors` are
+  verified against what actually happened. A model that replies "done" while
+  the tests fail is sent back to fix them.
+- **Per-task execution records.** Each task maintains its current action, files
+  inspected and affected, commands with their outcome, tool calls, test
+  results, errors, retry count, timestamps and its verification result. The
+  record is written to `.seedcode/plan.json`, so a resumed session knows per
+  task what was already done.
+- **Evidence, not claims.** `TurnEvidence` is filled by the tool loop itself
+  (the files a mutating tool really wrote, the exit status of the commands that
+  really ran, the tests among them, unresolved errors). Task completion is
+  decided from that evidence.
+- **A task is a unit of work, not a model call.** A task may take many model
+  calls, many tool calls, several file reads and writes, several shell
+  commands, failing tests, fixes, retries and a final verification — the loop
+  continues until the task is complete, blocked, cancelled or genuinely failed.
+- **Inspected files are tracked** as part of the persistent session context, so
+  a resumed task does not re-read what it already looked at.
+
+## Reliability
+
+- **Provider retry with backoff.** A failed model request is retried (bounded,
+  with growing delay) and only then surfaces as a clean failure — the
+  checkpoint keeps the position so the work is resumable.
+- **Command failure → diagnose → fix → re-run.** A failing command becomes a
+  repair cycle with the real error text; the task is not completed until the
+  re-run passes.
+- **Repeated-failure blocker.** If the same action produces the same failure
+  without progress, the task stops as `BLOCKED` with an explicit reason instead
+  of looping forever. There is no arbitrary "maximum 3 model calls" cap — a
+  large project may legitimately need many iterations.
+- **Context compaction.** Raw history beyond a recent window is folded into a
+  structural summary at safe message boundaries, so long sessions keep a
+  bounded context without losing the working state.
+- **Checkpoint / resume.** Every meaningful transition is persisted to
+  `.seedcode/checkpoints/latest.json` (plan, current task, progress, changed
+  files, discoveries, commands, errors, tests, fixes, blockers, next action,
+  counters). A pause, `Ctrl+C`, provider failure, output/context limit or
+  interruption resumes from the current task rather than from zero.
+- **Unicode regression fixed.** A lone/unpaired surrogate (from model output, a
+  tool result, file content, terminal bytes or a serialized structure) used to
+  abort a session with `'utf-8' codec can't encode … surrogates not allowed`.
+  All text now passes one normalization at every boundary: a split high+low
+  pair is repaired back into its real character, an unpaired surrogate becomes
+  U+FFFD, and valid Unicode (Bangla, Arabic, Chinese, Japanese, Cyrillic,
+  emoji, combining marks) is untouched.
+
+## UI
+
+- **Compact Code Mode header** — two rows while working, one while idle, no
+  decorative art:
 
   ```text
-  ╭─ Seed Code CLI v6.2.5 ───────────────────────────────────────────────────────────────────────╮
-  │                                                                                              │
-  │   Seed Code                                │ Seed Code  |  Eagox Studio                      │
-  │   AI CODING AGENT                          │ Plant ideas. Grow code.                         │
-  │                                            │ Provider   Default                              │
-  │                                            │ Model      cohere/north-mini-code:free          │
-  │                                            │ Mode       Chat  •  ● Ready                     │
-  ╰──────────────────────────────────────────────────────────────────────────────────────────────╯
+  ╭─ SEEDCODE 7.1.0 • CODE MODE ────────────────╮
+  │ ● RUNNING   Task 3/8   Build authentication │
+  │   ████████████░░░░  72% • 4m 32s • 18 calls │
+  │ → Running: pytest tests/auth                │
+  ╰─────────────────────────────────────────────╯
   ```
 
-- The panel is wider and shorter: 96 columns at full width (the design
-  target) so the whole `cohere/north-mini-code:free` model name fits without
-  clipping, and one less blank row — a single blank row under the title, the
-  live rows, then the border, with no padding rows to scroll past.
-- The header is responsive: 96-column design width on wide terminals, an info
-  section that slides left so the whole model value still fits (80 columns
-  shows `cohere/north-mini-code:free` in full), a compact one-row panel under
-  64 columns, plain lines under 40, and an all-ASCII rendering on consoles
-  that cannot draw or encode the glyphs.
-- Mode switches reprint the one-line session summary (`provider · model ·
-  mode · status`) instead of the whole dashboard.
-- The `API Key` row appears only for providers that require a key. Default and
-  Ollama never show one, and no key is ever displayed in full.
+- **Live action line.** One line describing the real work — `→ Reading
+  src/auth/login.py`, `→ Editing package.json`, `→ Running pytest tests/auth` —
+  which switches to `Verifying acceptance criteria` and `Verifying the project
+  (tests / build)` when the session enters those phases.
+- **Task checklist** with `✓ completed · ● current · ○ pending · ✗ failed ·
+  ■ blocked/cancelled`, so the current task is always obvious.
+- **`/session` inspection view.** The detailed state the live view keeps off
+  screen: status, progress, current task and action, elapsed time, model/tool
+  calls, recoveries, tests, commands, files inspected and changed, blockers,
+  and the checkpoint/resumability of a stopped session — plus one row per task
+  with its state, verification result and own execution record.
+- **`/status` session row.** `RUNNING (1/3 verified) — Task 2`, or
+  `PAUSED (2/3 verified) — resumable with /resume`. No row is drawn when there
+  is no session.
+- **Evidence-gated completion is visible.** A finished project closes with the
+  evidence that verified it:
 
-### Task flow
+  ```text
+  ✓ Project completed — 3/3 tasks verified
+    ✓ Verification: accepted
+    ✓ Tests: passed
+    ✓ Files: 4 affected
+    ✓ Commands: 7/7 ok
+    • Inspected: 12 item(s)
+  Ready for next task.
+  ```
 
-- Code Mode, Assist Mode and Agent Mode show a compact live task flow
-  (`analyze → inspect → plan → implement → test → verify`). The states
-  `pending`, `running`, `completed`, `failed` and `skipped` are driven by real
-  engine activity — a step the task did not perform reads *skipped*, and tests
-  are only marked done when a test command actually ran and exited 0.
-- A finished task prints a persistent summary (files changed, test result) and
-  then `Ready for next task.` — success, failure and `Ctrl+C` all return to the
-  prompt. Nothing in the task path can close the CLI.
-- Live command output is echoed compactly (first lines, then one elision
-  note); the model and the log file still receive the complete output.
-- Plain Chat Mode keeps its fast, clean spinner — no task view.
+- **Stop/resume messaging.** `/stop` and `Ctrl+C` report that the plan,
+  completed work and project files were kept and point at `/resume` — a stopped
+  session is resumable, not a dead end. `/pause` takes effect at the next safe
+  boundary between model calls/tool cycles; the synchronous REPL is not
+  interruptible mid-call, which is why `Ctrl+C` remains the immediate stop.
+- **Responsive and safe.** The panel re-fits on every refresh (a terminal
+  resize cannot leave it wider than the screen), degrades to a single status
+  line on narrow terminals, and renders ASCII borders, marks and progress bars
+  on consoles that cannot draw or encode the glyphs. Every string is normalized
+  through the same Unicode-safe layer; no UI element can end a session.
+- **The desktop-safety rule is explicit:** if Seed Code opens an application
+  (Chrome, Edge, VS Code, Explorer, a media player), it is left open. Only an
+  explicit user request closes it.
 
-### Default model
+## Desktop safety
 
-- The Default provider now ships with `cohere/north-mini-code:free`
-  (`seedcode.defaults.DEFAULT_MODEL`), so a fresh install can work
-  immediately without choosing a model or entering a key.
-- The default is applied to Default's own config slot only; OpenRouter,
-  FreeModel, AeroLink and Ollama keep their own models, and switching
-  providers never copies one model onto another.
+- Opening an application or browser window records the launch in a session
+  ledger. A cleanup path — teardown hook, workflow reset, any code that did not
+  explicitly ask to close something — can no longer terminate a user-facing
+  application: the close is refused with a clear reason.
+- Explicit requests still work exactly as before (`close_app` / `app_close`,
+  `browser_close`), and forced process kills require the same explicit intent.
+- A blind `Ctrl+W` is no longer used as a "close the current tab" fallback,
+  because it could close the application itself.
+- Internal cleanup is unchanged: releasing keyboard/mouse control, closing
+  DevTools sockets and dropping cached drivers still happen on teardown. The
+  teardown hook explicitly leaves opened applications open and logs which ones.
 
-### Providers
+## Providers, modes and compatibility
 
-- **Default** is a first-class provider: Seed Code's built-in connection, no
-  user API key, and the provider a fresh install starts on. It is separate
-  from OpenRouter in the picker, in `config.json`, in status, and in
-  credential handling.
-- Default resolves its own credential (own slot → embedded release credential →
-  `OPENROUTER_API_KEY` / `SEEDCODE_DEFAULT_API_KEY`) and never reads or writes
-  another provider's slot. The embedded credential is no longer copied into
-  OpenRouter's stored configuration.
-- Provider-specific API-key rules are enforced from one shared helper:
-  Default and Ollama require no key; OpenRouter, FreeModel Claude, FreeModel
-  Codex and AeroLink each require their own.
-- The provider picker groups choices by what they need (*Built-in · no API key*,
-  *Your own API key*, *Local*) and shows backend, current model and key state.
-- `/status` gained an `API Key` row and reads its backend label from the
-  provider.
-
-### Connectivity
-
-- Provider connection errors name the provider the user selected, not the
-  internal backend; a rejected built-in credential directs the user to
-  `/provider` rather than an inapplicable API-key prompt.
-- Terminal execution streams output live, captures `stderr` with `stdout`,
-  reports exit codes, bounds long-running commands, and kills the whole
-  process tree on timeout or `Ctrl+C`. A command that closes its output pipe
-  while still running can no longer block the UI loop.
-- A provider × mode matrix test covers every provider in Chat, Assist and Code
-  Mode, and asserts that an unreachable catalogue or unknown provider produces
-  a clear message instead of a crash.
-
-### Distribution
-
-- `IRM_INSTALL/{install.ps1,install.sh,RELEASE_INFO.txt}` is the official
-  remote-installer source. Neither script depends on a cloned repository.
-- The GitHub release workflow now attaches exactly the artifact names the
-  installers download, plus a `SHA256SUMS.txt` covering every attached asset,
-  and fails loudly on a version mismatch.
-- Stale v6.2.0 release artifacts, the old v6.2.0 WinGet manifests and untracked
-  build output were removed from the repository, along with the now-unreferenced
-  WinGet manifest builder and the unused duplicate PyPI workflow.
+- **Providers preserved:** Default, OpenRouter, FreeModel (Claude and Codex),
+  AeroLink and Ollama/Local, with their existing key rules (Default and Ollama
+  need no key; everyone else needs their own) and their own model slots.
+- **Modes preserved:** Chat, Code, Agent and Assist. The Code Mode session
+  engine sits behind the same commands (`/codemode on`), and Assist/Agent keep
+  their existing step-by-step task flow.
+- **Commands preserved:** every existing command still resolves (plus the new
+  `/session`), `/hotkeys`-style shortcuts and the interactive menu are
+  unchanged, and the installer's assumptions about the package name, entry
+  point and layout are untouched.
+- **Version source is single:** `seedcode/__init__.py::__version__`. The CLI,
+  the wheel/sdist (via hatchling), the installers, the Inno Setup metadata, the
+  npm launcher (via `package.json`) and the docs all follow it.
 
 ## Verification performed
 
-- Full test suite: **773 tests passing** (`python -m pytest`), including new
-  suites for the logo-free header (`tests/test_dashboard.py`), the task flow
-  (`tests/test_task_flow.py`), installer checksum parsing
-  (`tests/test_installer_checksums.py`), the provider × mode matrix
-  (`tests/test_provider_matrix.py`), Default/OpenRouter isolation, and
-  terminal streaming/`stderr`/exit-code behaviour.
-- `seedcode --version` prints `Seed Code CLI 6.2.5`.
-- `IRM_INSTALL/install.sh` passes `bash -n` and its argument validation paths
-  were exercised (`--help`, unknown option, malformed version).
-- `IRM_INSTALL/install.ps1` parses cleanly under the Windows PowerShell
-  parser, and its checksum-matching, architecture detection and install-path
-  resolution were exercised directly. Both scripts are ASCII-only so Windows
-  PowerShell 5.1 cannot misread them as ANSI.
-- Both checksum parsers were executed against the real release formats and
-  adversarial ones (one space, two spaces, tabs, CRLF, surrounding
-  whitespace, `*` binary-mode marker, uppercase digest, truncated/non-hex
-  digests, comment headers, absent entry, prefix/suffix look-alikes). A
-  correct digest verifies; a wrong digest, a missing entry and a host with no
-  SHA256 tool all refuse with a non-zero exit.
-- The startup dashboard and the task flow were rendered directly at 40, 64,
-  80, 88, 96 and 120 columns and on a legacy (raster-font) console; no line
-  overflows its terminal and the border never breaks.
-- The installers' version constants are asserted equal to
-  `seedcode.__version__`, so the release version cannot drift.
-- Both parsers were also run against the **live** `v6.2.5
-  SHA256SUMS.txt` fetched from GitHub Releases: each resolves
-  `SeedCode-CLI-6.2.5-windows-x64.exe` → `75b1e486…` and
-  `SeedCode-CLI-Setup-6.2.5.exe` → `ee92ba58…` — the exact digests the release
-  publishes.
-- `IRM_INSTALL/install.ps1` was executed end-to-end on Windows against the
-  real `v6.2.5` release: it downloaded the 83.4 MB
-  `SeedCode-CLI-6.2.5-windows-x64.exe`, reported `SHA256 verified
-  (75b1e4869085...)`, installed it, and its own final check printed
-  `seedcode --version  ->  Seed Code CLI 6.2.5`. (Run into a temporary
-  install directory with `-NoPathUpdate`, then removed.)
-- The Windows side of the original bug was reproduced against the **deployed**
-  installer: on the same machine and the same release,
-  `irm https://seedcode-cli.vercel.app/install.ps1 | iex` still fails with
-  `No SHA256 checksum for SeedCode-CLI-6.2.5-windows-x64.exe`. Root cause:
-  the old `Get-ExpectedHash` declared `[string] $SumsText`, so PowerShell 5.1
-  coerced the `byte[]` that GitHub's octet-stream response produces into the
-  literal text `System.Byte[]` and no line could ever match. The fixed parser
-  drops the type constraint and decodes the bytes.
+Every result below comes from an actual run against the artifacts in
+`dist/release/7.1.0/`; nothing is claimed that was not executed.
 
-## Finishing the release (owner action required)
+### Build and validation results
 
-Everything the release needs is now built and staged in
-`dist/release/6.2.5/`. Two steps still require credentials this environment
-does not have, so they are **prepared but not executed**:
+| Check | Command | Result |
+| --- | --- | --- |
+| Source version | `python -m seedcode --version` | `Seed Code CLI 7.1.0` |
+| Full test suite | `python -m pytest -q` | **899 passed, 0 failed** |
+| Windows executable | `dist/seedcode.exe --version` | `Seed Code CLI 7.1.0` |
+| Installer checksum test | `pytest tests/test_installer_checksums.py` | passed |
 
-1. **Upload the assets to the existing `v6.2.5` GitHub release.** Do not
-   create a v6.2.6 and do not delete historical releases; replace the asset
-   set in place:
+Staged assets in `dist/release/7.1.0/` (hashes as generated, verified below):
 
-   ```bash
-   gh release upload v6.2.5 \
-     dist/release/6.2.5/SeedCode-CLI-6.2.5-windows-x64.exe \
-     dist/release/6.2.5/SeedCode-CLI-Setup-6.2.5.exe \
-     dist/release/6.2.5/seedcode_cli-6.2.5-py3-none-any.whl \
-     dist/release/6.2.5/seedcode_cli-6.2.5.tar.gz \
-     dist/release/6.2.5/SHA256SUMS.txt \
-     --clobber
-   ```
+```text
+975cf3c7c55fd8eec8ebda4eb433d5de156a49bfdc6d648ecf21f50ffa3813cc  SeedCode-CLI-7.1.0-windows-x64.exe
+3ba3c20f6b02b704a04e08e159d9e86202c3df434f8e8646d288a614d96a84ea  SeedCode-CLI-Setup-7.1.0.exe
+8231a5921a7bd904b1a6290c04bff428d27389d5bab395da8f4c5e3331199f5e  seedcode_cli-7.1.0-py3-none-any.whl
+1ef7397860f70c7ecb38c0a6491bcec9b649394d03fdf6a80aa066030ca81804  seedcode_cli-7.1.0.tar.gz
+```
 
-   Uploading the regenerated `SHA256SUMS.txt` is essential: the currently
-   published one has no wheel entry, so `install.sh` would refuse with
-   "No SHA256 checksum for …seedcode_cli-6.2.5-py3-none-any.whl" even after
-   the wheel is attached.
+- **Windows `--version`.** The portable build reports `Seed Code CLI 7.1.0`. It
+  was then driven end-to-end in an isolated profile directory — interactive
+  startup, a chat turn, Code Mode enabled, and the Unicode/ASCII fallback path
+  on a console that cannot draw the glyphs — and exited cleanly each time.
+- **Wheel.** The built wheel was installed into a fresh virtual environment,
+  where `python -m seedcode --version` reported `Seed Code CLI 7.1.0` and a
+  smoke run completed. The wheel contains `_default_key_template.py` (empty)
+  and never the generated `_default_key.py`, so a key is not shipped in the
+  published package.
+- **`install.ps1`** was run against the staged 7.1.0 assets: fresh install
+  (download → SHA256 verified → install → `seedcode --version` → `7.1.0`),
+  re-run without `-Force` ("already installed", exit 0), `-Force` reinstall,
+  and a run with an older `seedcode` shadowing it earlier on `PATH` (the
+  installer reports the version of the file it actually installed by absolute
+  path and warns that another copy is earlier on `PATH`).
+- **`install.sh`** was validated on its Linux path: platform detection selected
+  `linux-x64`, no prebuilt binary is published for that platform so it fell
+  back to the wheel, the download's SHA256 was verified against the release's
+  `SHA256SUMS.txt`, and the run finished with `seedcode --version → Seed Code
+  CLI 7.1.0` and exit 0. Its checksum parsing was also checked against the real
+  `SHA256SUMS.txt` (CRLF- and whitespace-tolerant, exact name match) including a
+  stale `6.2.5` name resolving to nothing.
 
-2. **Re-publish the Vercel deployment** so `/install.ps1` and `/install.sh`
-   serve the fixed sources from `IRM_INSTALL/`. The deployment source of
-   truth is that directory; with the Vercel CLI authenticated against the
-   project that serves `seedcode-cli.vercel.app`:
+### Tests
 
-   ```bash
-   cd IRM_INSTALL && npx vercel --prod
-   ```
+- `python -m pytest -q` — **899 passed, 0 failed** (see above).
+- New v7.1.0 suites: `tests/test_v710_codemode.py` (task engine, session loop,
+  verification, recovery, retry, checkpoint/resume, `/pause` `/resume`
+  `/stop`), `tests/test_v710_ui.py` (compact header, checklist, action line,
+  responsiveness, resize, ASCII fallback), `tests/test_v710_session_view.py`
+  (session view, per-task records, evidence, `/session` and `/status`),
+  `tests/test_v710_unicode_safety.py` (surrogates at every boundary),
+  `tests/test_v710_desktop_guard.py` (applications stay open), and
+  `tests/test_v710_e2e_todo_app.py` — a real end-to-end run in which the actual
+  `AgentEngine` and real tools build a small todo project (plan → TODOs → file
+  creation → modification → commands → a real failing `pytest` run → a
+  model-driven fix → green tests → next task → final verification), and the
+  finished project is independently re-tested with pytest afterwards.
 
-   (If the project is instead wired to this repository, a push of the branch
-   it tracks triggers the redeploy.) Then confirm the live files:
+### UI rendering
 
-   ```bash
-   curl -fsSL https://seedcode-cli.vercel.app/install.sh  | head -3
-   curl -fsSL https://seedcode-cli.vercel.app/install.ps1 | head -3
-   ```
+- The startup dashboard, the Code Mode header, the session view and the final
+  evidence block were rendered directly at 20, 30, 40, 64, 80, 88, 96, 100 and
+  120 columns and on a legacy (raster-font) console, asserting that no line
+  exceeds its terminal width and that a console which cannot encode the glyphs
+  gets the ASCII rendering of the same information.
 
 ## Known limitations
 
-- Compiled artifacts are built and staged in `dist/release/6.2.5/`:
-  `SeedCode-CLI-6.2.5-windows-x64.exe`, `SeedCode-CLI-Setup-6.2.5.exe`,
-  `seedcode_cli-6.2.5-py3-none-any.whl`, `seedcode_cli-6.2.5.tar.gz` and a
-  `SHA256SUMS.txt` covering all four. The Windows binaries were produced by
-  `scripts\windows\build.bat` (PyInstaller + Inno Setup) and byte-match the
-  published release; the wheel and sdist were produced by `python -m build`
-  and staged by `scripts\windows\stage_release.py`. Every checksum entry was
-  generated from the real file and independently re-verified with
-  `sha256sum -c`. These files are build output: they are git-ignored and are
-  never committed to source control.
-- **The published `v6.2.5` GitHub release does not carry the Linux artifact
-  yet.** The live release attaches exactly three files —
-  `SeedCode-CLI-6.2.5-windows-x64.exe`, `SeedCode-CLI-Setup-6.2.5.exe` and a
-  `SHA256SUMS.txt` with no wheel entry (checked against the GitHub Releases
-  API on 2026-09-21). The wheel/sdist now exist and are staged locally, so
-  the fix is the asset re-upload above. Until that happens, `install.sh` on
-  Linux/macOS stops with "Could not download
-  …seedcode_cli-6.2.5-py3-none-any.whl" rather than installing unverified
-  code. The installer code itself is correct: its checksum parser resolves
-  the staged wheel entry, verified directly against
-  `dist/release/6.2.5/SHA256SUMS.txt`.
-- Live provider calls (chat, `/doctor` connectivity) were not exercised
-  against the network here; the HTTP and provider layers are covered by
-  offline unit tests instead.
-- The compiled Windows binaries were **not rebuilt** in this pass: the
-  existing `SeedCode-CLI-Setup-6.2.5.exe` and
-  `SeedCode-CLI-6.2.5-windows-x64.exe` byte-match the published release
-  (identical SHA256), so rebuilding them would only change the hashes and
-  force a re-upload. The full `scripts\windows\build.bat` pipeline was
-  therefore not re-run (Inno Setup IS installed here); the release-state
-  artifacts were re-verified instead.
-- The Vercel delivery of the installers was not executed in this environment
-  (no deployment credentials, no Vercel project config in the repository).
-- **The production installers at `https://seedcode-cli.vercel.app` are still
-  the pre-fix sources.** As of 2026-09-21, `GET /install.sh` and
-  `GET /install.ps1` serve the old scripts: the Linux one still bypasses
-  verification when no SHA256 tool is found and still picks the release asset
-  with a substring match, and the Windows one still fails on the real release
-  (see above). **The published one-liners do not work until the Vercel
-  deployment is re-published from `IRM_INSTALL/`.** The repository contains no
-  Vercel project source or config, so that deploy happens outside this repo.
-  **Production installer round-trip: reproduced and failed (fixed script
-  verified separately, above).**
+- **Live provider calls were not exercised here.** The chat/completion paths are
+  covered by offline unit tests and scripted agents; no request was sent to a
+  real provider during this release pass.
+- **Publishing is owner action.** No GitHub release, tag, PyPI upload, npm
+  publish or Vercel deployment was performed from this environment (constraints:
+  no publishing credentials, and external publishing is explicitly out of
+  scope). The artifacts are built and staged locally for review.
+- **Linux/macOS standalone binaries are not built.** The Linux/macOS installers
+  install the wheel (or defer to the official installer); no ELF/mach-O
+  artifact is produced by the Windows build pipeline.
+- **The remote installer one-liners point at `https://seedcode-cli.vercel.app`,
+  which this repository does not deploy.** Re-publishing that deployment is an
+  owner action; the sources of truth are `IRM_INSTALL/install.ps1` and
+  `IRM_INSTALL/install.sh`.

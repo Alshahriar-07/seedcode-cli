@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Seed Code CLI v6.2.5 - official Windows remote installer.
+    Seed Code CLI v7.1.0 - official Windows remote installer.
 
 .DESCRIPTION
     Installs Seed Code CLI for the CURRENT USER. No administrator rights, no
@@ -15,10 +15,10 @@
 
     Or, to pass options, download-then-run:
 
-        & ([scriptblock]::Create((irm https://seedcode-cli.vercel.app/install.ps1))) -Version 6.2.5
+        & ([scriptblock]::Create((irm https://seedcode-cli.vercel.app/install.ps1))) -Version 7.1.0
 
 .PARAMETER Version
-    Release version to install. Defaults to 6.2.5 (the current stable release).
+    Release version to install. Defaults to 7.1.0 (the current stable release).
 
 .PARAMETER InstallDir
     Install directory. Defaults to %LOCALAPPDATA%\Programs\SeedCode.
@@ -39,7 +39,7 @@
 #>
 [CmdletBinding()]
 param(
-    [string] $Version = "6.2.5",
+    [string] $Version = "7.1.0",
     [string] $InstallDir = "",
     [switch] $NoPathUpdate,
     [switch] $Force
@@ -259,6 +259,9 @@ try {
 if (-not $NoPathUpdate) { Add-ToUserPath $InstallDir }
 
 Write-Head "Verifying"
+# Verify the file THIS run installed, by absolute path - a `seedcode` already
+# on PATH could be an older copy, and a stale binary must never be reported as
+# this install's success.
 $reported = ""
 try { $reported = (& $TargetExe --version 2>&1 | Out-String).Trim() } catch { $reported = "(failed to run)" }
 if ($reported -notlike "*$Version*") {
@@ -267,7 +270,28 @@ if ($reported -notlike "*$Version*") {
 Write-Ok "seedcode --version  ->  $reported"
 
 $onPath = $false
-try { $onPath = [bool](Get-Command seedcode -ErrorAction SilentlyContinue) } catch { $onPath = $false }
+$resolvedTo = ""
+try {
+    $found = Get-Command seedcode -ErrorAction SilentlyContinue
+    if ($found) {
+        $onPath = $true
+        $resolvedTo = [string] $found.Source
+    }
+} catch {
+    $onPath = $false
+}
+
+# A different `seedcode` earlier on PATH keeps being invoked instead of the one
+# just installed (the "old executable still runs" failure mode). Say so out
+# loud instead of letting the user believe the upgrade took effect.
+if ($onPath -and $resolvedTo -and -not ($resolvedTo -like "$InstallDir\*")) {
+    Write-Host ""
+    Write-Host "  ! Another seedcode is earlier on PATH:" -ForegroundColor Yellow
+    Write-Host "      $resolvedTo" -ForegroundColor DarkGray
+    Write-Host "      (this install: $TargetExe)" -ForegroundColor DarkGray
+    Write-Host "    Remove the older copy, or run this one directly:" -ForegroundColor DarkGray
+    Write-Host "      & `"$TargetExe`" --version" -ForegroundColor DarkGray
+}
 
 Write-Head "Done"
 Write-Host "  Seed Code CLI $Version is installed." -ForegroundColor Green

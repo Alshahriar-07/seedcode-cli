@@ -80,6 +80,13 @@ def _enable_codemode(ctx: CommandContext) -> None:
     if indexed or unchanged:
         ctx.ui.dim(f"  Index: {indexed} indexed, {unchanged} unchanged (incremental)")
     ctx.ui.dim("  The agent now consults .seedcode memory + index before touching files.")
+    # v7.1.0: the compact Code Mode header replaces the old tall banner — one
+    # row while idle, showing the live state and the plan progress.
+    console = getattr(ctx.ui, "console", None)
+    if console is not None:
+        from ..ui.codemode_header import render_code_mode_header
+
+        render_code_mode_header(console)
 
 
 def _disable_codemode(ctx: CommandContext) -> None:

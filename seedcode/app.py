@@ -85,7 +85,17 @@ def _release_desktop_resources() -> None:
     Cleanup clears caches and closes driver connections only. It must never
     terminate SeedCode — historically a finally-block that "cleaned up" by
     exiting was one of the auto-exit paths.
+
+    v7.1.0 additionally guarantees the other direction: cleanup never closes a
+    user-facing application. Applications Seed Code opened stay open, which is
+    why this hook releases only internal resources (sockets, drivers, caches).
     """
+    try:
+        from .computer import lifecycle_guard
+
+        lifecycle_guard.release_internal()  # logs what is deliberately left open
+    except Exception:
+        pass
     try:
         from .computer.browser_cdp import reset as _cdp_reset
 
@@ -329,6 +339,71 @@ class _TaskPresenter:
             flow.observe_text(str(payload.get("text") or ""))
 
 
+    # --- persistent session events (Code Mode) ------------------------------
+    def on_session_event(self, kind: str, detail: str) -> None:
+        """Render compact progress for the persistent session (v7.1.0).
+
+        Only what the user needs: the plan, the task that just finished, the
+        live action, a repair in progress, and the outcome. Raw model output is
+        never dumped here.
+        """
+        from .core import session as session_mod
+
+        flow = self.flow
+        session = session_mod.current_session()
+        if kind == "plan":
+            self.ui.dim("  planning the work…")
+            return
+        if kind == "plan_ready":
+            self.ui.dim(f"  plan: {detail}")
+        elif kind == "task_start":
+            active = None
+            if flow is not None and session is not None:
+                flow.attach_plan(session.graph)
+                active = session.graph.active() or session.graph.next_task()
+                if active is not None:
+                    flow.set_progress(active.id, session.graph.total, active.title)
+                    # The live action line reports the real phase (v7.1.0).
+                    flow.set_activity(f"Working on: {active.title}")
+            self.ui.dim(f"  → {detail}")
+        elif kind == "verify":
+            # A real phase, not decoration: the session is checking acceptance
+            # criteria against observed evidence right now.
+            if flow is not None:
+                flow.set_activity("Verifying acceptance criteria")
+        elif kind == "task_done":
+            if flow is not None and session is not None:
+                # Refresh the checklist so the finished task shows as done.
+                flow.attach_plan(session.graph)
+            self.ui.success(detail)
+        elif kind == "recovery":
+            if flow is not None:
+                flow.set_activity("Diagnosing the failure and repairing")
+            self.ui.warning(detail)
+        elif kind == "task_blocked":
+            self.ui.warning(detail)
+        elif kind == "task_failed":
+            self.ui.error(detail)
+        elif kind == "final_verify":
+            self.ui.dim("  final verification…")
+            if flow is not None:
+                flow.set_activity("Verifying the project (tests / build)")
+        elif kind in ("retry", "continue"):
+            self.ui.dim(f"  {detail}")
+        if flow is not None and session is not None:
+            flow.note_call(session.model_calls)
+        state = {
+            "session_paused": "paused",
+            "session_cancelled": "cancelled",
+            "session_failed": "failed",
+            "session_completed": "completed",
+        }.get(kind)
+        if flow is not None and state is not None:
+            if session is not None:
+                flow.attach_plan(session.graph)  # final, real plan state
+            flow.set_state(state)
+
+
 def _advance(lc, method: str) -> None:
     """Best-effort lifecycle transition around one turn.
 
@@ -340,6 +415,59 @@ def _advance(lc, method: str) -> None:
         getattr(lc, method)()
     except LifecycleError:
         _log.debug("lifecycle transition %s skipped", method)
+
+
+def _codemode_enabled() -> bool:
+    """Whether Code Mode is active (the persistent-session path)."""
+    try:
+        from . import codemode_state as _cms
+
+        state = _cms.codemode_state()
+        return bool(state.enabled and state.workspace is not None)
+    except Exception:
+        return False
+
+
+def resume_codemode_session(ui: UI, config: AppConfig, history=None) -> bool:
+    """Continue a paused/checkpointed Code Mode session (used by /resume).
+
+    Returns whether a session was actually resumed. The agent is rebuilt for
+    the current config (exactly as a fresh turn would), so a resume after a
+    provider or permission change still runs with the live settings.
+    """
+    from .core import session as session_mod
+    from .core.session import CodeSession
+
+    workspace, store = _codemode_workspace()
+    if store is None:
+        return False
+    agent = _make_agent(ui, config, _TaskPresenter(ui))
+    presenter = agent_presenter(agent)
+    session = CodeSession.resume(
+        agent,
+        store=store,
+        workspace=workspace,
+        on_event=presenter.on_session_event if presenter is not None else None,
+    )
+    if session is None:
+        return False
+    session.control.clear()
+    _handle_codemode(
+        ui,
+        agent,
+        history if history is not None else HistoryStore(provider_id=config.provider),
+        session.request,
+        presenter,
+        session=session,
+    )
+    session_mod.set_current_session(None)
+    return True
+
+
+def agent_presenter(agent: AgentEngine) -> _TaskPresenter | None:
+    """The presenter an engine was built with (used by /resume)."""
+    presenter = getattr(agent, "presenter", None)
+    return presenter if isinstance(presenter, _TaskPresenter) else None
 
 
 def _task_mode_label(config: AppConfig) -> str:
@@ -370,6 +498,146 @@ def _save_codemode_summary(agent: AgentEngine, text: str, outcome: str) -> None:
         pass
 
 
+def _codemode_workspace():
+    """The active Code Mode workspace + store, or (CWD, None) when unavailable."""
+    try:
+        from . import codemode_state as _cms
+
+        state = _cms.codemode_state()
+        if state.enabled and state.workspace is not None:
+            return state.workspace, state.store
+    except Exception:
+        _log.exception("could not read the Code Mode workspace")
+    from pathlib import Path
+
+    return Path.cwd(), None
+
+
+def _handle_codemode(
+    ui: UI,
+    agent: AgentEngine,
+    history: HistoryStore,
+    text: str,
+    presenter: _TaskPresenter | None = None,
+    *,
+    session=None,
+) -> None:
+    """Run one persistent Code Mode session: plan → tasks → verification.
+
+    Unlike a single agent turn, this keeps working until every planned task is
+    verified (or the session is paused, cancelled, or blocked), then runs final
+    verification. The task view shows the plan and real progress, and the CLI
+    is ready for the next task in every outcome.
+    """
+    from .core import session as session_mod
+    from .core.session import CodeSession, SessionStatus
+
+    lc = lifecycle()
+    workspace, store = _codemode_workspace()
+    flow = TaskFlow.for_ui(ui, mode_label="Code Mode", task=text)
+    if presenter is not None:
+        presenter.flow = flow
+    if flow is not None:
+        flow.begin()
+        flow.start()
+
+    if session is None:
+        session = CodeSession(
+            agent,
+            workspace=workspace,
+            request=text,
+            store=store,
+            on_event=presenter.on_session_event if presenter is not None else None,
+        )
+    elif presenter is not None:
+        session.set_observer(presenter.on_session_event)
+
+    session_mod.set_current_session(session)
+    status = SessionStatus.IDLE
+    try:
+        _advance(lc, "to_executing")
+        status = session.run()
+        _advance(lc, "to_verifying")
+    except KeyboardInterrupt:
+        session_mod.stop(session)
+        status = SessionStatus.CANCELLED
+        session.reason = "cancelled by the user"
+    except Exception as exc:  # an engine bug must not kill the session either
+        status = SessionStatus.FAILED
+        session.reason = f"{type(exc).__name__}: {exc}"
+        _log.exception("code mode session failed")
+    finally:
+        if presenter is not None:
+            presenter.flow = None
+
+    if session.store is not None and status is not SessionStatus.PAUSED:
+        _save_codemode_summary(agent, text, session.reason or status.value)
+
+    if status is SessionStatus.COMPLETED:
+        _advance(lc, "to_responding")
+        history.save(agent.transcript)
+        _report_session_summary(ui, session)
+        if flow is not None:
+            flow.finish("completed")
+        return
+
+    if status is SessionStatus.PAUSED:
+        # State is preserved and checkpointed: /resume continues this session.
+        if flow is not None:
+            flow.set_state("paused")
+            flow.stop()
+        ui.warning("Session paused — state saved. Send /resume to continue.")
+        session_mod.set_current_session(session)
+        return
+
+    session_mod.set_current_session(None)
+    if status is SessionStatus.CANCELLED:
+        ui.blank()
+        # v7.1.0: state is checkpointed on the way out, so say so — the session
+        # is resumable rather than lost (the terminal itself stays open).
+        ui.dim(
+            "(session stopped — the plan, completed work and the project files "
+            "were kept; /resume continues from the checkpoint)"
+        )
+        if flow is not None:
+            flow.finish("cancelled")
+        return
+    reason = session.reason or "the session could not finish the plan"
+    ui.error(reason)
+    if flow is not None:
+        flow.finish("failed", reason)
+
+
+def _report_session_summary(ui: UI, session) -> None:
+    """The final block: the evidence, in one compact summary (v7.1.0).
+
+    Completion is evidence-gated, so the closing block reports the evidence
+    itself rather than a restatement of the model's replies: the verification
+    result, the tests that actually ran, the commands that actually succeeded,
+    and the files the engine really touched. Lines that have nothing to report
+    are omitted instead of being filled in with a placeholder.
+    """
+    graph = session.graph
+    done, total = graph.progress()
+    ui.success(f"Project completed — {done}/{total} tasks verified")
+    evidence = session.session_evidence
+    if evidence.tests:
+        # What matters is the final state: the last test run passed.
+        passed = evidence.tests[-1].ok
+        ui.dim(f"  ✓ Verification: {'accepted' if passed else 'tests NOT passing'}")
+        ui.dim(f"  ✓ Tests: {'passed' if passed else 'FAILED'}")
+    else:
+        ui.dim("  ✓ Verification: accepted (no test run in this project)")
+    if session.state.changed_files:
+        ui.dim(f"  ✓ Files: {len(session.state.changed_files)} affected")
+    commands = evidence.commands
+    if commands:
+        ok = sum(1 for record in commands if record.ok)
+        ui.dim(f"  ✓ Commands: {ok}/{len(commands)} ok")
+    if session.state.inspected:
+        ui.dim(f"  • Inspected: {len(session.state.inspected)} item(s)")
+
+
 def _handle_agent(
     ui: UI,
     agent: AgentEngine,
@@ -388,6 +656,10 @@ def _handle_agent(
     guarantees the lifecycle returns to IDLE and the REPL keeps prompting, and
     the explicit task-flow finish line always says the CLI is ready for more.
     """
+    if _codemode_enabled():
+        _handle_codemode(ui, agent, history, text, presenter)
+        return
+
     lc = lifecycle()
     flow = TaskFlow.for_ui(
         ui, mode_label=_task_mode_label(agent.config), task=text
@@ -475,12 +747,15 @@ def _make_agent(
     # Live terminal output: a compact echo of what a running command prints.
     permissions.on_output = presenter.on_output
 
-    return AgentEngine(
+    engine = AgentEngine(
         config,
         permissions,
         on_event=presenter.on_event,
         on_step=presenter.on_step,
     )
+    # Attached so /resume can continue a paused session with the same view.
+    engine.presenter = presenter  # type: ignore[attr-defined]
+    return engine
 
 
 def _make_action_gate(ui: UI):

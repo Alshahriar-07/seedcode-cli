@@ -75,7 +75,7 @@ if not exist "%ICON%" (
 echo [OK] Stage 0 complete: Seed Code icon and wizard art verified.
 
 REM ==========================================================================
-REM  STAGE 0b - embedded default API key (v6.2.5 out-of-the-box behavior)
+REM  STAGE 0b - embedded default API key (v7.1.0 out-of-the-box behavior)
 REM  Consumes the local .env (never printed) and generates the git-ignored
 REM  seedcode\_default_key.py that ships inside the frozen exe. A checkout
 REM  without OPENROUTER_API_KEY in .env builds a normal (setup-required)

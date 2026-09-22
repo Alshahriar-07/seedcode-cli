@@ -1,10 +1,12 @@
-"""/status — the live runtime state of the current session (v6.2.5).
+"""/status — the live runtime state of the current session (v7.1.0).
 
 One panel, every value read from real application state: the active provider
 and its backend, the selected model, the current mode (Chat / Assist / Code),
-the Code Mode workspace, the provider connection status, and where config and
-project memory live. Nothing here is hardcoded or fabricated — a status of
-"Not checked" means exactly that.
+the Code Mode session (its state, verified progress and whether a stopped one
+can be resumed), the workspace, the provider connection status, and where
+config and project memory live. Nothing here is hardcoded or fabricated — a
+status of "Not checked" means exactly that, and no session row is drawn when
+no session exists.
 """
 
 from __future__ import annotations
@@ -33,6 +35,44 @@ def mode_label(config) -> str:
 
 # Backward-compatible private name.
 _mode_label = mode_label
+
+
+def session_label(config) -> str | None:
+    """The Code Mode session state, when there is one to report (v7.1.0).
+
+    Reads the live session first, then the persisted checkpoint, so a stopped
+    session still shows that it is resumable instead of disappearing. Returns
+    ``None`` when there is genuinely nothing to report — never a placeholder
+    for a session that does not exist.
+    """
+    try:
+        from ..core import session as session_mod
+
+        live = session_mod.current_session()
+    except Exception:
+        live = None
+    if live is not None:
+        graph = getattr(live, "graph", None)
+        done, total = graph.progress() if graph is not None else (0, 0)
+        status = getattr(getattr(live, "status", None), "value", "running")
+        active = graph.active() if graph is not None else None
+        where = f" — Task {active.id}/{total}" if active is not None else ""
+        return f"{str(status).upper()} ({done}/{total} verified){where}"
+
+    state = codemode_state()
+    if not state.enabled or state.store is None:
+        return None
+    try:
+        checkpoint = state.store.load_checkpoint()
+    except Exception:
+        return None
+    if not checkpoint:
+        return None
+    progress = checkpoint.get("progress") or {}
+    done = int(progress.get("completed") or 0)
+    total = int(progress.get("total") or 0)
+    status = str(checkpoint.get("status") or "unknown").upper()
+    return f"{status} ({done}/{total} verified) — resumable with /resume"
 
 
 def _connection_label(config) -> str:
@@ -79,6 +119,9 @@ def _status(ctx: CommandContext, arg: str) -> CommandResult:
     table.add_row("API Key", _api_key_label(config, provider))
     table.add_row("Model", config.model or "(none — run /model)")
     table.add_row("Mode", mode_label(config))
+    session = session_label(config)
+    if session is not None:
+        table.add_row("Session", session)
     table.add_row("Status", _connection_label(config))
 
     terminal = detect_terminal()

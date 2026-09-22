@@ -8,6 +8,7 @@ one place. Business logic lives elsewhere and calls into these helpers.
 
 from __future__ import annotations
 
+import io
 from contextlib import contextmanager
 from typing import Iterator
 
@@ -17,7 +18,9 @@ from rich.panel import Panel
 from rich.spinner import Spinner
 from rich.text import Text
 
+from .. import APP_NAME, TAGLINE, __version__
 from ..core.models import AppConfig
+from ..utils.text import safe_text
 from .dashboard import render_dashboard
 from .reference import render_command_hint
 from .renderer import StreamRenderer
@@ -64,10 +67,54 @@ class UI:
 
     # --- primitives --------------------------------------------------------
     def print(self, *args, **kwargs) -> None:
-        self.console.print(*args, **kwargs)
+        """Print to the console, with plain-string surrogates neutralised.
+
+        v7.1.0: a lone surrogate anywhere in displayed text would raise
+        ``UnicodeEncodeError: surrogates not allowed`` inside Rich. Strings are
+        normalized here; Rich renderables (Text/Table/Panel) are left to their
+        own construction, which is already normalized at the data boundary.
+        """
+        self._emit(
+            *(safe_text(arg) if isinstance(arg, str) else arg for arg in args),
+            **kwargs,
+        )
+
+    def _emit(self, *args, **kwargs) -> None:
+        """Print through Rich, degrading to ASCII instead of ever raising.
+
+        A console whose stream cannot encode a character (a raster-font cmd.exe
+        on a legacy code page, a redirected cp1252 stream) makes Rich raise
+        ``UnicodeEncodeError`` mid-task. That must never end a session, so the
+        frame is re-rendered as plain text with unencodable characters
+        replaced. Display code is never allowed to break the work.
+        """
+        try:
+            self.console.print(*args, **kwargs)
+            return
+        except UnicodeError:
+            pass
+        except Exception:
+            return  # a rendering bug must not stop a task either
+        try:
+            buffer = io.StringIO()
+            probe = Console(
+                file=buffer,
+                width=self.console.size.width,
+                legacy_windows=self.console.legacy_windows,
+                no_color=True,
+            )
+            probe.print(*args, **kwargs)
+            encoding = getattr(getattr(self.console, "file", None), "encoding", None)
+            text = buffer.getvalue()
+            if encoding:
+                text = text.encode(encoding, "replace").decode(encoding, "replace")
+            self.console.file.write(text)  # type: ignore[union-attr]
+            self.console.file.flush()  # type: ignore[union-attr]
+        except Exception:
+            pass
 
     def blank(self) -> None:
-        self.console.print()
+        self._emit()
 
     # --- external live displays -------------------------------------------
     def register_live(self, live) -> None:
@@ -94,8 +141,13 @@ class UI:
         the brand is plain text. On a standard 80x24 terminal the panel and
         the prompt fit with room to spare.
         """
-        render_dashboard(self.console, config)
-        render_command_hint(self.console)
+        try:
+            render_dashboard(self.console, config)
+            render_command_hint(self.console)
+        except UnicodeError:
+            # A console that cannot encode the panel glyphs still needs a
+            # banner: degrade to plain text rather than failing startup.
+            self._emit(f"{APP_NAME} CLI v{__version__} — {TAGLINE}")
 
     def statusbar(self, config: AppConfig) -> None:
         """One-line session summary: provider · model · mode · status.
@@ -105,7 +157,7 @@ class UI:
         """
         from .dashboard import status_line
 
-        self.console.print(status_line(self.console, config))
+        self._emit(status_line(self.console, config))
 
     # --- chat rendering ----------------------------------------------------
     @contextmanager
@@ -123,7 +175,7 @@ class UI:
 
     @contextmanager
     def streaming(self) -> Iterator["StreamRenderer"]:
-        """Provide a live, incrementally-updating markdown renderer."""
+        """Live markdown renderer; a console encoding failure degrades to text."""
         renderer = StreamRenderer(self.console)
         try:
             with Live(
@@ -137,27 +189,31 @@ class UI:
                 # Final frame: show any tokens the throttle had not yet drawn.
                 renderer.flush()
             self.console.print()
+        except UnicodeError:
+            # Legacy console that cannot encode the streamed text: emit it as
+            # plain, unencodable characters replaced — never abort the answer.
+            self._emit(renderer.text)
         finally:
             pass
 
     # --- messaging ---------------------------------------------------------
     def info(self, message: str) -> None:
-        self.console.print(Text(message, style="seed.text"))
+        self._emit(Text(safe_text(message), style="seed.text"))
 
     def dim(self, message: str) -> None:
-        self.console.print(Text(message, style="seed.dim"))
+        self._emit(Text(safe_text(message), style="seed.dim"))
 
     def success(self, message: str) -> None:
-        self.console.print(Text(f"{self._ok_mark} {message}", style="seed.success"))
+        self._emit(Text(f"{self._ok_mark} {safe_text(message)}", style="seed.success"))
 
     def warning(self, message: str) -> None:
-        self.console.print(Text(f"! {message}", style="seed.warning"))
+        self._emit(Text(f"! {safe_text(message)}", style="seed.warning"))
 
     def error(self, message: str) -> None:
-        self.console.print(Text(f"{self._err_mark} {message}", style="seed.error"))
+        self._emit(Text(f"{self._err_mark} {safe_text(message)}", style="seed.error"))
 
     def panel(self, body, title: str | None = None) -> None:
-        self.console.print(
+        self._emit(
             Panel(
                 body,
                 title=title,
@@ -183,8 +239,8 @@ class UI:
             live.stop()
         try:
             body = Text()
-            body.append(f"{category_label}\n", style="seed.warning")
-            body.append(description, style="seed.text")
+            body.append(f"{safe_text(category_label)}\n", style="seed.warning")
+            body.append(safe_text(description), style="seed.text")
             self.console.print(
                 Panel(
                     body,

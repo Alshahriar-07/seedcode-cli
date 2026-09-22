@@ -19,6 +19,8 @@ from rich.console import Console
 from rich.live import Live
 from rich.markdown import Markdown
 
+from ..utils.text import safe_text
+
 # Match the UI's streaming Live refresh_per_second (15) — rendering faster
 # than the display refreshes is wasted work.
 _MIN_RENDER_INTERVAL_S = 1 / 15
@@ -42,19 +44,36 @@ class StreamRenderer:
         return Markdown(self._buffer or "", code_theme="ansi_dark")
 
     def feed(self, chunk: str) -> None:
-        self._buffer += chunk
+        # v7.1.0: a streamed chunk can split or carry a lone surrogate; the
+        # renderer normalizes it so the live frame (and the saved transcript)
+        # can always be encoded to the console.
+        self._buffer += safe_text(chunk)
         self._dirty = True
         now = time.monotonic()
         if self._live is not None and now - self._last_render >= _MIN_RENDER_INTERVAL_S:
-            self._live.update(self.renderable())
+            self._paint()
             self._last_render = now
-            self._dirty = False
 
     def flush(self) -> None:
         """Render any buffered-but-not-yet-shown tokens (final frame)."""
         if self._dirty and self._live is not None:
-            self._live.update(self.renderable())
+            self._paint()
             self._last_render = time.monotonic()
+
+    def _paint(self) -> None:
+        """Update the live frame; a console that cannot encode it never fails.
+
+        v7.1.0: a legacy console (or one that cannot encode a character in the
+        model's answer) makes Rich raise ``UnicodeEncodeError`` here. Display
+        must never abort the response, so the frame is simply skipped and the
+        final flush prints the answer through the UI's safe path.
+        """
+        try:
+            self._live.update(self.renderable())  # type: ignore[union-attr]
+            self._dirty = False
+        except UnicodeError:
+            self._dirty = True  # try again on the final frame
+        except Exception:
             self._dirty = False
 
     @property

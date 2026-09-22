@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 from .base import ToolResult, int_arg, register
 from .permissions import CATEGORY_DELETE
 from .textio import TextFile, read_text_file, write_text_file
+from ..utils.text import safe_text
 
 if TYPE_CHECKING:
     from .permissions import PermissionManager
@@ -76,7 +77,11 @@ def _read_file(perm: "PermissionManager", args: dict[str, Any]) -> ToolResult:
 def _write_file(perm: "PermissionManager", args: dict[str, Any]) -> ToolResult:
     path = perm.resolve(args["path"])
     perm.check_write(path)
-    content = str(args["content"])
+    # v7.1.0: a lone surrogate in model/tool output must not fail the write (or
+    # raise out of ``write_text``). It is repaired here and reported honestly.
+    raw_content = str(args["content"])
+    content = safe_text(raw_content)
+    repaired = content != raw_content
 
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -99,7 +104,12 @@ def _write_file(perm: "PermissionManager", args: dict[str, Any]) -> ToolResult:
             f"Write completed but verification failed: could not read {path}: {exc}"
         )
 
-    return ToolResult(True, f"Wrote {len(content)} chars to {path} (verified)")
+    note = (
+        " — invalid Unicode surrogates were replaced with U+FFFD"
+        if repaired
+        else ""
+    )
+    return ToolResult(True, f"Wrote {len(content)} chars to {path} (verified){note}")
 
 
 @register(
@@ -159,7 +169,7 @@ def _list_dir(perm: "PermissionManager", args: dict[str, Any]) -> ToolResult:
 def _append_file(perm: "PermissionManager", args: dict[str, Any]) -> ToolResult:
     path = perm.resolve(args["path"])
     perm.check_write(path)
-    content = str(args["content"])
+    content = safe_text(str(args["content"]))
     if not content:
         return ToolResult(False, "content is empty; nothing to append.")
 

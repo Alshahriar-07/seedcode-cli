@@ -29,7 +29,7 @@
 #ifdef AppVersionFromBuild
   #define MyAppVersion AppVersionFromBuild
 #else
-  #define MyAppVersion "6.2.5"
+  #define MyAppVersion "7.1.0"
 #endif
 ; Refuse to compile without the build outputs - packaging nothing (or a
 ; leftover) must fail loudly, not "succeed".

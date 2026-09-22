@@ -5,7 +5,7 @@
 > ### Faster. Smaller. Smarter. Workspace-aware.
 > *Plant ideas. Grow code.*
 
-Seed Code is a premium terminal-based AI coding assistant. v6.2.5 pairs
+Seed Code is a premium terminal-based AI coding assistant. v7.1.0 pairs
 streaming chat and permission-gated desktop control with **Code Mode** — a
 workspace-aware coding agent backed by persistent `.seedcode` project memory
 — behind a structured startup dashboard that carries the brand, the live
@@ -22,7 +22,7 @@ session state and the task flow, with no ASCII logo.
 - **Step-by-step tasks:** Code, Assist and Agent Mode show a live task flow
   (analyze → inspect → plan → implement → test → verify) that reflects what
   the agent really did, and hands the prompt back when the task ends.
-- **Version:** 6.2.5 (`seedcode --version`)
+- **Version:** 7.1.0 (`seedcode --version`)
 
 ## Installation
 
@@ -66,8 +66,8 @@ Python required) and both run the same CLI:
 
 | Download | What it is |
 | --- | --- |
-| `SeedCode-CLI-Setup-6.2.5.exe` | **Setup installer (recommended).** A wizard that installs to Program Files, adds Seed Code to the system `PATH`, creates a Start Menu shortcut with an optional desktop shortcut, verifies the installation before reporting success, and ships a clean uninstaller that never deletes your project data silently. |
-| `SeedCode-CLI-6.2.5-windows-x64.exe` | **Standalone executable.** A single portable `seedcode.exe` — no installation and no admin rights. The Windows IRM installer above downloads exactly this file. Run it directly from wherever you put it. |
+| `SeedCode-CLI-Setup-7.1.0.exe` | **Setup installer (recommended).** A wizard that installs to Program Files, adds Seed Code to the system `PATH`, creates a Start Menu shortcut with an optional desktop shortcut, verifies the installation before reporting success, and ships a clean uninstaller that never deletes your project data silently. |
+| `SeedCode-CLI-7.1.0-windows-x64.exe` | **Standalone executable.** A single portable `seedcode.exe` — no installation and no admin rights. The Windows IRM installer above downloads exactly this file. Run it directly from wherever you put it. |
 
 Both are published on the
 [Releases page](https://github.com/Alshahriar-07/seedcode-cli/releases) with
@@ -76,7 +76,7 @@ their SHA256 in `SHA256SUMS.txt`.
 After installing by any route:
 
 ```bash
-seedcode --version    # -> Seed Code CLI 6.2.5
+seedcode --version    # -> Seed Code CLI 7.1.0
 ```
 
 > **`seedcode` not recognized?** Open a *new* terminal. `PATH` changes only
@@ -105,7 +105,7 @@ logo is permanently gone (the brand is plain text); the layout, sections and
 status indicators stay:
 
 ```text
-╭─ Seed Code CLI v6.2.5 ───────────────────────────────────────────────────────────────────────╮
+╭─ Seed Code CLI v7.1.0 ───────────────────────────────────────────────────────────────────────╮
 │                                                                                              │
 │   Seed Code                                │ Seed Code  |  Eagox Studio                      │
 │   AI CODING AGENT                          │ Plant ideas. Grow code.                         │
@@ -217,6 +217,71 @@ targeted searches, reads only what it needs, plans, edits, runs a relevant
 command or test, and reports what changed. File operations stay inside the
 workspace root.
 
+### Persistent task execution (v7.1.0)
+
+Code Mode is a **long-running agent**, not one model call. A request becomes a
+plan (a task graph with dependencies and acceptance criteria), and the session
+runs task after task until each one is *verified*:
+
+```text
+Plan (3 tasks) → Task 1 → verify → Task 2 → verify → Task 3 → verify
+              → final verification → project complete
+```
+
+- **A response is not completion.** A task is only `COMPLETED` when its
+  acceptance criteria are satisfied by real evidence — files that exist, a
+  command that ran and exited 0, tests that passed, no unresolved error. A
+  model that says “done” while the tests fail is sent back to fix them.
+- **A task is a unit of work, not a model call.** Each task may take many
+  model/tool cycles: analyse → inspect → implement → run → fail → fix → re-run
+  → verify.
+- **Limits do not end a task.** An output/context limit continues the task with
+  another call; a temporary provider error retries with backoff; a repeated
+  identical failure stops with an explicit blocker instead of looping.
+- **State survives.** Every transition is checkpointed to
+  `.seedcode/checkpoints/`, so a pause, a crash or an API failure resumes from
+  the current task.
+
+```text
+/session   # the detailed view: session state + one row per task record
+/pause     # stop at the next safe boundary, keeping plan + files
+/resume    # continue from the checkpoint (current task, not from zero)
+/stop      # safely end the autonomous session
+```
+
+Ctrl+C stops the session the same way; nothing here closes an application or
+rolls back your files. A stopped session is **not** lost: the CLI says so and
+`/resume` continues from the checkpoint.
+
+Every task also keeps its own execution record — files inspected and affected,
+commands run with their outcome, tool calls, test results, errors, retries,
+timestamps and the verification result — and it is stored per task in
+`.seedcode/plan.json`, so a resume continues with the full per-task history.
+`/session` renders that record:
+
+```text
+State            RUNNING
+Progress         1/3 tasks verified
+Current task     2. Create database
+Action           Running pytest tests/db
+Model calls      12
+Tool calls       31
+Tests            passed (pytest -q)
+Commands         1/1 ok
+Files changed    1
+Files inspected  2
+Checkpoint       saved on pause/stop (see /resume)
+
+✓ 1  Setup project    verified 2 criteria  1 inspected; 1 file(s); 1/1 cmd ok; tests passed
+● 2  Create database  —                    no tool activity recorded
+○ 3  Add tests        —                    not started
+```
+
+`/status` carries the same state in one line
+(`Session   RUNNING (1/3 verified) — Task 2`), and a stopped one reports that it
+is resumable. A task row only ever shows what was observed — a task that did
+nothing reads `no tool activity recorded`, never a success.
+
 ### `.seedcode` project memory
 
 Enabling Code Mode creates a `.seedcode/` directory in the project root:
@@ -224,11 +289,13 @@ Enabling Code Mode creates a `.seedcode/` directory in the project root:
 ```text
 my-project/
 ├── .seedcode/
-│   ├── memory/      durable project knowledge (architecture, decisions…)
-│   ├── index/       per-file summaries + a file map (incremental, hashed)
-│   ├── context/     reusable project context (conventions, snippets)
-│   ├── sessions/    compact per-session summaries (never raw transcripts)
-│   └── config.json  safe project configuration
+│   ├── memory/       durable project knowledge (architecture, decisions…)
+│   ├── index/        per-file summaries + a file map (incremental, hashed)
+│   ├── context/      reusable project context (conventions, snippets)
+│   ├── sessions/     compact per-session summaries (never raw transcripts)
+│   ├── checkpoints/  resumable Code Mode session state
+│   ├── plan.json     the current task graph
+│   └── config.json   safe project configuration
 ├── src/
 └── ...
 ```
@@ -244,12 +311,34 @@ my-project/
 
 Every task in Code Mode, Assist Mode or Agent Mode is shown as a compact live
 flow, and each step changes state only when the work behind it really
-happened:
+happened. Code Mode shows the protocol header, the plan as a checklist, and a
+single live action line:
+
+```text
+╭─ SEEDCODE 7.1.0 • CODE MODE ────────────────╮
+│ ● RUNNING   Task 3/8   Build authentication │
+│   ████████████░░░░  72% • 4m 32s • 18 calls │
+│ → Running: pytest tests/auth                │
+╰─────────────────────────────────────────────╯
+✓ Setup project
+✓ Create database
+● Implement authentication
+○ Build dashboard
+○ Add tests
+```
+
+The action line is a real phase, not decoration: it shows the tool actually
+running (reading a file, editing one, running a command), and it switches to
+`Verifying acceptance criteria` / `Verifying the project (tests / build)` when
+the session moves into those phases. The panel re-fits itself on every refresh,
+so resizing the terminal mid-session cannot leave a panel wider than the
+screen — it degrades to a single status line when the space runs out.
+
+Assist Mode and Agent Mode keep the step-by-step flow:
 
 ```text
 Task  ·  Code Mode
 Fix authentication persistence
-────────────────────────────────────────────
 ✓ Analyze project  request understood
 ✓ Inspect files  read_file seedcode/config.py
 ✓ Plan implementation  I'll patch the persistence layer…
@@ -268,7 +357,20 @@ count:
 ```text
 ✓ Task completed
   2 file(s) changed: seedcode/config.py, seedcode/providers.py
-  Tests: 773 passed — pytest tests -q
+  Tests: 898 passed — pytest tests -q
+Ready for next task.
+```
+
+A whole Code Mode project closes with the evidence that verified it, not a
+restatement of the model's replies:
+
+```text
+✓ Project completed — 3/3 tasks verified
+  ✓ Verification: accepted
+  ✓ Tests: passed
+  ✓ Files: 4 affected
+  ✓ Commands: 7/7 ok
+  • Inspected: 12 item(s)
 Ready for next task.
 ```
 
@@ -315,6 +417,10 @@ The agent runs commands through the tool engine's `run_command` tool:
 | `/agent` | Enable or disable Assist Mode (alias `/assist`) |
 | `/codemode` | Workspace-aware Code Mode (`on` / `off` / `status`) |
 | `/workspace` | Show the active Code Mode workspace |
+| `/session` | Inspect the Code Mode session: state, evidence, per-task records |
+| `/pause` | Pause the running Code Mode session (state is kept) |
+| `/resume` | Resume a paused session from its checkpoint |
+| `/stop` | Safely stop the running Code Mode session |
 | `/permission` | View or set the Assist permission mode (alias `/permissions`) |
 | `/computer` | Show Computer Engine status and permissions |
 | `/screenshot` | Capture a screenshot |
@@ -348,6 +454,14 @@ drive keyboard/mouse with per-action verification. Waits are state-based:
 `open_app` polls for real window evidence instead of sleeping, verification
 pauses are short because state is re-read live, and screenshots are taken
 only when information is genuinely needed.
+
+**Applications stay open.** When Seed Code opens an application or a browser
+to do something for you ("play *this* song"), the app remains open when the
+task finishes. Closing is only ever done on an explicit request
+(`close_app` / `browser_close`); no teardown, retry, or cleanup path may close
+a window, a browser, or a tab behind your back. Internal cleanup (releasing
+mouse/keyboard control, closing DevTools sockets, dropping cached drivers) is
+unchanged, and Seed Code never closes its own terminal — `/exit` does that.
 
 ## Configuration and local data
 
@@ -415,21 +529,21 @@ stage fails loudly on a version mismatch, so a stale binary can never ship.
 
 Details: [`scripts/windows/README.md`](scripts/windows/README.md).
 
-### Release artifacts (v6.2.5)
+### Release artifacts (v7.1.0)
 
-Release: [v6.2.5](https://github.com/Alshahriar-07/seedcode-cli/releases/tag/v6.2.5)
+Release: [v7.1.0](https://github.com/Alshahriar-07/seedcode-cli/releases/tag/v7.1.0)
 
 | Artifact | Purpose |
 | --- | --- |
-| `SeedCode-CLI-Setup-6.2.5.exe` | Windows installer (Inno Setup) |
-| `SeedCode-CLI-6.2.5-windows-x64.exe` | Standalone Windows EXE — downloaded by the Windows IRM installer |
-| `seedcode_cli-6.2.5-py3-none-any.whl` | Python wheel — downloaded by the Linux IRM installer |
-| `seedcode_cli-6.2.5.tar.gz` | Python source distribution |
+| `SeedCode-CLI-Setup-7.1.0.exe` | Windows installer (Inno Setup) |
+| `SeedCode-CLI-7.1.0-windows-x64.exe` | Standalone Windows EXE — downloaded by the Windows IRM installer |
+| `seedcode_cli-7.1.0-py3-none-any.whl` | Python wheel — downloaded by the Linux IRM installer |
+| `seedcode_cli-7.1.0.tar.gz` | Python source distribution |
 | `SHA256SUMS.txt` | SHA256 checksums; verified by both installers |
 
-Built artifacts are collected in `dist/release/6.2.5/` during a release
+Built artifacts are collected in `dist/release/7.1.0/` during a release
 build. Publishing (GitHub Release) is a separate step; the remote installers
-read the release named `v6.2.5`.
+read the release named `v7.1.0`.
 
 ### The remote installers
 

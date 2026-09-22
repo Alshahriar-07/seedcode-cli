@@ -34,10 +34,11 @@ from typing import Any, Callable
 
 from .chat import ChatEngine, ChatError
 from .identity import build_system_prompt
-from .models import AppConfig, Message, ToolCallRecord
+from .models import AppConfig, Message, ToolCallRecord, clean_values
 from .project import detect_project
 from .providers import provider_label
 from .providers.base import TextDelta, ToolCallEvent, ToolSpec
+from .tasks import TurnEvidence
 from ..tools import (
     TOOL_REGISTRY,
     PermissionError_,
@@ -48,13 +49,28 @@ from ..tools import (
 )
 from ..tools.base import ToolResult, tool_specs
 from ..utils.logger import get_logger
+from ..utils.text import safe_text
 
 _log = get_logger("agent")
 
-# Hard bounds so a confused model can never loop forever.
+# Hard bounds so a confused model can never loop forever. These bound ONE
+# model/tool turn; they are not a task budget. A Code Mode task is driven by
+# the persistent session loop (seedcode.core.session), which keeps issuing
+# turns until the task verifies — so the Code Mode turn budget is generous by
+# design and its exhaustion continues the task instead of ending it.
 MAX_STEPS = 15
+CODEMODE_MAX_STEPS = 60
 _MAX_CONSECUTIVE_FAILURES = 3
 _MAX_CALLS_PER_STEP = 8
+# When the conversation grows past this, older turns are folded into one
+# summary message so context stays bounded without losing the working state.
+_HISTORY_COMPACT_AT = 60
+_HISTORY_KEEP_RECENT = 30
+_CONTINUE_NOTE = (
+    "[SYSTEM] This turn reached its step budget. The task is NOT finished. "
+    "The session will continue it in the next model call — summarise nothing "
+    "and keep working when prompted."
+)
 
 _TOOL_BLOCK = re.compile(r"```tool\s*\n(.*?)```", re.DOTALL)
 
@@ -65,13 +81,30 @@ _AGENT_PREAMBLE = (
 
 _CODEMODE_PREAMBLE = (
     "\n\nCODE MODE is ON: {workspace} is the project workspace and all work "
-    "stays inside it. Follow the coding-agent workflow: consult the project "
-    "memory and index first (.seedcode/), find the relevant files with "
-    "search_text/find_files, read only what you need, plan, edit, then verify "
-    "with a project command or test run and report the changes you made. "
-    "Never read the whole repository when a targeted search will do. When you "
-    "learn something durable about this project (architecture, conventions, "
-    "decisions), mention that it should be noted in .seedcode memory."
+    "stays inside it. You are a persistent software-engineering agent, not a "
+    "chat assistant: one model response NEVER completes a task. Work the "
+    "professional loop — UNDERSTAND, PLAN, IMPLEMENT, RUN, VERIFY, DEBUG, "
+    "IMPROVE, TEST, COMPLETE.\n"
+    "1. The session hands you one task at a time with its acceptance "
+    "criteria. A task is finished only when those criteria are satisfied by "
+    "real evidence: files that exist, commands that really ran and exited 0, "
+    "tests that passed, and no unresolved error. Saying \"done\" proves "
+    "nothing; verify it, then finish the reply with 'TASK <id> COMPLETE'.\n"
+    "2. If the criteria are not met yet, keep going in the SAME reply: "
+    "inspect the code, make the change, run the command or test, read the "
+    "result, fix what fails, re-run. If a turn ends before you finish, say "
+    "'CONTINUE TASK <id>' and give the next concrete action — the session "
+    "will call you again with the state rebuilt.\n"
+    "3. Never rewrite a file you have not read; prefer targeted edits over "
+    "recreating a project. Consult the project memory and index first "
+    "(.seedcode/), and use search_text/find_files instead of reading "
+    "everything.\n"
+    "4. A tool result is part of the loop, not the end of it: read it, "
+    "decide, act again. A failed command is information to fix, never a "
+    "reason to stop. Do not ask for permission for normal coding work; ask "
+    "only when genuinely blocked.\n"
+    "5. When you learn something durable about this project "
+    "(architecture, conventions, decisions), note it in .seedcode memory."
 )
 
 _TEXT_PROTOCOL_INSTRUCTIONS = (
@@ -122,6 +155,34 @@ _DESKTOP_PROMPT_HEADER = (
 )
 
 
+def _inspection_label(call: ToolCall) -> str:
+    """A short label for what a read-only tool looked at (v7.1.0).
+
+    A file path when the call names one, otherwise the query/pattern it
+    searched for. Text is normalized by the caller's evidence recorder, so a
+    lone surrogate cannot reach the checkpoint.
+    """
+    args = call.args or {}
+    for key in ("path", "source", "file", "target"):
+        value = args.get(key)
+        if value:
+            return safe_text(str(value))[:160]
+    for key in ("pattern", "query", "command"):
+        value = args.get(key)
+        if value:
+            return f"{call.tool}: {safe_text(str(value))[:120]}"
+    return call.tool
+
+
+def _SafeObserver(observer):
+    """Wrap an ``on_event`` callback so its detail text is always encodable."""
+
+    def wrapped(kind: str, detail: str) -> None:
+        observer(kind, safe_text(detail))
+
+    return wrapped
+
+
 def _desktop_prompt_section(max_level) -> str:
     """The Computer Engine prompt block, including the live skill catalog."""
     try:
@@ -163,7 +224,10 @@ def parse_tool_calls(text: str) -> list[ToolCall]:
         if not isinstance(args, dict):
             calls.append(ToolCall(data["tool"], {}, error='"args" must be a JSON object.'))
             continue
-        calls.append(ToolCall(data["tool"].strip().lower(), args))
+        # v7.1.0: arguments are normalized before execution, so a lone
+        # surrogate in a model-supplied path or body can never reach a file
+        # write, a shell command, or an HTTP request.
+        calls.append(ToolCall(data["tool"].strip().lower(), clean_values(args)))
     return calls
 
 
@@ -235,14 +299,28 @@ class AgentEngine(ChatEngine):
         permissions: PermissionManager,
         on_event: Callable[[str, str], None] | None = None,
         on_step: Callable[[dict[str, Any]], None] | None = None,
+        max_steps: int | None = None,
     ) -> None:
         super().__init__(config)
         self.permissions = permissions
-        self._on_event = on_event or (lambda kind, detail: None)
+        # Narrated details come straight from model/tool text; normalize them at
+        # the observer boundary so no embedder (UI, tests, log) can receive text
+        # that fails to encode (v7.1.0).
+        self._on_event = _SafeObserver(on_event) if on_event else (lambda k, d: None)
         self._on_step = on_step or (lambda payload: None)
         # Native tool calling: None = untried, False = fell back to the text
         # protocol for this session, True = at least one native step worked.
         self._native: bool | None = None
+        # Evidence observed during the turn in flight (v7.1.0): the persistent
+        # Code Mode session verifies tasks against this, never against the
+        # model's own claim of success.
+        self.last_evidence = TurnEvidence()
+        # Code Mode gets a generous per-turn budget (the session continues the
+        # task afterwards); callers may override it explicitly.
+        if max_steps is not None:
+            self.max_steps = max(1, int(max_steps))
+        else:
+            self.max_steps = CODEMODE_MAX_STEPS if self._codemode_active() else MAX_STEPS
         self.messages[0] = Message(role="system", content=self._system_prompt())
 
     def _system_prompt(self) -> str:
@@ -400,12 +478,17 @@ class AgentEngine(ChatEngine):
 
         Raises :class:`ChatError` only when the provider itself fails; tool
         failures are fed back to the model as retryable results.
+
+        v7.1.0: :attr:`last_evidence` is reset here and filled from the tool
+        activity of this turn, and exhausting the turn's step budget marks the
+        evidence ``incomplete`` instead of ending a Code Mode task.
         """
+        self.last_evidence = TurnEvidence()
         self.add_user(user_text)
         failures = 0
 
         step = 0
-        while step < MAX_STEPS:
+        while step < self.max_steps:
             step += 1
             if self._native_active():
                 outcome, payload = self._native_step(failures)
@@ -421,14 +504,90 @@ class AgentEngine(ChatEngine):
                 outcome, payload = self._text_step(failures)
 
             if outcome == "final":
-                return payload or "Done."
+                # v7.1.0: the final text is normalized before it leaves the
+                # engine (a lone surrogate must never reach the console, the
+                # history file, or a JSON request).
+                return safe_text(payload) or "Done."
             failures = failures + 1 if outcome == "failed" else 0
 
-        self._on_event("limit", f"step budget ({MAX_STEPS}) reached")
+        self._on_event("limit", f"step budget ({self.max_steps}) reached")
+        self.last_evidence.incomplete = True
+        if self._codemode_active():
+            # Not a task outcome: the persistent session issues another call.
+            self.last_evidence.note_error(_CONTINUE_NOTE)
+            return (
+                "This turn reached its step budget; the task continues in the "
+                "next cycle with the state rebuilt."
+            )
         return (
             "I hit the agent step limit before finishing. Progress so far is "
             "applied; ask me to continue to keep going."
         )
+
+    # --- context management --------------------------------------------------
+    def compact_history(
+        self,
+        *,
+        compact_at: int | None = None,
+        keep_recent: int = _HISTORY_KEEP_RECENT,
+    ) -> bool:
+        """Fold older history into one summary message; True when it compacted.
+
+        Code Mode sessions run for many cycles, and unlimited raw history would
+        grow the context window without limit. The *working state* is what the
+        session rebuilds into each call, so raw history beyond the recent
+        window is replaced by a short structural summary. The cut is always made
+        at a safe boundary (never between an assistant's tool call and its tool
+        results), so strict providers still receive paired messages.
+        """
+        threshold = compact_at or _HISTORY_COMPACT_AT
+        if len(self.messages) <= threshold:
+            return False
+
+        system = self.messages[0] if self.messages and self.messages[0].role == "system" else None
+        body = self.messages[1:] if system is not None else list(self.messages)
+        keep = max(4, min(keep_recent, len(body)))
+        cut = len(body) - keep
+        # Never split a tool result from the assistant call that produced it.
+        while cut < len(body) and body[cut].role == "tool":
+            cut += 1
+        if cut <= 0:
+            return False
+
+        dropped = body[:cut]
+        kept = body[cut:]
+        summary = self._history_summary(dropped)
+        self.messages = ([system] if system is not None else []) + [
+            Message(role="user", content=summary)
+        ] + kept
+        _log.info("compacted %d message(s) into a session summary", len(dropped))
+        return True
+
+    def _history_summary(self, dropped: list[Message]) -> str:
+        """A compact, factual summary of the turns being dropped."""
+        files: list[str] = []
+        commands: list[str] = []
+        for message in dropped:
+            if message.role != "assistant" or not message.tool_calls:
+                continue
+            for call in message.tool_calls:
+                args = call.arguments or {}
+                path = str(args.get("path") or args.get("source") or "").strip()
+                if path and path not in files:
+                    files.append(path)
+                command = str(args.get("command") or "").strip()
+                if command and command not in commands:
+                    commands.append(command)
+        lines = [
+            "[SESSION SUMMARY] Earlier turns were compacted to keep the context "
+            "bounded. Nothing here replaces the acceptance criteria."
+        ]
+        if files:
+            lines.append("Files touched: " + ", ".join(files[-20:]))
+        if commands:
+            lines.append("Commands already run: " + "; ".join(commands[-10:]))
+        lines.append(f"Turns compacted: {len(dropped)}")
+        return "\n".join(lines)
 
     # --- native path ---------------------------------------------------------
     def _native_step(self, failures: int) -> tuple[str, str | None]:
@@ -448,7 +607,7 @@ class AgentEngine(ChatEngine):
                     calls.append(
                         ToolCall(
                             tool=(event.name or "").strip().lower(),
-                            args=event.arguments,
+                            args=clean_values(event.arguments),
                             error=event.error,
                             call_id=event.id,
                         )
@@ -531,6 +690,7 @@ class AgentEngine(ChatEngine):
                 "\n\n[SYSTEM] Multiple consecutive steps failed. Stop calling "
                 "tools and summarise the problem for the user."
             )
+        self.compact_history()  # bounded context across many cycles
         _log.info("agent native step: %d call(s), failed=%s", len(calls), step_failed)
         return ("failed" if step_failed else "ok", None)
 
@@ -587,7 +747,36 @@ class AgentEngine(ChatEngine):
         self.messages.append(
             Message(role="user", content=feedback, images=self._drain_images())
         )
+        self.compact_history()  # bounded context across many cycles
         return ("failed" if step_failed else "ok", None)
+
+    def _record_evidence(self, call: ToolCall, result: ToolResult) -> None:
+        """Record what a tool really did, for task verification (v7.1.0).
+
+        Only observed facts go in: a mutating tool that succeeded names the file
+        it changed, a read-only tool names what it inspected, ``run_command``
+        records the command with its real exit status, and a failed call records
+        the error. Verification and the persistent session state are built from
+        these entries rather than from the model's description of them.
+        """
+        evidence = self.last_evidence
+        evidence.tools += 1
+        args = call.args or {}
+        if call.tool == "run_command":
+            evidence.note_command(str(args.get("command") or ""), result.ok, result.output)
+        elif result.ok:
+            tool = TOOL_REGISTRY.get(call.tool)
+            if tool is not None and tool.mutates:
+                for key in ("path", "source", "destination", "file"):
+                    value = args.get(key)
+                    if value:
+                        evidence.note_file(str(value))
+            else:
+                # Read-only tool: this is the "files inspected" half of the
+                # session context, so a resumed task knows what was looked at.
+                evidence.note_inspected(_inspection_label(call))
+        if not result.ok:
+            evidence.note_error(f"{call.tool}: {result.output.splitlines()[0][:200]}")
 
     def _limit_reached(self, step_failed: bool, failures: int) -> bool:
         """True when this failure crosses the consecutive-failure bound."""
@@ -622,7 +811,12 @@ class AgentEngine(ChatEngine):
     def _notify(self, phase: str, **fields: Any) -> None:
         """Report structured progress to the UI (a UI bug must never break a turn)."""
         try:
-            self._on_step({"phase": phase, **fields})
+            self._on_step(
+                {
+                    key: (safe_text(value) if isinstance(value, str) else value)
+                    for key, value in {"phase": phase, **fields}.items()
+                }
+            )
         except Exception:
             _log.exception("step observer failed")
 
@@ -683,6 +877,7 @@ class AgentEngine(ChatEngine):
         for index, call in enumerate(calls):
             if call.error:
                 any_failed = True
+                self.last_evidence.note_error(call.error)
                 results.append(f"[ERROR] {call.error}")
                 self._on_event("error", call.error)
                 self._notify(
@@ -693,6 +888,7 @@ class AgentEngine(ChatEngine):
             result = outcomes[index]
             if not result.ok:
                 any_failed = True
+            self._record_evidence(call, result)
             self._on_event("result" if result.ok else "error", result.output[:200])
             self._notify(
                 "tool_done", name=call.tool, args=call.args, ok=result.ok,

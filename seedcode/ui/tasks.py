@@ -1,4 +1,4 @@
-"""Live, step-by-step task progress for Code / Assist / Agent mode (v6.2.5).
+"""Live, step-by-step task progress for Code / Assist / Agent mode (v7.1.0).
 
 This is a *truthful* progress view, not a decoration. Every step state is
 driven by an event the engine actually produced:
@@ -20,6 +20,16 @@ A step that is still pending when the turn ends is reported as ``skipped``
 not happen. Failed tasks and their reason stay on screen, and the flow always
 ends by returning control to the CLI prompt — nothing here can end the
 process.
+
+v7.1.0 layout (compact, professional):
+
+* the compact Code Mode header (:mod:`.codemode_header`) replaces the tall
+  banner — state, ``Task n/N``, the active task, progress bar, elapsed time and
+  call count, in two rows;
+* the plan is rendered as a short checklist (``✓ ● ○ ✗``) when the persistent
+  Code Mode session attaches its task graph;
+* one live activity line (``→ Editing src/auth/session.ts``) replaces the old
+  stream of raw tool chatter, and no decorative rule or blank row is drawn.
 """
 
 from __future__ import annotations
@@ -27,6 +37,7 @@ from __future__ import annotations
 import enum
 import json
 import re
+import time
 from dataclasses import dataclass
 from typing import Any, Sequence
 
@@ -34,9 +45,17 @@ from rich.console import Console, Group, RenderableType
 from rich.live import Live
 from rich.text import Text
 
-from .layout import rule, supports_unicode
+from ..utils.text import safe_text
+from .codemode_header import (
+    HEADER_WIDTH,
+    CodeModeHeader,
+    fit_width,
+    live_action_line,
+    task_checklist,
+)
+from .layout import supports_unicode
 
-__all__ = ["TaskFlow", "TaskState", "TaskStep", "step_glyph"]
+__all__ = ["TaskFlow", "TaskState", "TaskStep", "activity_for", "step_glyph"]
 
 
 # --- states -----------------------------------------------------------------
@@ -125,7 +144,9 @@ _TEXT_CLIP = 68
 
 
 def _clip(value: str, limit: int = _TEXT_CLIP) -> str:
-    value = " ".join(str(value).split())
+    # v7.1.0: tool/command text reaching the view is normalized, so a lone
+    # surrogate in output can never raise while the task view is drawn.
+    value = " ".join(safe_text(value).split())
     if len(value) <= limit:
         return value
     return value[: max(limit - 1, 1)] + "…"
@@ -207,6 +228,7 @@ class TaskFlow:
         steps: Sequence[tuple[str, str]] | None = None,
         legacy: bool = False,
         ui=None,
+        code_mode: bool | None = None,
     ) -> None:
         self._console = console
         # The owning UI, when there is one: used only so a permission dialog
@@ -227,6 +249,23 @@ class TaskFlow:
         self._changed: set[str] = set()
         self._changes = 0
         self._finished = False
+        # --- v7.1.0 compact Code Mode view --------------------------------
+        self._code_mode = (
+            "code mode" in mode_label.lower() if code_mode is None else code_mode
+        )
+        width = console.size.width if isinstance(console, Console) else HEADER_WIDTH
+        self.header = (
+            CodeModeHeader(width=fit_width(width), legacy=legacy)
+            if self._code_mode
+            else None
+        )
+        self._plan_rows: list[tuple[str, str]] = []
+        self._plan_total = 0
+        self._plan_index = 0
+        self._activity = ""
+        self._calls = 0
+        self._state = "running"
+        self._started_at = 0.0
 
     # --- construction ------------------------------------------------------
     @classmethod
@@ -246,6 +285,92 @@ class TaskFlow:
             legacy=not supports_unicode(console),
             ui=ui,
         )
+
+    # --- v7.1.0: the plan, the live action line, and the header ------------
+    def attach_plan(self, graph) -> None:
+        """Bind a Code Mode task graph so the view shows the real plan."""
+        if graph is None:
+            return
+        self._plan_rows = list(graph.checklist())
+        self._plan_total = int(graph.total)
+        done, total = graph.progress()
+        self._plan_index = min(done + (0 if graph.all_completed() else 1), total)
+        self._sync_header()
+        self._refresh()
+
+    def set_state(self, state: str) -> None:
+        """Set the header's state label (running/paused/blocked/completed…)."""
+        self._state = state
+        self._sync_header()
+        self._refresh()
+
+    def set_activity(self, activity: str) -> None:
+        """Update the single live activity line."""
+        self._activity = " ".join(safe_text(activity).split())
+        self._sync_header()
+        self._refresh()
+
+    def set_progress(self, index: int, total: int, title: str = "") -> None:
+        """Point the header at the active task (1-based index)."""
+        self._plan_index = max(1, int(index))
+        self._plan_total = max(0, int(total))
+        if title:
+            self.task = _clip(title, 80)
+        self._sync_header()
+        self._refresh()
+
+    def note_call(self, count: int | None = None) -> None:
+        """Count a model/tool call (session-reported, never invented)."""
+        self._calls = (self._calls + 1) if count is None else max(0, int(count))
+        self._sync_header()
+        self._refresh()
+
+    def _progress_percent(self) -> int:
+        if self._plan_total <= 0:
+            done = sum(1 for s in self.steps if s.state is TaskState.COMPLETED)
+            total = len(self.steps) or 1
+            return int(round(100 * done / total))
+        done = sum(
+            1 for state, _ in self._plan_rows if str(getattr(state, "value", state)) == "completed"
+        )
+        return int(round(100 * done / self._plan_total))
+
+    def _sync_header(self) -> None:
+        header = self.header
+        if header is None:
+            return
+        # Re-fit on every refresh: a terminal resized mid-session must not leave
+        # a panel (or a progress bar) wider than the screen. Below the panel
+        # threshold the header degrades to its single-line form by itself.
+        if isinstance(self._console, Console):
+            header.width = fit_width(
+                getattr(self._console.size, "width", HEADER_WIDTH)
+            )
+        header.update(
+            state=self._state,
+            task_index=self._plan_index,
+            task_total=self._plan_total,
+            task_title=self.task,
+            percent=self._progress_percent(),
+            elapsed_s=self._elapsed(),
+            calls=self._calls,
+            activity=self._activity,
+        )
+
+    def _elapsed(self) -> float:
+        return max(0.0, time.monotonic() - self._started_at) if self._started_at else 0.0
+
+    def _header_lines(self) -> list[RenderableType]:
+        header = self.header
+        if header is None:
+            return []
+        self._sync_header()
+        return [header.renderable()]
+
+    def _plan_lines(self) -> list[Text]:
+        if not self._plan_rows:
+            return []
+        return task_checklist(self._plan_rows, legacy=self._legacy)
 
     # --- lookup ------------------------------------------------------------
     def failed_steps(self) -> list[TaskStep]:
@@ -273,7 +398,10 @@ class TaskFlow:
     # --- transitions -------------------------------------------------------
     def begin(self) -> "TaskFlow":
         """Mark the task started: 'analyze' is genuinely running now."""
+        self._started_at = time.monotonic()
+        self._state = "running"
         self.update("analyze", TaskState.RUNNING, "reading the request")
+        self._sync_header()
         return self
 
     def update(self, key: str, state: TaskState, detail: str = "") -> None:
@@ -299,6 +427,8 @@ class TaskFlow:
         """A tool really started; move the matching step to running."""
         args = args or {}
         self._args_in_flight.setdefault(name, []).append(args)
+        self._calls += 1
+        self.set_activity(activity_for(name, args))
         self._complete_analysis()
         if _is_inspect(name, args):
             self.update("inspect", TaskState.RUNNING, _describe(name, args))
@@ -357,12 +487,8 @@ class TaskFlow:
         head.append("Task", style="bold seed.primary")
         head.append(f"  ·  {self.mode_label}", style="seed.dim")
         lines: list[Text] = [head]
-        if self.task:
+        if self.task and not self._plan_rows:
             lines.append(Text(_clip(self.task, 80), style="seed.text", no_wrap=True))
-        # The task's rule uses the same primary tone as the dashboard border, so
-        # the flow reads as part of the CLI's visual language, not a separate
-        # debug pane.
-        lines.append(rule(legacy=self._legacy, style="seed.primary"))
         for item in self.steps:
             line = Text(no_wrap=True, overflow="crop")
             line.append(
@@ -378,17 +504,35 @@ class TaskFlow:
             lines.append(line)
         return lines
 
+    def _body_lines(self) -> list[Text]:
+        """The fine-grained step rows.
+
+        When the persistent session attached a plan, the checklist is the task
+        view — six extra step rows would only add height without adding
+        information, so they are dropped (v7.1.0 compact layout).
+        """
+        return [] if self._plan_rows else self._lines()
+
     def _renderable(self) -> RenderableType:
-        lines = self._lines()
+        parts: list[RenderableType] = []
+        parts.extend(self._header_lines())
+        parts.extend(self._plan_lines())
+        parts.extend(self._body_lines())
         # A finished flow never claims to be working: the live block drops the
         # activity footer once the outcome has been decided.
         if not self._finished:
+            if self.header is None:
+                # Without the header (Assist Mode) the activity line is the
+                # only place the live action shows.
+                activity = live_action_line(self._activity, legacy=self._legacy)
+                if activity is not None:
+                    parts.append(activity)
             running = next(
                 (item for item in self.steps if item.state is TaskState.RUNNING), None
             )
             label = f"Working… ({running.label.lower()})" if running else "Working…"
-            lines.append(Text(f"  {label}", style="seed.accent"))
-        return Group(*lines)
+            parts.append(Text(f"  {label}", style="seed.accent"))
+        return Group(*parts)
 
     def _refresh(self) -> None:
         if self._live is not None:
@@ -440,12 +584,22 @@ class TaskFlow:
         for item in self.steps:
             if item.state in (TaskState.PENDING, TaskState.RUNNING):
                 item.set(TaskState.SKIPPED, "not needed")
+        self._state = {
+            "completed": "completed",
+            "failed": "failed",
+            "cancelled": "cancelled",
+        }.get(outcome, outcome or "completed")
+        self._sync_header()
         self.stop()
         if self._console is None:
             return
         # Printed line by line, each guarded: an unencodable glyph on an exotic
         # console can skip that one line but never truncates the report.
-        for line in self._lines():
+        for renderable in self._header_lines():
+            self._print(renderable)
+        for line in self._plan_lines():
+            self._print(line)
+        for line in self._body_lines():
             self._print(line)
         self._print(self._outcome_line(outcome, reason))
         for extra in self._summary_lines(outcome):
@@ -500,6 +654,32 @@ class TaskFlow:
 
     def _ready_line(self, outcome: str) -> str:
         return "Ready for another task." if outcome == "failed" else "Ready for next task."
+
+
+def activity_for(name: str, args: dict[str, Any] | None = None) -> str:
+    """The single live action line for a tool call (v7.1.0 UX).
+
+    Verbs match what a software engineer would say out loud: editing a file,
+    running a command, running the tests, searching, fixing a failure.
+    """
+    args = args or {}
+    path = str(args.get("path") or args.get("source") or args.get("destination") or "")
+    command = str(args.get("command") or "")
+    if name in ("write_file", "edit_file", "patch_file", "apply_patch"):
+        return f"Editing {path or 'the project'}"
+    if name in ("read_file",):
+        return f"Reading {path or 'the project'}"
+    if name in ("search_text", "find_files", "project_index", "list_dir"):
+        target = str(args.get("pattern") or args.get("query") or args.get("path") or "")
+        return f"Searching {target or 'the project'}"
+    if name == "run_command":
+        return f"Running {_clip(command, 52)}" if command else "Running a command"
+    if name == "git":
+        return f"Running git {_clip(command, 44)}"
+    if name.startswith("computer_") or name.startswith("ui_") or name.startswith("desktop_"):
+        target = str(args.get("target") or args.get("skill") or "the desktop")
+        return f"Controlling {target}"
+    return _describe(name, args)
 
 
 def _describe(name: str, args: dict[str, Any]) -> str:

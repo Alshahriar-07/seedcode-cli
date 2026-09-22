@@ -287,10 +287,33 @@ class TestTabsAndHistory:
         assert cdp.closed == ["t1"]
         assert "closed" in out.detail
 
-    def test_close_tab_falls_back_to_the_keyboard(self):
+    def test_close_tab_refuses_when_it_would_close_the_browser(self):
+        """v7.1.0: a blind Ctrl+W may close the browser, so it is never sent.
+
+        Without DevTools the engine cannot tell the last tab from the tenth;
+        closing the last one closes the window, which is the auto-close bug
+        this release fixes. The workflow fails loudly instead.
+        """
+        import pytest
+
         controller = _FakeController()
-        _engine(controller=controller, cdp=_FakeCdp(available=False)).close_tab()
-        assert ("ctrl", "w") in controller.hotkeys
+        with pytest.raises(BrowserWorkflowError, match="close"):
+            _engine(controller=controller, cdp=_FakeCdp(available=False)).close_tab()
+        assert ("ctrl", "w") not in controller.hotkeys
+
+    def test_close_tab_refuses_on_the_last_tab_even_with_devtools(self):
+        """If the DevTools close did not take effect, never fall back to Ctrl+W
+        on what may be the browser's only tab."""
+        import pytest
+
+        cdp = _FakeCdp(
+            available=True, tabs=[_tab("t1", "YouTube", "https://youtube.com")]
+        )
+        cdp.close_tab = lambda target_id, port=None: False  # close did not take
+        controller = _FakeController()
+        with pytest.raises(BrowserWorkflowError):
+            _engine(controller=controller, cdp=cdp).close_tab()
+        assert ("ctrl", "w") not in controller.hotkeys
 
     def test_switch_tab_matches_on_title(self):
         tabs = [_tab("t1", "YouTube", "https://youtube.com"),

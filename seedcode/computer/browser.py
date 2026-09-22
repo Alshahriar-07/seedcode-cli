@@ -139,6 +139,11 @@ def navigate(url: str, *, new_window: bool = False) -> str:
         raise BrowserError(
             f"Could not hand '{target}' to the default browser ({browser.name})."
         )
+    # v7.1.0: record that this browser is open because Seed Code opened it, so
+    # no cleanup path may close it afterwards.
+    from . import lifecycle_guard
+
+    lifecycle_guard.mark_launched(browser.name)
     _last_url = target
     return f"Opened {target} in {browser.name} (default browser)."
 
@@ -223,8 +228,15 @@ def get_current_browser() -> str:
 
 
 def close_browser() -> str:
-    """Close a visible browser window (best-effort, graceful)."""
+    """Close a visible browser window — an explicit request only.
+
+    v7.1.0: this is a *user-requested* action (the ``browser_close`` tool, or
+    the app's own command). It wraps itself in the lifecycle guard's explicit
+    intent so the close is legitimate, while any implicit path is refused.
+    """
     global _last_url
+    from . import lifecycle_guard
+
     title = _active_browser_title()
     if not title:
         _last_url = None
@@ -232,7 +244,8 @@ def close_browser() -> str:
     try:
         from . import windows as windows_driver
 
-        windows_driver.close_window(title)
+        with lifecycle_guard.explicit_close():
+            windows_driver.close_window(title)
     except Exception as exc:
         raise BrowserError(f"Could not close the browser window: {exc}")
     _last_url = None

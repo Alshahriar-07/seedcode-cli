@@ -7,7 +7,7 @@ branding; the brand is normal text.
 The panel is a fixed visual grid — the dimensional specification is the visual
 source of truth::
 
-    ╭─ Seed Code CLI v6.2.5 ───────────────────────────────────────────────────────────────────────╮
+    ╭─ Seed Code CLI v7.1.0 ───────────────────────────────────────────────────────────────────────╮
     │                                                                                              │
     │   Seed Code                                │ Seed Code  |  Eagox Studio                      │
     │   AI CODING AGENT                          │ Plant ideas. Grow code.                         │

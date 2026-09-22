@@ -1,4 +1,4 @@
-SEED CODE CLI v6.2.5
+SEED CODE CLI v7.1.0
 ====================
 
 Official Installation
@@ -14,4 +14,4 @@ Official Seed Code CLI releases are distributed through
 the IRM installer system and GitHub Releases.
 
 Version:
-6.2.5
+7.1.0

@@ -31,6 +31,7 @@ from typing import IO, TYPE_CHECKING, Any, Callable
 from .base import MAX_OUTPUT_CHARS, ToolResult, int_arg, register
 from .permissions import CATEGORY_SHELL
 from ..utils.terminal_env import run_command_shell
+from ..utils.text import safe_text
 
 if TYPE_CHECKING:
     from .permissions import PermissionManager
@@ -170,7 +171,9 @@ def run_command(
             if item is _EOF:
                 eof = True
                 continue
-            line = str(item)
+            # v7.1.0: a command that prints invalid bytes must never take the
+            # session down with a surrogate encode error — normalize per line.
+            line = safe_text(item)
             if collected < MAX_OUTPUT_CHARS:
                 chunks.append(line)
                 collected += len(line)

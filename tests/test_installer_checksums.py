@@ -1,4 +1,4 @@
-"""Installer checksum-parsing tests (v6.2.5 Windows + Linux installers).
+"""Installer checksum-parsing tests (v7.1.0 Windows + Linux installers).
 
 The installers verify the release artifact's SHA256 before anything reaches
 PATH, so the parser is security-critical: a lookup that misses refuses a valid
@@ -331,11 +331,34 @@ def test_windows_installer_never_skips_verification() -> None:
     assert verify_at < install_at
 
 
+def test_installers_verify_the_file_they_installed_not_one_on_path() -> None:
+    """An older `seedcode` earlier on PATH must never pass as this install.
+
+    Both installers verify the freshly installed binary by absolute path (the
+    "old executable still runs" failure mode this project hit before), and both
+    name a different `seedcode` that resolves earlier on PATH instead of
+    silently letting the stale copy win.
+    """
+    sh_text = SH_INSTALLER.read_text(encoding="utf-8")
+    ps_text = PS_INSTALLER.read_text(encoding="utf-8")
+
+    # Verified by absolute path, not through PATH.
+    assert 'INSTALLED_EXE="${INSTALL_DIR}/${BIN_NAME}"' in sh_text
+    assert '"$INSTALLED_EXE" --version' in sh_text
+    assert "(& $TargetExe --version" in ps_text
+
+    # ...and any copy that would shadow this one is reported explicitly.
+    assert "is earlier on PATH" in sh_text
+    assert "is earlier on PATH" in ps_text
+
+
 def test_installers_download_and_verify_the_documented_artifacts() -> None:
     sh_text = SH_INSTALLER.read_text(encoding="utf-8")
     ps_text = PS_INSTALLER.read_text(encoding="utf-8")
 
-    # Artifact names are part of the release contract (v6.2.5): do not rename.
+    # Artifact names are the release contract shared with
+    # scripts/windows/stage_release.py: they must not be renamed, because both
+    # installers look them up by exact name in SHA256SUMS.txt.
     assert "SeedCode-CLI-${VERSION}-${OS}-${ARCH}" in sh_text
     assert "seedcode_cli-${VERSION}-py3-none-any.whl" in sh_text
     assert "SHA256SUMS.txt" in sh_text and "SHA256SUMS.txt" in ps_text

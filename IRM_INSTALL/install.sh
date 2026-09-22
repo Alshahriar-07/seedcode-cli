@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Seed Code CLI v6.2.5 - official Linux/macOS remote installer.
+# Seed Code CLI v7.1.0 - official Linux/macOS remote installer.
 #
 # Usage (exactly as documented for remote install):
 #
@@ -14,13 +14,13 @@
 # Options (download-then-run form):
 #
 #     curl -fsSL https://seedcode-cli.vercel.app/install.sh -o install.sh
-#     bash install.sh --version 6.2.5 --no-path-update
+#     bash install.sh --version 7.1.0 --no-path-update
 #
 # This script never sees, stores, or prints an API key.
 
 set -euo pipefail
 
-VERSION="6.2.5"
+VERSION="7.1.0"
 NO_PATH_UPDATE=0
 FORCE=0
 REPO="Alshahriar-07/seedcode-cli"
@@ -56,7 +56,7 @@ die() {
 # --- arguments ---------------------------------------------------------------
 while [ $# -gt 0 ]; do
   case "$1" in
-    --version) [ $# -ge 2 ] || die "--version needs a value like 6.2.5"; VERSION="$2"; shift 2 ;;
+    --version) [ $# -ge 2 ] || die "--version needs a value like 7.1.0"; VERSION="$2"; shift 2 ;;
     --no-path-update) NO_PATH_UPDATE=1; shift ;;
     --force) FORCE=1; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -284,7 +284,17 @@ fi
 
 printf '\n'
 log "Verifying"
-if command -v "$BIN_NAME" >/dev/null 2>&1; then
+# Verify the file THIS run installed, by absolute path - a `seedcode` already
+# on PATH could be an older copy, and a stale binary must never be reported as
+# this install's success.
+INSTALLED_EXE="${INSTALL_DIR}/${BIN_NAME}"
+if [ -x "$INSTALLED_EXE" ]; then
+  REPORTED="$("$INSTALLED_EXE" --version 2>&1 | head -n1)"
+  case "$REPORTED" in
+    *"$VERSION"*) ok "seedcode --version  ->  ${REPORTED}" ;;
+    *) die "$INSTALLED_EXE reported '$REPORTED', which is not version ${VERSION}." ;;
+  esac
+elif command -v "$BIN_NAME" >/dev/null 2>&1; then
   REPORTED="$("$BIN_NAME" --version 2>&1 | head -n1)"
   case "$REPORTED" in
     *"$VERSION"*) ok "seedcode --version  ->  ${REPORTED}" ;;
@@ -292,6 +302,16 @@ if command -v "$BIN_NAME" >/dev/null 2>&1; then
   esac
 else
   die "Installed, but '${BIN_NAME}' is not on PATH yet. Add ${INSTALL_DIR} to PATH, then run: seedcode --version"
+fi
+
+# A different `seedcode` earlier on PATH keeps being invoked instead of the one
+# just installed (the "old executable still runs" failure mode). Say so out
+# loud instead of letting the user believe the upgrade took effect.
+RESOLVED="$(command -v "$BIN_NAME" 2>/dev/null || true)"
+if [ -n "$RESOLVED" ] && [ "$RESOLVED" != "$INSTALLED_EXE" ]; then
+  warn "Another '$BIN_NAME' is earlier on PATH: $RESOLVED"
+  warn "This install is: $INSTALLED_EXE"
+  warn "Remove the older copy, or run this one directly: $INSTALLED_EXE"
 fi
 
 printf '\n  Seed Code CLI %s is installed.\n\n' "$VERSION"

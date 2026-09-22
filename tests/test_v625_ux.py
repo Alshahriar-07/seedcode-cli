@@ -384,4 +384,4 @@ def test_version_flag_prints_machine_readable_version(monkeypatch, capsys) -> No
     cli.main()
     out = capsys.readouterr().out.strip()
     assert out == f"Seed Code CLI {__import__('seedcode').__version__}"
-    assert out.startswith("Seed Code CLI 6.2.5")
+    assert out.startswith("Seed Code CLI 7.1.0")

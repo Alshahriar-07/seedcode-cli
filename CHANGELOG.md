@@ -4,6 +4,84 @@ All notable changes to Seed Code CLI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [7.1.0] — 2026-09-22
+
+A Code Mode architecture release: Code Mode became a *persistent software-
+engineering agent* that drives a planned task graph through many model/tool
+cycles instead of stopping after one model response, the Code Mode view was
+redesigned into a compact professional header, and the desktop-control
+cleanup paths can no longer close applications the agent opened.
+
+### Code Mode
+
+- New task execution engine (`seedcode.core.tasks`): explicit task states
+  (`PENDING`, `RUNNING`, `VERIFYING`, `BLOCKED`, `RECOVERING`, `FAILED`,
+  `COMPLETED`, `CANCELLED`), dependencies between tasks, acceptance criteria,
+  and machine-checked verification (`file:`, `file: … | contains:`, `run:`,
+  `tests`, `no-errors`).
+- New persistent session engine (`seedcode.core.session`): plans the request
+  into a task graph, then runs task after task — each task may need many
+  model calls, tool calls, edits, command runs, failed attempts and repairs
+  before it is verified and completed. A model response is never treated as
+  proof of completion.
+- Continuous context: a compact working state (request, current task,
+  completed/remaining tasks, dependencies, changed files, commands, tests,
+  errors, blockers, acceptance criteria) is rebuilt for every model call, and
+  history compaction keeps context growth bounded without losing state.
+- Session checkpoints are persisted to `.seedcode/checkpoints/`, so an API
+  failure, an output/context limit, or a pause resumes from the current task
+  instead of starting over.
+- Bounded recovery: provider errors retry with backoff, failing commands are
+  inspected and fixed, and repeated identical failures stop with an explicit
+  blocker instead of looping forever.
+- Each task keeps its own execution record — current action, files inspected
+  and affected, commands with their outcome, tool calls, test results, errors,
+  retry count, timestamps and the verification result — and the record is part
+  of the persisted plan (`.seedcode/plan.json`), so a resumed session knows per
+  task what was already done instead of restarting from the session list.
+- `/session`, `/pause`, `/resume` and `/stop` control and inspect a Code Mode
+  session without losing task state or project files.
+- Cancellation stops future model calls and tools, preserves state, and never
+  closes applications.
+- Inspected files are recorded as part of the session context, so a resumed
+  session knows what was already looked at instead of re-reading it.
+
+### UI
+
+- New compact Code Mode header: `SEEDCODE 7.1.0 • CODE MODE` with state,
+  `Task n/N`, the active task, a progress bar, elapsed time and call count —
+  two rows while working, one row while idle, no decorative art.
+- Task view shows the plan as a short checklist (`✓ ● ○ ✗`) and a single live
+  activity line instead of a wall of output. The action line follows the real
+  phase — the tool actually running, then `Verifying acceptance criteria` /
+  `Verifying the project (tests / build)` — never a decorative message.
+- New `/session` inspection view (`seedcode.ui.session_view`): state, progress,
+  elapsed time, model/tool calls, recoveries, tests, commands, files inspected
+  and changed, blockers, and the checkpoint/resumability of a stopped session —
+  plus one row per task with its state, verification result and own execution
+  record. `/status` gained the same state in one line
+  (`RUNNING (1/3 verified) — Task 2`, or `PAUSED (2/3 verified) — resumable with
+  /resume`).
+- Evidence-gated completion is now visible: a finished task announces its own
+  record, and a finished project closes with `✓ Verification`, `✓ Tests`,
+  `✓ Files`, `✓ Commands` and inspected items — observed facts only, with
+  nothing drawn for a value that was never observed.
+- Stopping a session (`/stop` or `Ctrl+C`) reports that the plan and completed
+  work were kept and points at `/resume` instead of reading as a dead end.
+- Responsive at every width with the existing ASCII fallback, and the Code Mode
+  panel now re-fits on every refresh so resizing the terminal mid-session
+  cannot leave a panel wider than the screen.
+
+### Desktop control
+
+- Fixed the auto-close behaviour: applications the agent opens stay open.
+  A session ledger plus an explicit-intent guard now refuses implicit closes
+  of user-facing apps (windows, browsers, tabs) from any cleanup path;
+  internal cleanup (mouse/keyboard release, driver/socket teardown) is
+  unchanged.
+- Opening a new tab/window never collapses the last one, and `Ctrl+W` is no
+  longer used as a blind fallback when it could close the app itself.
+
 ## [6.2.5] — 2026-09-21
 
 A UI, provider and distribution release: the startup screen lost its ASCII

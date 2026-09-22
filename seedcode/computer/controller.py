@@ -205,8 +205,18 @@ class ComputerController:
         return message + "\n" + self._state_after()
 
     def close_app(self, title: str, force: bool = False) -> str:
+        """Close an application — an explicit request only (v7.1.0).
+
+        This is the one legitimate close path: the user (or the model acting on
+        a direct user request) asked for it, so it is wrapped in the lifecycle
+        guard's explicit intent. Anything else — teardown, cleanup, a finished
+        task — refuses to close and leaves the application running.
+        """
+        from .lifecycle_guard import explicit_close
+
         try:
-            message = self.windows.close_window(title, force=force)
+            with explicit_close():
+                message = self.windows.close_window(title, force=force)
         except Exception as exc:
             raise ComputerError(str(exc))
         return message + "\n" + self._state_after()
@@ -346,8 +356,11 @@ class ComputerController:
             raise ComputerError(f"Browser find failed: {exc}")
 
     def browser_close(self) -> str:
-        """Close browser."""
+        """Close browser (explicit user request only)."""
+        from .lifecycle_guard import explicit_close
+
         try:
-            return self.browser.close_browser()
+            with explicit_close():
+                return self.browser.close_browser()
         except Exception as exc:
             raise ComputerError(f"Browser close failed: {exc}")

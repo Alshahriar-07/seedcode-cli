@@ -1,4 +1,4 @@
-"""Embedded built-in credential for the Default provider (v6.2.5 artifact).
+"""Embedded built-in credential for the Default provider (v7.1.0 artifact).
 
 This file is NOT committed to source control. The release build generates
 ``seedcode/_default_key.py`` from the local ``.env`` (see

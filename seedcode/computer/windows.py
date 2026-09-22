@@ -20,7 +20,7 @@ import sys
 from dataclasses import dataclass
 from typing import Any
 
-from . import selfguard
+from . import lifecycle_guard, selfguard
 
 
 @dataclass(slots=True)
@@ -168,6 +168,7 @@ def open_app(target: str) -> str:
         raise ValueError("Application name or path is required.")
     try:
         os.startfile(target)  # noqa: S606 - deliberate shell-open semantics
+        lifecycle_guard.mark_launched(target)
         return f"Launched '{target}'."
     except OSError:
         pass
@@ -183,6 +184,7 @@ def open_app(target: str) -> str:
         )
     except OSError as exc:
         raise RuntimeError(f"Could not open '{target}': {exc}")
+    lifecycle_guard.mark_launched(target)
     return f"Launched '{target}'."
 
 
@@ -193,14 +195,24 @@ def close_window(title_substring: str, force: bool = False) -> str:
     is an explicit /exit decision made by the user in the REPL, never a
     side effect of a desktop task. The ``taskkill`` fallback is additionally
     title-guarded so a force-kill can never match our terminal by prefix.
+
+    v7.1.0: closing is also refused unless the caller is an *explicit* close
+    request (``lifecycle_guard.explicit_close``). Applications Seed Code
+    opened stay open — no teardown, retry, or cleanup path may close the
+    user's browser just because a task finished.
     """
     if selfguard.is_own_title(title_substring):
         raise ValueError(
             "Refusing to close SeedCode's own terminal. Use /exit in the "
             "REPL to quit SeedCode."
         )
+    lifecycle_guard.guard_close(title_substring, force=force)
     win = _find(title_substring)
     title = win.title
+    # The needle may be a page/fragment ("YouTube") that resolves to an
+    # application Seed Code opened ("YouTube - Google Chrome"): resolve first,
+    # then apply the guard to the real window title too.
+    lifecycle_guard.guard_close(title, force=force)
     win.close()
     if force:
         # Best-effort process kill for apps that ignore WM_CLOSE. The window
