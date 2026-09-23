@@ -43,6 +43,7 @@ it is handed (anything implementing ``run_turn(text)`` and exposing
 from __future__ import annotations
 
 import enum
+import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -50,6 +51,7 @@ from typing import Any, Callable
 
 from ..utils.logger import get_logger
 from .tasks import (
+    RESOLVED_STATES,
     Task,
     TaskGraph,
     TaskState,
@@ -70,7 +72,15 @@ DEFAULT_MAX_TASK_ATTEMPTS = 3        # repair attempts per task after a failure
 DEFAULT_MAX_MODEL_CALLS = 400        # whole session
 DEFAULT_PROVIDER_RETRIES = 2         # retries for a failed provider request
 DEFAULT_BACKOFF_S = 1.0
+DEFAULT_RECONNECT_ATTEMPTS = 3       # extra tries when the connection is lost
+DEFAULT_RECONNECT_BACKOFF_S = 2.0    # first reconnect delay (grows, capped)
 REPEAT_LIMIT = 2                     # identical non-progress fingerprints allowed
+
+#: "TASK <id> SKIPPED: <reason>" — the model may declare a task genuinely not
+#: needed; it is recorded as skipped, never as completed work.
+_SKIP_RE = re.compile(
+    r"TASK\s+(\d+)\s+SKIPPED\b\s*[:\-–]?\s*(.*)", re.IGNORECASE
+)
 
 
 class TaskCancelled(Exception):
@@ -83,6 +93,16 @@ class SessionPaused(Exception):
 
 class SessionProviderError(Exception):
     """The provider failed after its bounded retries were exhausted."""
+
+
+class SessionConnectivityError(SessionProviderError):
+    """A retryable failure (network/rate-limit/server) that did not recover.
+
+    Distinct from a permanent provider error: the task did not fail, the
+    *connection* did. The session pauses with its state and checkpoint intact
+    instead of reporting the task as failed, and the work resumes from the
+    same point once the connection is back.
+    """
 
 
 class SessionLimitError(Exception):
@@ -378,6 +398,8 @@ class CodeSession:
         max_model_calls: int = DEFAULT_MAX_MODEL_CALLS,
         provider_retries: int = DEFAULT_PROVIDER_RETRIES,
         backoff_s: float = DEFAULT_BACKOFF_S,
+        reconnect_attempts: int = DEFAULT_RECONNECT_ATTEMPTS,
+        reconnect_backoff_s: float = DEFAULT_RECONNECT_BACKOFF_S,
         sleep: Callable[[float], None] | None = None,
     ) -> None:
         self.agent = agent
@@ -394,6 +416,8 @@ class CodeSession:
         self.max_model_calls = max(1, int(max_model_calls))
         self.provider_retries = max(0, int(provider_retries))
         self.backoff_s = max(0.0, float(backoff_s))
+        self.reconnect_attempts = max(0, int(reconnect_attempts))
+        self.reconnect_backoff_s = max(0.0, float(reconnect_backoff_s))
         self._sleep = sleep or time.sleep
         # Bookkeeping surfaced by the header and the checkpoint.
         self.status = SessionStatus.IDLE
@@ -458,6 +482,17 @@ class CodeSession:
             self.status = SessionStatus.CANCELLED
             self.reason = "cancelled by the user"
             self._cancel_open_tasks()
+        except SessionConnectivityError as exc:
+            # The connection died, not the task: pause safely with the state
+            # and checkpoint intact so nothing is lost and the work resumes
+            # from the same task instead of failing.
+            self.status = SessionStatus.PAUSED
+            self.reason = (
+                f"connection lost — {exc}. Task state, files and the "
+                "checkpoint were kept; send /resume once the connection is "
+                "back."
+            )
+            self.event("network_lost", str(exc))
         except SessionProviderError as exc:
             self.status = SessionStatus.FAILED
             self.reason = str(exc)
@@ -505,12 +540,18 @@ class CodeSession:
     def _work_loop(self) -> None:
         while not self.graph.all_completed():
             self.control.check()
+            # A pending task whose prerequisite can never finish is not
+            # runnable: mark it skipped (with the reason) instead of leaving
+            # it dangling, so the plan reflects reality.
+            self._skip_unrunnable_tasks()
             task = self.graph.next_task()
             if task is None:
                 # Nothing runnable: every remaining task is blocked or failed.
                 pending = self.graph.unresolved()
                 if not any(t.state is TaskState.PENDING for t in pending):
-                    self.reason = (
+                    # Keep a task-specific reason (set when it failed) rather
+                    # than flattening it into a generic message.
+                    self.reason = self.reason or (
                         "no runnable task remains ("
                         + "; ".join(
                             f"{t.id}: {t.state.value}" for t in pending[:3]
@@ -525,7 +566,50 @@ class CodeSession:
                 if self.status in (SessionStatus.PAUSED, SessionStatus.CANCELLED):
                     return
                 # A failed/blocked task ends the loop; the checkpoint keeps it.
+                self._skip_unrunnable_tasks()
+                self._checkpoint()
                 return
+
+    def _skip_unrunnable_tasks(self) -> int:
+        """Skip pending tasks whose prerequisites cannot complete.
+
+        A task is never silently dropped: it is marked ``SKIPPED`` with the
+        prerequisite that did not finish, transitively (a task depending on a
+        skipped task is skipped too). Returns how many were skipped.
+        """
+        blocked_deps = {
+            TaskState.FAILED,
+            TaskState.BLOCKED,
+            TaskState.SKIPPED,
+            TaskState.CANCELLED,
+        }
+        skipped = 0
+        changed = True
+        while changed:
+            changed = False
+            for task in self.graph.tasks:
+                if task.state is not TaskState.PENDING:
+                    continue
+                for dep_id in task.depends_on:
+                    dep = self.graph.get(dep_id)
+                    if dep is None or dep.state not in blocked_deps:
+                        continue
+                    note = (
+                        f"skipped: prerequisite task {dep.id} is "
+                        f"{dep.state.value}"
+                    )
+                    task.finish(TaskState.SKIPPED, note)
+                    skipped += 1
+                    changed = True
+                    self.event(
+                        "task_skipped",
+                        f"Task {task.id} skipped — prerequisite task "
+                        f"{dep.id} did not complete",
+                    )
+                    break
+        if skipped:
+            self._save_plan()
+        return skipped
 
     def _run_task(self, task: Task) -> bool:
         """Drive one task to verified completion. Returns whether it finished."""
@@ -554,6 +638,18 @@ class CodeSession:
             # record (files affected, commands, tool calls, tests, errors) is
             # per task and survives a checkpoint resume.
             task.absorb(self.task_evidence)
+            # The model may declare a task genuinely not needed. That is an
+            # explicit, recorded skip — never quietly counted as completed
+            # work (see TaskGraph.all_completed).
+            skip = _SKIP_RE.search(reply or "")
+            if skip is not None and int(skip.group(1)) == task.id:
+                reason = " ".join((skip.group(2) or "").split())[:200]
+                reason = reason or "declared not needed"
+                task.finish(TaskState.SKIPPED, f"skipped: {reason}")
+                self._save_plan()
+                self._checkpoint()
+                self.event("task_skipped", f"Task {task.id} skipped: {reason}")
+                return True
             task.note_action("verifying acceptance criteria")
             task.mark(TaskState.VERIFYING, "verifying acceptance criteria")
             self.event("verify", f"verifying Task {task.id}")
@@ -670,7 +766,7 @@ class CodeSession:
         """What final verification still disagrees with, if anything."""
         evidence = self.session_evidence
         tasks_left = [
-            t for t in self.graph.tasks if t.state is not TaskState.COMPLETED
+            t for t in self.graph.tasks if t.state not in RESOLVED_STATES
         ]
         if tasks_left:
             return f"{len(tasks_left)} task(s) not completed"
@@ -708,7 +804,16 @@ class CodeSession:
 
     # --- model calls ---------------------------------------------------------
     def _call(self, prompt: str) -> str:
-        """One model call with bounded, backed-off provider retries."""
+        """One model call with bounded, backed-off provider retries.
+
+        Transient failures (a dropped connection, a timeout, a 429/5xx) get a
+        second, longer reconnect phase before the call is given up on. A
+        non-transient failure (bad key, unknown model, invalid request) is
+        permanent and never enters that phase. When even reconnection fails,
+        the difference is preserved: a connectivity loss raises
+        :class:`SessionConnectivityError` (safe pause), a real provider error
+        raises :class:`SessionProviderError` (a genuine failure).
+        """
         from .chat import ChatError
 
         self.control.check()
@@ -717,6 +822,7 @@ class CodeSession:
                 f"session model-call budget reached ({self.max_model_calls}); "
                 "progress is checkpointed and can be resumed."
             )
+        last: ChatError | None = None
         delay = self.backoff_s
         for attempt in range(self.provider_retries + 1):
             try:
@@ -724,17 +830,49 @@ class CodeSession:
                 self.model_calls += 1
                 return reply or ""
             except ChatError as exc:
+                last = exc
                 if attempt >= self.provider_retries:
-                    raise SessionProviderError(
-                        f"provider request failed after "
-                        f"{self.provider_retries + 1} attempt(s): {exc}"
-                    ) from exc
+                    break
                 _log.warning("provider call failed (%s); retrying in %.1fs", exc, delay)
                 self.event("retry", f"provider error, retrying in {delay:g}s")
                 if delay:
                     self._sleep(delay)
                 delay = min(delay * 2 if delay else 0.0, 8.0)
-        return ""  # unreachable
+
+        if last is not None and _transient_failure(last):
+            # Network / rate-limit / server problem: try to reconnect rather
+            # than ending the task. The same call is retried, so no work (and
+            # no context) is lost while the connection is down.
+            reconnect_delay = self.reconnect_backoff_s
+            for attempt in range(1, self.reconnect_attempts + 1):
+                self.control.check()
+                self.event(
+                    "reconnect",
+                    f"connection lost — reconnecting "
+                    f"(attempt {attempt}/{self.reconnect_attempts})",
+                )
+                if reconnect_delay:
+                    self._sleep(reconnect_delay)
+                try:
+                    reply = self.agent.run_turn(prompt)
+                    self.model_calls += 1
+                    self.event("reconnected", "connection restored — resuming")
+                    return reply or ""
+                except ChatError as exc:
+                    last = exc
+                    if not _transient_failure(exc):
+                        break
+                reconnect_delay = min(reconnect_delay * 2 if reconnect_delay else 0.0, 16.0)
+            raise SessionConnectivityError(
+                f"the connection to the provider was lost after "
+                f"{self.provider_retries + 1} retry(ies) and "
+                f"{self.reconnect_attempts} reconnect attempt(s): {last}"
+            ) from last
+
+        raise SessionProviderError(
+            f"provider request failed after "
+            f"{self.provider_retries + 1} attempt(s): {last}"
+        ) from last
 
     def _absorb(self, reply: str) -> None:
         """Fold the cycle's observed evidence into task/session/working state."""
@@ -756,8 +894,12 @@ class CodeSession:
         self.state.completed = [
             f"{t.id}. {t.title}" for t in self.graph.tasks if t.state is TaskState.COMPLETED
         ]
+        # Skipped tasks are resolved, not outstanding work: they must not read
+        # as "remaining" to the next model call.
         self.state.remaining = [
-            f"{t.id}. {t.title}" for t in self.graph.tasks if t.state is not TaskState.COMPLETED
+            f"{t.id}. {t.title}"
+            for t in self.graph.tasks
+            if t.state not in RESOLVED_STATES
         ]
         self.state.dependencies = {
             str(t.id): list(t.depends_on) for t in self.graph.tasks if t.depends_on
@@ -867,6 +1009,18 @@ class CodeSession:
 
 
 # --- helpers -----------------------------------------------------------------
+def _transient_failure(exc: BaseException) -> bool:
+    """Whether a ChatError wraps a retryable provider failure.
+
+    Providers mark timeouts, connection drops, rate limits and 5xx responses
+    ``transient=True`` on the underlying :class:`ProviderError`; the chat
+    engine always raises ``ChatError`` *from* that error, so the cause carries
+    the classification. An error with no such cause (a permanent failure, or a
+    bare ``ChatError``) is not treated as connectivity.
+    """
+    return bool(getattr(getattr(exc, "__cause__", None), "transient", False))
+
+
 def _plan_text(reply: str, agent: Any) -> str:
     """The plan, taken from the reply or the last assistant message."""
     if parse_plan(reply):
@@ -952,6 +1106,7 @@ __all__ = [
     "ControlFlags",
     "DEFAULT_MAX_MODEL_CALLS",
     "DEFAULT_MAX_TASK_ATTEMPTS",
+    "SessionConnectivityError",
     "SessionLimitError",
     "SessionPaused",
     "SessionProviderError",

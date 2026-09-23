@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ==========================================================================
 #  Seed Code - macOS installer
-#  * installs Python 3.12+ via Homebrew if missing
+#  * installs Python 3.10+ via Homebrew if missing
 #  * creates an isolated virtualenv and installs Seed Code into it
 #  * exposes a global `seedcode` command
 #  * verifies the installation and reports success/failure
@@ -16,7 +16,7 @@ set -euo pipefail
 
 APP_NAME="Seed Code"
 MIN_MAJOR=3
-MIN_MINOR=12
+MIN_MINOR=10
 VENV_DIR="${HOME}/Library/Application Support/SeedCode/venv"
 LOG_FILE="${TMPDIR:-/tmp}/seedcode-install.log"
 
@@ -51,12 +51,12 @@ trap 'err "Installation failed at line ${LINENO}. See ${LOG_FILE}."; exit 1' ERR
 py_ok() {
     "$1" - <<'PYEOF' >/dev/null 2>&1
 import sys
-raise SystemExit(0 if sys.version_info[:2] >= (3, 12) else 1)
+raise SystemExit(0 if sys.version_info[:2] >= (3, 10) else 1)
 PYEOF
 }
 
 find_python() {
-    for cand in python3.13 python3.12 python3; do
+    for cand in python3.13 python3.12 python3.11 python3.10 python3; do
         if command -v "$cand" >/dev/null 2>&1 && py_ok "$cand"; then
             command -v "$cand"; return 0
         fi

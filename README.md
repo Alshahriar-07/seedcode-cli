@@ -5,28 +5,45 @@
 > ### Faster. Smaller. Smarter. Workspace-aware.
 > *Plant ideas. Grow code.*
 
-Seed Code is a premium terminal-based AI coding assistant. v7.1.0 pairs
+Seed Code is a premium terminal-based AI coding assistant. v7.2.5 pairs
 streaming chat and permission-gated desktop control with **Code Mode** — a
 workspace-aware coding agent backed by persistent `.seedcode` project memory
-— behind a structured startup dashboard that carries the brand, the live
-session state and the task flow, with no ASCII logo.
+— behind the Seed Code startup logo and a compact block of live session state.
 
-- **Works out of the box:** the shipped provider is **Default** — Seed Code's
-  own built-in connection. It needs **no API key** and ships pointed at
-  `cohere/north-mini-code:free`, so a fresh installation can work
-  immediately. Bring your own key at any time with `/provider` → OpenRouter,
-  FreeModel or AeroLink.
-- **Structured dashboard:** the brand on the left, identity (`Seed Code |
-  Eagox Studio`), the tagline and the live provider, model, mode and status on
-  the right, behind a responsive bordered panel — and no ASCII logo anywhere.
+- **Providers:** choose **OpenRouter**, **Ollama** (started automatically when
+  you select it), or any number of your own **Custom** OpenAI-compatible
+  providers with `/provider`. Custom configurations are saved without limit,
+  each with its own name, base URL, key and model.
+- **Reliable by design:** provider health is tracked, a failing request fails
+  over to the next healthy provider without restarting the task, and a lost
+  connection pauses the session instead of failing it.
+- **Professional startup screen:** the Seed Code ANSI logo with the live
+  provider, model, mode and status beneath it, behind a responsive bordered
+  panel, with an ASCII fallback for consoles that cannot draw the block art.
 - **Step-by-step tasks:** Code, Assist and Agent Mode show a live task flow
   (analyze → inspect → plan → implement → test → verify) that reflects what
   the agent really did, and hands the prompt back when the task ends.
-- **Version:** 7.1.0 (`seedcode --version`)
+- **Version:** 7.2.5 (`seedcode --version`)
 
 ## Installation
 
-Seed Code CLI is distributed through the official IRM installer system and
+After any installation method, **`seedcode` is the primary command**:
+
+```bash
+seedcode
+```
+
+### pip (any platform)
+
+```bash
+pip install seedcode-cli
+seedcode
+```
+
+Requires **Python 3.10 or newer**. The wheel exposes the `seedcode` console
+script; `python -m seedcode` also works as a developer fallback.
+
+Seed Code CLI is also distributed through the official IRM installer system and
 [GitHub Releases](https://github.com/Alshahriar-07/seedcode-cli/releases).
 The installers download the official release artifact for your platform,
 verify its SHA256 against the release's `SHA256SUMS.txt`, and then verify the
@@ -52,7 +69,7 @@ curl -fsSL https://seedcode-cli.vercel.app/install.sh | bash
 
 Installs for the current user. No prebuilt Linux/macOS binary is published in
 this release: `install.sh` installs the official Python wheel from the same
-release with `pip install --user`, so it needs **Python 3.12 or newer (with
+release with `pip install --user`, so it needs **Python 3.10 or newer (with
 pip)** on the machine. If a prebuilt binary for your platform is ever
 published, it is used directly instead. Either way `install.sh` installs only
 what it can verify against the release's `SHA256SUMS.txt` — a missing
@@ -66,8 +83,8 @@ Python required) and both run the same CLI:
 
 | Download | What it is |
 | --- | --- |
-| `SeedCode-CLI-Setup-7.1.0.exe` | **Setup installer (recommended).** A wizard that installs to Program Files, adds Seed Code to the system `PATH`, creates a Start Menu shortcut with an optional desktop shortcut, verifies the installation before reporting success, and ships a clean uninstaller that never deletes your project data silently. |
-| `SeedCode-CLI-7.1.0-windows-x64.exe` | **Standalone executable.** A single portable `seedcode.exe` — no installation and no admin rights. The Windows IRM installer above downloads exactly this file. Run it directly from wherever you put it. |
+| `SeedCode-CLI-Setup-7.2.5.exe` | **Setup installer (recommended).** A wizard that installs to Program Files, adds Seed Code to the system `PATH`, creates a Start Menu shortcut with an optional desktop shortcut, verifies the installation before reporting success, and ships a clean uninstaller that never deletes your project data silently. |
+| `SeedCode-CLI-7.2.5-windows-x64.exe` | **Standalone executable.** A single portable `seedcode.exe` — no installation and no admin rights. The Windows IRM installer above downloads exactly this file. Run it directly from wherever you put it. |
 
 Both are published on the
 [Releases page](https://github.com/Alshahriar-07/seedcode-cli/releases) with
@@ -76,7 +93,7 @@ their SHA256 in `SHA256SUMS.txt`.
 After installing by any route:
 
 ```bash
-seedcode --version    # -> Seed Code CLI 7.1.0
+seedcode --version    # -> Seed Code CLI 7.2.5
 ```
 
 > **`seedcode` not recognized?** Open a *new* terminal. `PATH` changes only
@@ -84,7 +101,7 @@ seedcode --version    # -> Seed Code CLI 7.1.0
 
 ### From source (development)
 
-Requires **Python 3.12 or newer**:
+Requires **Python 3.10 or newer**:
 
 ```bash
 git clone https://github.com/Alshahriar-07/seedcode-cli.git
@@ -105,7 +122,7 @@ logo is permanently gone (the brand is plain text); the layout, sections and
 status indicators stay:
 
 ```text
-╭─ Seed Code CLI v7.1.0 ───────────────────────────────────────────────────────────────────────╮
+╭─ Seed Code CLI v7.2.5 ───────────────────────────────────────────────────────────────────────╮
 │                                                                                              │
 │   Seed Code                                │ Seed Code  |  Eagox Studio                      │
 │   AI CODING AGENT                          │ Plant ideas. Grow code.                         │
@@ -315,7 +332,7 @@ happened. Code Mode shows the protocol header, the plan as a checklist, and a
 single live action line:
 
 ```text
-╭─ SEEDCODE 7.1.0 • CODE MODE ────────────────╮
+╭─ SEEDCODE 7.2.5 • CODE MODE ────────────────╮
 │ ● RUNNING   Task 3/8   Build authentication │
 │   ████████████░░░░  72% • 4m 32s • 18 calls │
 │ → Running: pytest tests/auth                │
@@ -499,7 +516,7 @@ health.
   standalone EXE. Primary platform.
 - **Linux / macOS:** terminal chat, providers, project tools, Code Mode.
   Install with the `install.sh` command above — it installs the official
-  Python wheel, so **Python 3.12+ (with pip)** is required. No prebuilt
+  Python wheel, so **Python 3.10+ (with pip)** is required. No prebuilt
   Linux/macOS binary is published in this release.
 
 ## Building from source
@@ -529,21 +546,21 @@ stage fails loudly on a version mismatch, so a stale binary can never ship.
 
 Details: [`scripts/windows/README.md`](scripts/windows/README.md).
 
-### Release artifacts (v7.1.0)
+### Release artifacts (v7.2.5)
 
-Release: [v7.1.0](https://github.com/Alshahriar-07/seedcode-cli/releases/tag/v7.1.0)
+Release: [v7.2.5](https://github.com/Alshahriar-07/seedcode-cli/releases/tag/v7.2.5)
 
 | Artifact | Purpose |
 | --- | --- |
-| `SeedCode-CLI-Setup-7.1.0.exe` | Windows installer (Inno Setup) |
-| `SeedCode-CLI-7.1.0-windows-x64.exe` | Standalone Windows EXE — downloaded by the Windows IRM installer |
-| `seedcode_cli-7.1.0-py3-none-any.whl` | Python wheel — downloaded by the Linux IRM installer |
-| `seedcode_cli-7.1.0.tar.gz` | Python source distribution |
+| `SeedCode-CLI-Setup-7.2.5.exe` | Windows installer (Inno Setup) |
+| `SeedCode-CLI-7.2.5-windows-x64.exe` | Standalone Windows EXE — downloaded by the Windows IRM installer |
+| `seedcode_cli-7.2.5-py3-none-any.whl` | Python wheel — downloaded by the Linux IRM installer |
+| `seedcode_cli-7.2.5.tar.gz` | Python source distribution |
 | `SHA256SUMS.txt` | SHA256 checksums; verified by both installers |
 
-Built artifacts are collected in `dist/release/7.1.0/` during a release
+Built artifacts are collected in `dist/release/7.2.5/` during a release
 build. Publishing (GitHub Release) is a separate step; the remote installers
-read the release named `v7.1.0`.
+read the release named `v7.2.5`.
 
 ### The remote installers
 
@@ -603,4 +620,4 @@ projects or with sensitive applications.
 
 ## License
 
-MIT — see [`LICENSE`](LICENSE).
+Seed Code CLI is licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE) (`PolyForm-Noncommercial-1.0.0`) — free for personal learning and other noncommercial use; commercial use is not permitted. See [`LICENSE`](LICENSE) for the full terms.

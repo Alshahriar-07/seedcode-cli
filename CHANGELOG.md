@@ -4,6 +4,107 @@ All notable changes to Seed Code CLI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [7.2.5] — 2026-09-23
+
+A reliability and provider-system release. 7.1.0 left two reliability gaps
+open — the task graph could neither record a consciously-not-needed task, nor
+distinguish a lost connection from a failed task — and the provider layer had
+no answer for a failing provider. Both are closed here: Code Mode now skips
+honestly and pauses (never fails) on a lost connection, and the provider
+system became **OpenRouter / Ollama / Custom** with automatic, state-preserving
+failover, provider health management, and Ollama auto-start. Everything below
+is implemented and covered by the test suite in this repository.
+
+### Code Mode
+
+- New `SKIPPED` task state (`seedcode.core.tasks.TaskState`). A task the model
+declares not needed (`TASK <id> SKIPPED: <reason>`) and a pending task whose
+prerequisite can never finish are both marked `SKIPPED` — recorded with the
+reason, transitively, and never counted as verified work. A project cannot be
+`complete` from skips alone: at least one task must still be verified with real
+evidence. The checklist shows `–` (`-` on legacy consoles).
+- Dependents of a failed/blocked/skipped task are now skipped explicitly with
+`skipped: prerequisite task N is failed`, instead of being left as "waiting on
+unfinished dependencies".
+- Network-aware recovery: a transient provider failure (dropped connection,
+timeout, 429/5xx) now reconnects with longer backoff before the call is given
+up, and it never restarts a task — the same model call is retried with its
+state intact. If reconnection still fails the session **pauses** with the plan,
+files and checkpoint preserved (`SessionConnectivityError`), rather than
+reporting the task as failed. Permanent errors (bad key, unknown model) still
+fail with their own message.
+
+### UI
+
+- Reconnection progress (`connection lost — reconnecting (attempt n/m)`,
+`connection restored — resuming`) is shown live, and a network pause reports
+its real reason while keeping `/resume` as the action.
+- The completion summary reports `• Skipped: n task(s) not needed` so the
+`n/N tasks verified` figure is never inflated by skips.
+- `SKIPPED` is styled in the Code Mode header, the task checklist and the
+`/session` task rows.
+
+### Providers
+
+- The user-facing provider list is now **OpenRouter, Ollama and Custom**
+  (`seedcode.core.providers.visible_provider_ids`). Default, FreeModel
+  Claude/Codex and AeroLink are retained as legacy built-ins for backward
+  compatibility — an existing configuration still loads, selects and uses
+  them — but they are no longer advertised for a new setup.
+- New **Custom providers** (`seedcode.core.providers.custom.CustomProvider`):
+  any number of user-defined, OpenAI-compatible endpoints, each with its own
+  name, base URL, API key and model. Add, edit, test the connection,
+  enable/disable, reorder by priority, select and delete them from `/provider`
+  or `/custom`; configurations persist in `config.json` and there is no
+  artificial count limit. A rejected key, an unreachable host and a non-http(s)
+  base URL each produce a specific, actionable message, and a key is only ever
+  shown masked (`config.masked_key`).
+- New **provider health** (`seedcode.core.providers.health`): session-only
+  states `unknown · healthy · retrying · temporarily_unavailable ·
+  rate_limited · authentication_error · offline`, with per-state cooldowns so
+  a configuration that just failed is not hammered and a rejected key is never
+  retried in the same session. There is no path to an infinite retry loop.
+- New **automatic failover** (`seedcode.core.providers.failover.FailoverChain`,
+  wired through `seedcode.core.chat.ChatEngine`): a request that fails on the
+  active provider is retried there first, then switches to the next healthy
+  configuration and retries **the same request**. Conversation history, task
+  state and TODO state are preserved, so the work resumes at the current
+  operation instead of restarting; the failure only surfaces when no viable
+  provider remains.
+- **Ollama auto-start** (`seedcode.core.providers.ollama_start`): selecting
+  Ollama checks the server, re-checks immediately before launching (never a
+  duplicate), starts `ollama serve` detached and cross-platform, polls for
+  readiness with a bounded timeout, and continues the original request. A
+  missing executable or a startup timeout is reported actionably; the user no
+  longer needs to run `ollama serve` by hand.
+
+### UI
+
+- Provider failover is visible (`Switching provider: A → B`), `/status` and
+  the provider list keep showing each provider's own model and masked key, and
+  `/custom` opens the custom-provider manager.
+
+### Distribution
+
+- License change: Seed Code CLI is now distributed under the **PolyForm
+  Noncommercial License 1.0.0** (`PolyForm-Noncommercial-1.0.0`), replacing the
+  previous MIT label in `LICENSE`, the package metadata (`pyproject.toml`), the
+  npm launcher metadata, the Windows executable version resource, and the
+  documentation. Third-party dependency licenses are unchanged.
+- The startup screen now leads with the Seed Code ANSI logo and a compact
+  block of live state (version, provider, model, mode, status), with a text
+  wordmark and ASCII borders on consoles that cannot draw the block glyphs.
+- Fixed the pip first-run false-offline state: a provider that merely has no
+  API key is reported as `No Key` (a setup state), never `Offline`, so a fresh
+  `pip install seedcode-cli` no longer looks like a broken application.
+- `seedcode` is the primary command after every installation method; the wheel
+  exposes the `seedcode` console script and `python -m seedcode` still works.
+- Python 3.10 is supported again (`requires-python = ">=3.10"`); the project
+  is audited against the 3.10 grammar and standard library.
+- Rebuilt every release artifact for 7.2.5 (wheel, sdist, portable Windows
+  executable, Inno Setup installer) with a fresh `SHA256SUMS.txt` verified
+  against the staged files; the generated secret module is never packaged.
+
 ## [7.1.0] — 2026-09-22
 
 A Code Mode architecture release: Code Mode became a *persistent software-

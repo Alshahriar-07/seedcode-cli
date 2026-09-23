@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Seed Code CLI v7.1.0 - official Windows remote installer.
+    Seed Code CLI v7.2.5 - official Windows remote installer.
 
 .DESCRIPTION
     Installs Seed Code CLI for the CURRENT USER. No administrator rights, no
@@ -15,10 +15,10 @@
 
     Or, to pass options, download-then-run:
 
-        & ([scriptblock]::Create((irm https://seedcode-cli.vercel.app/install.ps1))) -Version 7.1.0
+        & ([scriptblock]::Create((irm https://seedcode-cli.vercel.app/install.ps1))) -Version 7.2.5
 
 .PARAMETER Version
-    Release version to install. Defaults to 7.1.0 (the current stable release).
+    Release version to install. Defaults to 7.2.5 (the current stable release).
 
 .PARAMETER InstallDir
     Install directory. Defaults to %LOCALAPPDATA%\Programs\SeedCode.
@@ -39,7 +39,7 @@
 #>
 [CmdletBinding()]
 param(
-    [string] $Version = "7.1.0",
+    [string] $Version = "7.2.5",
     [string] $InstallDir = "",
     [switch] $NoPathUpdate,
     [switch] $Force
@@ -295,6 +295,7 @@ if ($onPath -and $resolvedTo -and -not ($resolvedTo -like "$InstallDir\*")) {
 
 Write-Head "Done"
 Write-Host "  Seed Code CLI $Version is installed." -ForegroundColor Green
+Write-Host "  License: PolyForm Noncommercial License 1.0.0 (PolyForm-Noncommercial-1.0.0)" -ForegroundColor DarkGray
 Write-Host ""
 if ($NoPathUpdate) {
     Write-Host "  Run:  & `"$TargetExe`"" -ForegroundColor Gray

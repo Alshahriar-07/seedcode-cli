@@ -46,12 +46,18 @@ class TaskState(str, enum.Enum):
     FAILED = "failed"
     COMPLETED = "completed"
     CANCELLED = "cancelled"
+    #: The task was consciously not needed (or its prerequisites could not
+    #: finish). It will not run again, and it never counts as verified work.
+    SKIPPED = "skipped"
 
 
 #: States where the task will not be run again.
 TERMINAL_STATES = frozenset(
-    {TaskState.COMPLETED, TaskState.FAILED, TaskState.CANCELLED}
+    {TaskState.COMPLETED, TaskState.FAILED, TaskState.CANCELLED, TaskState.SKIPPED}
 )
+
+#: States that represent *resolved* work (done or consciously not needed).
+RESOLVED_STATES = frozenset({TaskState.COMPLETED, TaskState.SKIPPED})
 
 #: The checklist glyph for each state (UI layer reads these).
 GLYPHS: dict[TaskState, str] = {
@@ -63,6 +69,7 @@ GLYPHS: dict[TaskState, str] = {
     TaskState.FAILED: "✗",
     TaskState.COMPLETED: "✓",
     TaskState.CANCELLED: "■",
+    TaskState.SKIPPED: "–",
 }
 
 
@@ -78,6 +85,7 @@ def glyph_for(state: TaskState, *, legacy: bool = False) -> str:
             TaskState.FAILED: "[x]",
             TaskState.COMPLETED: "[ok]",
             TaskState.CANCELLED: "[!]",
+            TaskState.SKIPPED: "-",
         }[state]
     return GLYPHS[state]
 
@@ -444,6 +452,12 @@ class TaskGraph:
     def completed_ids(self) -> set[int]:
         return {t.id for t in self.tasks if t.state is TaskState.COMPLETED}
 
+    def skipped_count(self) -> int:
+        return sum(1 for t in self.tasks if t.state is TaskState.SKIPPED)
+
+    def resolved_count(self) -> int:
+        return sum(1 for t in self.tasks if t.state in RESOLVED_STATES)
+
     def next_task(self) -> Task | None:
         """The next runnable task, honouring dependencies (dependency-first)."""
         completed = self.completed_ids()
@@ -477,13 +491,22 @@ class TaskGraph:
         return len(self.completed_ids())
 
     def all_completed(self) -> bool:
-        return bool(self.tasks) and all(
-            t.state is TaskState.COMPLETED for t in self.tasks
-        )
+        """Whether the plan is finished.
+
+        Every task must be resolved (completed *or* consciously skipped), and
+        at least one task must have been genuinely verified with evidence: a
+        project is never "complete" from skips alone. A skipped task never
+        counts as completed work.
+        """
+        if not self.tasks:
+            return False
+        if not all(t.state in RESOLVED_STATES for t in self.tasks):
+            return False
+        return any(t.state is TaskState.COMPLETED for t in self.tasks)
 
     def unresolved(self) -> list[Task]:
-        """Tasks that are not completed (failed, blocked, pending, cancelled)."""
-        return [t for t in self.tasks if t.state is not TaskState.COMPLETED]
+        """Tasks that still need attention (not completed and not skipped)."""
+        return [t for t in self.tasks if t.state not in RESOLVED_STATES]
 
     def blocked_or_failed(self) -> list[Task]:
         return [
@@ -887,6 +910,7 @@ __all__ = [
     "CommandRecord",
     "GLYPHS",
     "PlanItem",
+    "RESOLVED_STATES",
     "TERMINAL_STATES",
     "Task",
     "TaskGraph",

@@ -1,17 +1,74 @@
-SEED CODE CLI v7.1.0
+SEED CODE CLI v7.2.5
 ====================
 
+Primary command (after any installation):
+
+    seedcode
+
 Official Installation
+---------------------
 
-Windows:
-irm https://seedcode-cli.vercel.app/install.ps1 | iex
+pip (any platform, Python 3.10+):
 
-Linux:
-curl -fsSL https://seedcode-cli.vercel.app/install.sh | bash
+    pip install seedcode-cli
+    seedcode
 
-Distribution:
-Official Seed Code CLI releases are distributed through
-the IRM installer system and GitHub Releases.
+Windows (PowerShell 5.1+):
+
+    irm https://seedcode-cli.vercel.app/install.ps1 | iex
+
+Linux / macOS:
+
+    curl -fsSL https://seedcode-cli.vercel.app/install.sh | bash
+
+After the official installers finish, open a NEW terminal and run:
+
+    seedcode
+
+`seedcode --version` prints: Seed Code CLI 7.2.5
+`python -m seedcode` is also supported as a developer invocation.
+
+Release artifacts (dist/release/7.2.5/)
+---------------------------------------
+
+    seedcode_cli-7.2.5-py3-none-any.whl        Python wheel (pip install)
+    seedcode_cli-7.2.5.tar.gz                  Python source distribution
+    SeedCode-CLI-7.2.5-windows-x64.exe         Standalone Windows executable
+    SeedCode-CLI-Setup-7.2.5.exe               Windows setup installer (Inno Setup)
+    SHA256SUMS.txt                             SHA256 digest for every artifact
+
+Every artifact in SHA256SUMS.txt is verified before installation; a missing
+entry or a mismatching digest aborts the install instead of proceeding.
+
+License
+-------
+
+Seed Code CLI is licensed under the PolyForm Noncommercial License 1.0.0
+(`PolyForm-Noncommercial-1.0.0`): free for personal learning and other
+noncommercial use, commercial use not permitted. The full text ships as the
+`LICENSE` file in this repository, inside the wheel/sdist metadata, and in the
+installed `README.md`. Third-party dependencies keep their own licenses.
+
+Requirements
+------------
+
+Python 3.10 or newer is supported (the wheel and sdist declare
+`requires-python = ">=3.10"`). No Python is required for the Windows
+standalone/setup executables.
+
+Provider configuration
+----------------------
+
+Providers: OpenRouter, Ollama (auto-started when selected), and any number of
+user-defined Custom OpenAI-compatible providers. Api keys are stored in the
+per-user config (`~/.seedcode/config.json`) with owner-only permissions and
+are never printed in full. No private credential is embedded in any artifact.
+
+Distribution
+------------
+
+Official Seed Code CLI releases are distributed through the IRM installer
+system, PyPI (`seedcode-cli`) and GitHub Releases.
 
 Version:
-7.1.0
+7.2.5

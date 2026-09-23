@@ -59,6 +59,7 @@ _STYLES: dict[TaskState, str] = {
     TaskState.FAILED: "seed.error",
     TaskState.CANCELLED: "seed.dim",
     TaskState.PENDING: "seed.dim",
+    TaskState.SKIPPED: "seed.dim",
 }
 
 _DEFAULT_LIMIT = 12

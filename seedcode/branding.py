@@ -8,10 +8,11 @@ the exact palette so every surface renders identical art:
   bitmaps, the canonical ``assets/logo.png`` and the preview render
 * the installer wizard and the Windows taskbar/Explorer surfaces
 
-v6.2.5 note: the interactive CLI no longer renders any ASCII art. The mark
-is a packaging/desktop asset only (:mod:`seedcode.ui.dashboard` renders a
-borderless text header with no logo), so this module is not imported by the
-terminal UI at all.
+v7.2.5 note: this module stays a packaging/desktop asset. The terminal UI
+renders its own branding from :data:`seedcode.ui.dashboard.LOGO_LINES` (the
+exact ANSI wordmark, with a text fallback on narrow or non-Unicode consoles),
+so no terminal surface imports this module and the pixel-art mark never costs
+anything at startup.
 
 Stdlib only (struct/zlib): safe to import from anywhere in the package,
 costs nothing at startup, and keeps the brand byte-reproducible.

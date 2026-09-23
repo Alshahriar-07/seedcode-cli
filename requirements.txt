@@ -18,3 +18,8 @@ pillow>=10.0.0; sys_platform == 'win32'
 psutil>=5.9.0; sys_platform == 'win32'
 pytesseract>=0.3.10; sys_platform == 'win32'
 opencv-python>=4.9.0; sys_platform == 'win32'
+
+# Optional dependencies (mirrors pyproject.toml [project.optional-dependencies]).
+# These are not installed by default, but can be installed with:
+# pip install -r requirements.txt[all]
+# pip install -r requirements.txt[desktop]  

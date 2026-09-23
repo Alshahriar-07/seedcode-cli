@@ -1,50 +1,38 @@
-"""The Seed Code startup dashboard (restored reference layout).
+"""The Seed Code startup dashboard (v7.2.5).
 
-This is the richer v6.2.x startup screen, with **one permanent change: the
-ASCII logo is gone for good**. Nothing here draws block, pixel or box art for
-branding; the brand is normal text.
+The primary startup branding is the Seed Code ANSI wordmark logo, followed by
+a compact, information-dense block with the live session state::
 
-The panel is a fixed visual grid — the dimensional specification is the visual
-source of truth::
+    ╭─ Seed Code CLI v7.2.5 ───────────────────────────────────────────────────────╮
+    │   ▄█████ ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄    ▄█████  ▄▄▄  ▄▄▄▄  ▄▄▄▄▄   ▄█████ ██     ██     │
+    │   ▀▀▀▄▄▄ ██▄▄  ██▄▄  ██▀██   ██     ██▀██ ██▀██ ██▄▄    ██     ██     ██     │
+    │   █████▀ ██▄▄▄ ██▄▄▄ ████▀   ▀█████ ▀███▀ ████▀ ██▄▄▄   ▀█████ ██████ ██     │
+    │                                                                              │
+    │   Seed Code CLI v7.2.5                                                       │
+    │   Plant ideas. Grow code.                                                    │
+    │   Provider   OpenRouter                                                      │
+    │   Model      gpt-5.1-codex                                                   │
+    │   Mode       Code Mode                                                       │
+    │   Status     ● Ready                                                         │
+    ╰──────────────────────────────────────────────────────────────────────────────╯
 
-    ╭─ Seed Code CLI v7.1.0 ───────────────────────────────────────────────────────────────────────╮
-    │                                                                                              │
-    │   Seed Code                                │ Seed Code  |  Eagox Studio                      │
-    │   AI CODING AGENT                          │ Plant ideas. Grow code.                         │
-    │                                            │ Provider   Default                              │
-    │                                            │ Model      cohere/north-mini-code:free          │
-    │                                            │ Mode       Chat  •  ● Ready                     │
-    ╰──────────────────────────────────────────────────────────────────────────────────────────────╯
+The logo is fixed branding (never generated): the exact three ANSI lines below.
+Every value under it comes from live application state — nothing is hardcoded
+and "Ready" is never faked for an unconfigured session. The ``API Key`` row is
+rendered **only** for providers that actually require a key.
 
-Fixed anchor points (96-column primary target):
+Terminal compatibility (v7.2.5):
 
-=================  ====================================================
-Outer width        96 columns (capped — it never stretches wider)
-Content width      92 columns (borders + 1-column padding each side)
-Brand block        content column 2  (screen column 5)
-Divider            content column 43 (one blank column each side)
-Info section       content column 45
-=================  ====================================================
-
-The left cell is branding only — the wordmark as plain text, never art. The
-right cell holds identity (brand | publisher), the tagline, and then the live
-session values: provider, model, and mode with its status on one line.
-
-Every value comes from live application state — nothing is hardcoded and
-"Ready" is never faked for an unconfigured session. The ``API Key`` row is
-rendered **only** for providers that actually require a key, so Default and
-Ollama never show one, and each value is shown exactly once (no footer repeats
-it).
-
-Responsive behaviour: the panel keeps its 96-column design width on wide
-terminals, shrinks its value clip below that, falls back to a compact one-row
-panel under 64 columns, and to plain text lines under 40 — never overflowing,
-never breaking its border. Legacy Windows consoles (raster-font cmd.exe) and
-streams that cannot encode the glyphs get the ASCII rendering of the same
-layout (``+---+`` borders, ``|`` divider, ``o``/``-`` state marks).
-
-The ``You >`` chat prompt is owned by the prompt session in
-:mod:`seedcode.app` and stays outside this module.
+* Block glyphs need a Unicode-aware console. A raster-font ``cmd.exe`` or a
+  redirected stream that cannot encode them gets the same panel with a text
+  wordmark instead of the block logo (``+---+``/``|`` fallbacks included), so
+  the startup screen always renders.
+* The panel never exceeds :data:`PANEL_WIDTH` (96) and no line ever exceeds the
+  terminal width: the full panel needs
+  :data:`FULL_MIN_WIDTH` columns, below that a one-row compact panel is drawn,
+  and below 40 columns plain lines are used.
+* Colour is owned by the theme; ``SEEDCODE_PLAIN``/``no_color`` hosts get the
+  same layout without colour.
 """
 
 from __future__ import annotations
@@ -54,7 +42,7 @@ from rich.console import Console, Group
 from rich.panel import Panel
 from rich.text import Text
 
-from .. import APP_NAME, TAGLINE, __publisher__, __version__
+from .. import APP_NAME, TAGLINE, __version__
 from ..core.models import AppConfig
 from ..core.providers import (
     PROVIDERS,
@@ -65,28 +53,29 @@ from ..core.providers import (
 from ..core.providers.base import STATUS_CONNECTED, STATUS_UNKNOWN
 from .layout import supports_unicode
 
-# --- the dimensional grid (content columns are 0-based) ----------------------
+# --- the fixed Seed Code logo -------------------------------------------------
+#: The exact Seed Code ANSI wordmark. This is branding, not generated art: it
+#: is never built from the version or the session state.
+LOGO_LINES: tuple[str, ...] = (
+    "▄█████ ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄    ▄█████  ▄▄▄  ▄▄▄▄  ▄▄▄▄▄   ▄█████ ██     ██",
+    "▀▀▀▄▄▄ ██▄▄  ██▄▄  ██▀██   ██     ██▀██ ██▀██ ██▄▄    ██     ██     ██",
+    "█████▀ ██▄▄▄ ██▄▄▄ ████▀   ▀█████ ▀███▀ ████▀ ██▄▄▄   ▀█████ ██████ ██",
+)
+#: Width of the logo in terminal cells (all glyphs are single-width).
+LOGO_WIDTH = max(len(line) for line in LOGO_LINES)
+
+# --- the panel grid -----------------------------------------------------------
 PANEL_WIDTH = 96  # outer width; the panel never exceeds this
-
-_BRAND_IDX = 2  # brand block starts here (screen column 5)
-_DIVIDER_IDX = 43  # vertical divider, one blank column on each side
-_RIGHT_IDX = 45  # the info section starts here
-
-# Info label column: "Provider   " / "Model      " / "Mode       " / "API Key    ".
-_LABEL_WIDTH = 11
-# Widest model display at the design width (exactly "cohere/north-mini-code:free");
-# the info section slides left to keep it whole, and clips only below that.
-_MODEL_CLIP = 27
-_MIN_CLIP = 8
-# The divider never crowds the brand block: 20 columns stay for the wordmark.
-_DIVIDER_MIN = 22
-
-# Below this width the full panel no longer fits: compact panel, then text.
+#: Below this the block logo cannot fit: fall back to the text wordmark.
+FULL_MIN_WIDTH = LOGO_WIDTH + 8
+#: Below this the full panel no longer fits: compact panel, then text.
 _MIN_PANEL_WIDTH = 64
 _MIN_WIDTH = 40
 
-# Plain-text branding only. This is the wordmark that replaced the ASCII logo —
-# it can be bold and prominent, but it is never drawn as block/pixel art.
+_BRAND_INDENT = "   "  # 3 spaces so the logo is centred-ish under the border
+_LABEL_WIDTH = 11  # "Provider   " / "Model      " / "Mode       " / "Status     "
+
+# Plain-text branding fallback (consoles that cannot draw/encode the logo).
 _WORDMARK = APP_NAME
 _AGENT_LINE = "AI CODING AGENT"
 _BULLET = "•"
@@ -114,12 +103,7 @@ def _model_value(config: AppConfig) -> str:
 
 
 def _mode_value(config: AppConfig) -> str:
-    """The user-facing mode, read from real session state.
-
-    Code Mode sharpens Assist Mode; both are shown verbatim (never the legacy
-    Agent/Desktop names). Imported lazily so the dashboard has no import-cycle
-    cost at startup, and guarded so a state error can never break the banner.
-    """
+    """The user-facing mode, read from real session state."""
     try:
         from ..codemode_state import codemode_state
 
@@ -139,7 +123,6 @@ def _status_value(config: AppConfig, ready_mark: str, idle_mark: str) -> Text:
     if status == STATUS_CONNECTED:
         return Text(f"{ready_mark} Connected", style="seed.success")
     if status == STATUS_UNKNOWN:
-        # Configured but not probed yet — ready to chat, not yet verified.
         return Text(f"{ready_mark} Ready", style="seed.success")
     return Text(f"{idle_mark} {status}", style="seed.dim")
 
@@ -150,11 +133,7 @@ def _requires_key(config: AppConfig) -> bool:
 
 
 def _api_key_value(config: AppConfig) -> Text:
-    """The active provider's key state — masked, never the key itself.
-
-    Only rendered for providers that require a key, so no API-key line is ever
-    shown for the built-in Default connection or for local Ollama.
-    """
+    """The active provider's key state — masked, never the key itself."""
     if config.get_api_key().strip():
         return Text(config.masked_key(), style="seed.dim")
     return Text("Not set — /apikey", style="seed.warning")
@@ -168,35 +147,8 @@ def _clip(value: str, limit: int) -> str:
 
 
 # --- sections ----------------------------------------------------------------
-def _brand_rows() -> list[Text]:
-    """Left cell: the brand as plain text (the logo is permanently gone)."""
-    return [
-        Text(_WORDMARK, style="bold seed.primary", no_wrap=True),
-        Text(_AGENT_LINE, style="seed.dim", no_wrap=True),
-    ]
-
-
-def _identity_line() -> Text:
-    """Right cell header: the product and the studio that publishes it."""
-    line = Text(no_wrap=True, overflow="crop")
-    line.append(APP_NAME, style="seed.primary")
-    line.append("  |  ", style="seed.dim")
-    line.append(__publisher__, style="seed.dim")
-    return line
-
-
-def _mode_row(
-    config: AppConfig, ready_mark: str, idle_mark: str, bullet: str
-) -> Text:
-    """Mode and its live status on one line (``Chat  •  ● Ready``)."""
-    value = Text(_mode_value(config), style="seed.accent")
-    value.append(f"  {bullet}  ", style="seed.dim")
-    value.append_text(_status_value(config, ready_mark, idle_mark))
-    return _labelled("Mode", value)
-
-
 def _labelled(label: str, value: Text | str, value_style: str = "seed.text") -> Text:
-    """One two-column 'Label    value' information row."""
+    """One two-column 'Label      value' information row."""
     line = Text(no_wrap=True, overflow="crop")
     line.append(f"{label:<{_LABEL_WIDTH}}", style="seed.dim")
     if isinstance(value, Text):
@@ -206,113 +158,56 @@ def _labelled(label: str, value: Text | str, value_style: str = "seed.text") -> 
     return line
 
 
-def _info_rows(
-    config: AppConfig,
-    ready_mark: str,
-    idle_mark: str,
-    value_clip: int,
-    bullet: str,
-) -> list[Text]:
-    """Right cell rows: identity, tagline, then the live session values."""
-    rows = [
-        _identity_line(),
-        Text(TAGLINE, style="seed.dim", no_wrap=True, overflow="crop"),
-        _labelled(
-            "Provider", _clip(_provider_value(config), value_clip), "seed.primary"
-        ),
-        _labelled("Model", _clip(_model_value(config), value_clip)),
-        _mode_row(config, ready_mark, idle_mark, bullet),
+def _logo_rows(use_logo: bool) -> list[Text]:
+    """The brand block: the exact logo, or the text wordmark as a fallback.
+
+    ``use_logo`` is True only when the console can draw the block glyphs AND
+    the panel is wide enough to hold them; otherwise the plain wordmark is
+    used so the startup screen can never overflow or render mojibake.
+    """
+    if not use_logo:
+        return [
+            Text(f"{_BRAND_INDENT}{_WORDMARK}", style="bold seed.primary", no_wrap=True),
+            Text(f"{_BRAND_INDENT}{_AGENT_LINE}", style="seed.dim", no_wrap=True),
+        ]
+    return [
+        Text(f"{_BRAND_INDENT}{line}", style="seed.primary", no_wrap=True)
+        for line in LOGO_LINES
     ]
+
+
+def _info_rows(config: AppConfig, ready_mark: str, idle_mark: str, clip: int) -> list[Text]:
+    """Identity line, tagline, then the live session values."""
+    rows = [
+        Text(f"{APP_NAME} CLI v{__version__}", style="bold seed.text", no_wrap=True),
+        Text(TAGLINE, style="seed.dim", no_wrap=True, overflow="crop"),
+        _labelled("Provider", _clip(_provider_value(config), clip), "seed.primary"),
+        _labelled("Model", _clip(_model_value(config), clip)),
+        _labelled("Mode", _clip(_mode_value(config), clip), "seed.accent"),
+    ]
+    rows.append(_labelled("Status", _status_value(config, ready_mark, idle_mark)))
     if _requires_key(config):
         rows.append(_labelled("API Key", _api_key_value(config)))
     return rows
 
 
-# --- the grid ----------------------------------------------------------------
-def _layout(content: int) -> tuple[int, int, int]:
-    """``(divider, right_index, value_clip)`` for a given content width.
-
-    The info section is sized around the *whole* model value: it slides left
-    from its design anchor (never crowding the brand block) until label, value
-    and a trailing blank column fit inside the border, and only a terminal too
-    tight even for that starts clipping the value.
-    """
-    right = min(
-        _RIGHT_IDX, max(content - _LABEL_WIDTH - _MODEL_CLIP - 1, _DIVIDER_MIN + 2)
-    )
-    clip = min(_MODEL_CLIP, max(_MIN_CLIP, content - right - _LABEL_WIDTH - 1))
-    return right - 2, right, clip
-
-
-def _compose(
-    left: Text | None,
-    right: Text | None,
-    *,
-    content: int,
-    divider: int,
-    right_index: int,
-    layout_legacy: bool,
-) -> Text:
-    """One panel row: brand cell, divider, info cell, padded to ``content``."""
-    divider_char = "|" if layout_legacy else "│"
-    line = Text(no_wrap=True, overflow="crop")
-
-    if left is not None:
-        room = max(divider - 1 - _BRAND_IDX, 0)
-        left.truncate(room, overflow="ellipsis")
-        line.append(" " * _BRAND_IDX)
-        line.append_text(left)
-
-    # The divider is always drawn, so the two sections read as one grid.
-    pad = divider - line.cell_len
-    if pad > 0:
-        line.append(" " * pad)
-    line.append(divider_char, style="seed.primary")
-
-    if right is not None:
-        pad = right_index - line.cell_len
-        if pad > 0:
-            line.append(" " * pad)
-        if line.cell_len < content:
-            right.truncate(max(content - line.cell_len, 0), overflow="ellipsis")
-            line.append_text(right)
-
-    if line.cell_len < content:
-        line.append(" " * (content - line.cell_len))
-    line.truncate(content, overflow="crop")
-    return line
-
-
-def _panel_box(layout_legacy: bool):
-    return box.ASCII if layout_legacy else box.ROUNDED
-
-
+# --- the full panel ----------------------------------------------------------
 def _reference_panel(config: AppConfig, width: int, layout_legacy: bool) -> Panel:
-    """The full reference layout, bordered and anchored on the design grid."""
+    """The logo-first panel (or its text-wordmark fallback on legacy consoles)."""
     panel_width = min(width, PANEL_WIDTH)
     content = panel_width - 4  # border (2) + 1-column padding each side
-    divider, right_index, value_clip = _layout(content)
     ready_mark = "o" if layout_legacy else "●"
     idle_mark = "-" if layout_legacy else "○"
+    # The block logo is primary branding, but only where it can actually be
+    # drawn and fit; narrower/legacy consoles get the wordmark fallback.
+    use_logo = not layout_legacy and panel_width >= FULL_MIN_WIDTH
 
-    brand = _brand_rows()
-    info = _info_rows(
-        config, ready_mark, idle_mark, value_clip, _bullet(layout_legacy)
-    )
-    height = max(len(brand), len(info))
-
-    rows: list[Text] = [Text(" " * content)]  # blank row above the content
-    for index in range(height):
-        rows.append(
-            _compose(
-                brand[index] if index < len(brand) else None,
-                info[index] if index < len(info) else None,
-                content=content,
-                divider=divider,
-                right_index=right_index,
-                layout_legacy=layout_legacy,
-            )
-        )
+    rows: list[Text] = list(_logo_rows(use_logo))
+    rows.append(Text(" " * max(content, 1)))  # breathing room under the logo
+    # The clip accounts for the label column and one trailing blank column, so
+    # the ellipsis added by _clip survives the panel's own width crop.
+    clip = max(content - _LABEL_WIDTH - 1, 8)
+    rows.extend(_info_rows(config, ready_mark, idle_mark, clip))
 
     title = f"{APP_NAME} CLI v{__version__}"
     title = _clip(title, max(content - 2, 8))
@@ -321,7 +216,7 @@ def _reference_panel(config: AppConfig, width: int, layout_legacy: bool) -> Pane
         title=title,
         title_align="left",
         border_style="seed.primary",
-        box=_panel_box(layout_legacy),
+        box=box.ASCII if layout_legacy else box.ROUNDED,
         padding=(0, 1),
         expand=False,
         width=panel_width,
@@ -330,11 +225,7 @@ def _reference_panel(config: AppConfig, width: int, layout_legacy: bool) -> Pane
 
 # --- compact fallbacks (narrow terminals) ------------------------------------
 def _compact_line(config: AppConfig, layout_legacy: bool, width: int) -> Text:
-    """The information-dense one-liner used when the panel cannot fit.
-
-    Provider and model give up room first so the mode and the status badge
-    always stay readable — the last thing to be clipped is the state.
-    """
+    """The information-dense one-liner used when the full panel cannot fit."""
     content = max(width - 4, 16)  # borders + one padding column each side
     bullet = _bullet(layout_legacy)
     sep = f" {bullet} "
@@ -347,7 +238,6 @@ def _compact_line(config: AppConfig, layout_legacy: bool, width: int) -> Text:
     tail.append_text(_status_value(config, ready_mark, idle_mark))
 
     line = Text(no_wrap=True, overflow="crop")
-    # slack keeps a separation space between clipped values and the tail
     room = content - tail.cell_len - 2 * len(sep) - 4
     if room >= 16:
         each = max(8, room // 2)
@@ -356,9 +246,7 @@ def _compact_line(config: AppConfig, layout_legacy: bool, width: int) -> Text:
         line.append(_clip(_model_value(config), each), style="seed.text")
         line.append(sep, style="seed.dim")
     else:
-        line.append(
-            _clip(_provider_value(config), max(6, room)), style="seed.primary"
-        )
+        line.append(_clip(_provider_value(config), max(6, room)), style="seed.primary")
         line.append(sep, style="seed.dim")
     line.append_text(tail)
     line.truncate(content, overflow="crop")
@@ -374,7 +262,7 @@ def _compact_panel(config: AppConfig, width: int, layout_legacy: bool) -> Panel:
         title=title,
         title_align="left",
         border_style="seed.primary",
-        box=_panel_box(layout_legacy),
+        box=box.ASCII if layout_legacy else box.ROUNDED,
         padding=(0, 1),
         expand=False,
         width=width,
@@ -414,6 +302,8 @@ def render_dashboard(console: Console, config: AppConfig) -> None:
     width = console_size(console)
 
     if width >= _MIN_PANEL_WIDTH:
+        # The block logo needs both room and a console that can draw it. The
+        # text-wordmark fallback keeps a structured panel everywhere else.
         console.print(_reference_panel(config, width, layout_legacy))
         return
     if width >= _MIN_WIDTH:

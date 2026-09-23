@@ -77,10 +77,10 @@ def test_runtime_state_is_shown_exactly_once() -> None:
     assert out.count("OpenRouter") == 1
     assert out.count("Chat") == 1
     # Match each label as a whole word, so "Mode" is not found inside "Model".
-    for label in ("Provider", "Model", "Mode"):
+    # v7.2.5 gives status its own row (the spec's info block), so it appears
+    # exactly once too — never repeated in a footer.
+    for label in ("Provider", "Model", "Mode", "Status"):
         assert len(re.findall(rf"\b{label}\b", out)) == 1, label
-    # The status shares the mode row — there is no second, standalone row.
-    assert "Status" not in out
 
 
 def test_banner_title_uses_brand_casing() -> None:

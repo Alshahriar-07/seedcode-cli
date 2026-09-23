@@ -3,14 +3,17 @@
 The old Code Mode screen was a tall banner. This is the replacement — two rows
 while working, one row while idle, no decorative art::
 
-    ┌─ SEEDCODE 7.1.0 • CODE MODE ────────────────────────┐
+    ┌─ SEEDCODE 7.2.5 • CODE MODE ────────────────────────┐
     │ ● RUNNING   Task 3/8   Build authentication          │
     │   ████████████░░░░  72%   • 4m 32s • 6 calls        │
     └──────────────────────────────────────────────────────┘
 
-    ┌─ SEEDCODE 7.1.0 • CODE MODE ────────────────────────┐
+    ┌─ SEEDCODE 7.2.5 • CODE MODE ────────────────────────┐
     │ ● READY     0/0 tasks                                │
     └──────────────────────────────────────────────────────┘
+
+The version in the panel title comes from :data:`seedcode.__version__`, so
+the header always matches the build it was shipped in.
 
 The task view below it shows the plan as a short checklist (``✓ ● ○ ✗``) and a
 single live activity line, so a long-running session stays readable:
@@ -167,6 +170,7 @@ def task_checklist(
             TaskState.RUNNING: "seed.accent",
             TaskState.VERIFYING: "seed.accent",
             TaskState.RECOVERING: "seed.warning",
+            TaskState.SKIPPED: "seed.dim",
         }.get(resolved, "seed.dim")
         line = Text(no_wrap=True, overflow="crop")
         line.append(f"{mark} ", style=style)

@@ -5,7 +5,7 @@ on Windows (the primary platform).
 
 | File | Purpose |
 |------|---------|
-| `install.bat` | Install Seed Code from source: Python 3.12+ check, pip upgrade, dependencies, editable install, verification. |
+| `install.bat` | Install Seed Code from source: Python 3.10+ check, pip upgrade, dependencies, editable install, verification. |
 | `build.bat` | **Complete release pipeline**: branding assets → PyInstaller → `dist\seedcode.exe` (Seed Code icon embedded), then Inno Setup → `Release\SeedCode-CLI-Setup-<version>.exe`, published to the repo root as the stable `seedcode-cli-setup.exe`, then staged into `dist\release\<version>\` with `SHA256SUMS.txt`. Every stage verified. |
 | `build_assets.py` | Generates `assets\windows\` (multi-resolution `seedcode.ico`, wizard bitmaps, exe version resource) — stdlib only, deterministic, self-verifying. |
 | `setup.iss` | Inno Setup script (compiled by `build.bat`): one-click branded wizard, Program Files install, PATH, shortcuts, double verification (exe + `seedcode` on PATH), uninstaller with data prompt. No Python needed on the user's PC. |
@@ -25,7 +25,7 @@ scripts\windows\install.bat
 
 The installer:
 
-1. Looks for **Python 3.12+** (tries `py -3.13`, `py -3.12`, `py -3`,
+1. Looks for **Python 3.10+** (tries `py -3.13`, `py -3.12`, `py -3.11`, `py -3.10`, `py -3`,
    `python`, `python3`). If none qualifies, it **opens
    <https://www.python.org/downloads/>** and exits with code 2.
 2. Upgrades `pip`.
@@ -76,7 +76,7 @@ Python runtime and every dependency inside it.
 publishes a verified copy to the repository root as the stable
 **`seedcode-cli-setup.exe`**, and stages the versioned copy for release as
 **`SeedCode-CLI-Setup-<version>.exe`** — the name attached to the GitHub
-release for that version (currently **7.1.0**), alongside the standalone
+release for that version (currently **7.2.5**), alongside the standalone
 `SeedCode-CLI-<version>-windows-x64.exe` and `SHA256SUMS.txt` (which is what
 the remote installers verify against).
 
@@ -131,7 +131,7 @@ uninstaller also reverts its PATH change).
 |------|---------|
 | 0 | Success. |
 | 1 | A pip/PyInstaller/ISCC/asset step failed (see the log). |
-| 2 | Python 3.12+ not found. |
+| 2 | Python 3.10+ not found. |
 | 3 | Script is not inside the Seed Code repository. |
 | 4 | Inno Setup 6 (ISCC.exe) not found (build.bat stage 2). |
 | 5 | Verification failed: stale/locked output, version mismatch, or missing icon. |

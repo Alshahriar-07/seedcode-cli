@@ -1,7 +1,7 @@
 @echo off
 REM ==========================================================================
 REM  Seed Code - Windows installer
-REM    1. Verify Python 3.12+ is available (open python.org if missing)
+REM    1. Verify Python 3.10+ is available (open python.org if missing)
 REM    2. Upgrade pip
 REM    3. Install dependencies from requirements.txt
 REM    4. Install Seed Code in editable mode
@@ -32,23 +32,25 @@ set "LOG_FILE=%LOG_DIR%\install.log"
 echo [INFO] Log file:   %LOG_FILE%
 echo ===== install.bat run: %DATE% %TIME% ===== >> "%LOG_FILE%"
 
-REM --- 1. Find a Python 3.12+ interpreter ----------------------------------
+REM --- 1. Find a Python 3.10+ interpreter ----------------------------------
 REM Try the Windows launcher with explicit versions first, then generic names.
 set "PY_CMD="
 call :try_python py -3.13
 if not defined PY_CMD call :try_python py -3.12
+if not defined PY_CMD call :try_python py -3.11
+if not defined PY_CMD call :try_python py -3.10
 if not defined PY_CMD call :try_python py -3
 if not defined PY_CMD call :try_python python
 if not defined PY_CMD call :try_python python3
 
 if not defined PY_CMD (
     echo.
-    echo [ERROR] Python 3.12 or newer was not found on this system.
+    echo [ERROR] Python 3.10 or newer was not found on this system.
     echo [INFO]  Opening the official Python download page...
     start "" "https://www.python.org/downloads/"
     echo.
-    echo Install Python 3.12+ ^(check "Add python.exe to PATH"^) and re-run this script.
-    echo [FAILED] Python 3.12+ missing. >> "%LOG_FILE%"
+    echo Install Python 3.10+ ^(check "Add python.exe to PATH"^) and re-run this script.
+    echo [FAILED] Python 3.10+ missing. >> "%LOG_FILE%"
     exit /b 2
 )
 echo [INFO] Using interpreter: %PY_CMD%
@@ -144,8 +146,8 @@ echo ============================================================
 echo [SUCCESS] install complete >> "%LOG_FILE%"
 exit /b 0
 
-REM --- helper: set PY_CMD if the candidate is Python 3.12+ -------------------
+REM --- helper: set PY_CMD if the candidate is Python 3.10+ -------------------
 :try_python
-"%1" %2 -c "import sys; raise SystemExit(0 if sys.version_info[:2] >= (3, 12) else 1)" >nul 2>&1
+"%1" %2 -c "import sys; raise SystemExit(0 if sys.version_info[:2] >= (3, 10) else 1)" >nul 2>&1
 if not errorlevel 1 set "PY_CMD=%1 %2"
 exit /b 0

@@ -1,5 +1,6 @@
 [build-system]
-# hatchling >= 1.27 is needed for PEP 639 license expressions (license = "MIT").
+# hatchling >= 1.27 is needed for PEP 639 license expressions
+# (license = "PolyForm-Noncommercial-1.0.0").
 requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
@@ -7,9 +8,9 @@ build-backend = "hatchling.build"
 name = "seedcode-cli"
 description = "Seed Code — a premium terminal-based AI coding assistant. Plant ideas. Grow code."
 readme = "README.md"
-license = "MIT"
+license = "PolyForm-Noncommercial-1.0.0"
 license-files = ["LICENSE"]
-requires-python = ">=3.12"
+requires-python = ">=3.10"
 authors = [{ name = "Al Shahriar Sowan", email = "github@eagox.studio" }]
 dynamic = ["version"]
 keywords = ["ai", "cli", "terminal", "chat", "coding-assistant", "seedcode", "ollama", "agent"]
@@ -18,6 +19,8 @@ classifiers = [
     "Environment :: Console",
     "Intended Audience :: Developers",
     "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Software Development",

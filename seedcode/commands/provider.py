@@ -11,12 +11,16 @@ switching behave identically.
 from __future__ import annotations
 
 from ..config import save_config
+from ..core.models import CustomProviderConfig, valid_base_url
 from ..core.providers import (
     PROVIDERS,
     ModelInfo,
     Provider,
     ProviderError,
     get_provider,
+    is_custom_provider_id,
+    sync_custom_providers,
+    visible_provider_ids,
 )
 from ..core.providers.base import STATUS_CONNECTED, STATUS_OFFLINE
 from ..core.providers.freemodel import AUTO_MODEL
@@ -25,6 +29,9 @@ from ..ui.menu import MenuItem, run_menu
 from ..ui.selector import Option, select
 from ..ui.textbox import read_text
 from . import CommandContext, CommandResult, command
+
+#: Sentinel returned by the provider picker for "add a custom provider".
+_ADD_CUSTOM = "__add_custom__"
 
 
 # --- provider selection ------------------------------------------------------
@@ -52,9 +59,12 @@ def _resolve_provider(text: str) -> Provider | None:
 _GROUP_BUILTIN = "Built-in  ·  no API key needed"
 _GROUP_BYOK = "Your own API key"
 _GROUP_LOCAL = "Local  ·  runs on this machine"
+_GROUP_CUSTOM = "Custom  ·  your own endpoint"
 
 
 def _provider_group(provider: Provider) -> str:
+    if is_custom_provider_id(provider.id):
+        return _GROUP_CUSTOM
     if provider.local:
         return _GROUP_LOCAL
     if provider.id == "default":
@@ -83,14 +93,31 @@ def _provider_key_column(provider: Provider, config) -> str:
     return "API key needed"
 
 
-def _provider_menu(ui, config) -> Provider | None:
-    """Interactive provider selector: badge, backend, model, and key state."""
+def _provider_model_column(config, provider_id: str) -> str:
+    """The provider's currently selected model, or an em dash."""
+    custom = config.custom_provider(provider_id)
+    if custom is not None:
+        model = custom.model
+    else:
+        entry = config.providers.get(provider_id)
+        model = entry.model if entry else ""
+    if model == AUTO_MODEL:
+        return "Auto"
+    return model or "—"
+
+
+def _provider_menu(ui, config) -> str | None:
+    """Interactive provider selector: badge, backend, model, and key state.
+
+    Offers the v7.2.5 list — OpenRouter, Ollama and every saved custom
+    provider — plus an entry to add a new custom endpoint. A legacy built-in
+    appears only while the user is on it (backward compatibility).
+    """
     options = []
-    for p in PROVIDERS.values():
-        entry = config.providers.get(p.id)
-        model = entry.model if entry and entry.model else "—"
-        if model == AUTO_MODEL:
-            model = "Auto"
+    for pid in visible_provider_ids(config):
+        p = PROVIDERS.get(pid)
+        if p is None:
+            continue
         options.append(
             Option(
                 p.label,
@@ -98,12 +125,20 @@ def _provider_menu(ui, config) -> Provider | None:
                 badge=badge_for_status(p.status),
                 columns=(
                     _provider_backend(p, config),
-                    model,
+                    _provider_model_column(config, p.id),
                     _provider_key_column(p, config),
                 ),
                 group=_provider_group(p),
             )
         )
+    options.append(
+        Option(
+            "Add a custom provider…",
+            value=_ADD_CUSTOM,
+            detail="any OpenAI-compatible API: name, base URL, key",
+            group=_GROUP_CUSTOM,
+        )
+    )
     chosen = select(
         options,
         title="Provider",
@@ -113,7 +148,7 @@ def _provider_menu(ui, config) -> Provider | None:
     if chosen is None:
         ui.dim("Cancelled.")
         return None
-    return PROVIDERS[str(chosen)]
+    return str(chosen)
 
 
 def _collect_key(ui, config, provider: Provider, *, replacing: bool = False) -> bool:
@@ -154,14 +189,18 @@ def _ensure_ready(ui, config, provider: Provider) -> bool:
     Returns False only when the user cancels key entry. An unreachable
     key-less backend (local Ollama, or the built-in Default connection in a
     build that carries no credential) is reported with its own actionable
-    message but is never fatal — the user may start Ollama or pick another
-    provider later.
+    message but is never fatal — Ollama is auto-started (v7.2.5), and the
+    built-in Default connection can be replaced by another provider later.
     """
     if not provider.requires_key:
+        if provider.id == "ollama":
+            return _ensure_ollama(ui, config, provider)
+        # Use the provider's own status refresh so a build with no built-in
+        # credential reports "No API Key" (a setup state) instead of a false
+        # "Offline" (v7.2.5 pip-install fix).
         with ui.thinking(f"Checking {provider.label}"):
-            reachable = provider.detect(config)
-        provider.status = STATUS_CONNECTED if reachable else STATUS_OFFLINE
-        if reachable:
+            status = provider.refresh_status(config)
+        if status == STATUS_CONNECTED:
             ui.success(f"{provider.label} is ready.")
         else:
             ui.warning(provider.unavailable_hint(config))
@@ -180,15 +219,30 @@ def select_provider(ui, config, target: str = "") -> bool:
     """Switch the active provider; returns True when the switch completed.
 
     Only ``active_provider`` changes — every provider keeps its own saved
-    API key and model, so switching back restores them untouched.
+    API key and model, so switching back restores them untouched. Custom
+    providers are synchronised into the registry first so they resolve.
     """
+    sync_custom_providers(config)
     chosen: Provider | None = None
     if target:
         chosen = _resolve_provider(target)
         if chosen is None:
+            entry = config.custom_provider(target)
+            if entry is not None:
+                chosen = get_provider(entry.id)
+        if chosen is None:
             ui.warning(f"Unknown provider '{target}'.")
     if chosen is None:
-        chosen = _provider_menu(ui, config)
+        picked = _provider_menu(ui, config)
+        if picked is None:
+            return False
+        if picked == _ADD_CUSTOM:
+            entry = _add_custom_flow(ui, config)
+            if entry is None:
+                return False
+            chosen = get_provider(entry.id)
+        else:
+            chosen = PROVIDERS.get(picked)
     if chosen is None:
         return False
 
@@ -198,6 +252,11 @@ def select_provider(ui, config, target: str = "") -> bool:
         config.provider = previous  # cancelled key entry: keep the old backend
         return False
 
+    # An explicit selection clears any prior failure state, so a provider the
+    # user deliberately chose is tried again even if it had cooled down.
+    from ..core.providers import health as health_mod
+
+    health_mod.tracker().reset(chosen.id)
     save_config(config)
     ui.success(f"Provider set to {chosen.label}.")
     # The provider's own saved model is active again automatically.
@@ -206,6 +265,201 @@ def select_provider(ui, config, target: str = "") -> bool:
     else:
         ui.warning(f"No model selected for {chosen.label} yet — run /model.")
     return True
+
+
+# --- Ollama auto-start -------------------------------------------------------
+
+
+def _ensure_ollama(ui, config, provider: Provider) -> bool:
+    """Ensure the local Ollama server is running, starting it if needed.
+
+    Starting the server never fails the selection: if it cannot be started,
+    the user is told exactly what to do and may pick another provider.
+    """
+    from ..core.providers.ollama_start import ensure_running
+
+    if provider.detect(config):
+        provider.status = STATUS_CONNECTED
+        ui.success(f"{provider.label} is ready.")
+        return True
+
+    ui.info("Ollama server not detected — starting it…")
+    ok, message = ensure_running(config, on_status=lambda line: ui.dim(f"  {line}"))
+    if ok:
+        provider.status = STATUS_CONNECTED
+        ui.success(message)
+    else:
+        provider.status = STATUS_OFFLINE
+        ui.warning(message)
+    return True
+
+
+# --- custom providers --------------------------------------------------------
+
+
+def custom_providers_menu(ui, config) -> None:
+    """Manage the saved custom providers: add, use, edit, test, reorder, delete."""
+    sync_custom_providers(config)
+    while True:
+        entries = config.ordered_custom_providers()
+        items = [MenuItem("Add a custom provider…", "add", badge="new")]
+        for entry in entries:
+            state = "enabled" if entry.enabled else "disabled"
+            items.append(
+                MenuItem(
+                    entry.name,
+                    f"pick:{entry.id}",
+                    status=f"{entry.base_url} · {state} · {config.masked_key(entry.id)}",
+                )
+            )
+        items.append(MenuItem("Back", "back"))
+        choice = run_menu(
+            items,
+            title=f"Custom providers ({len(entries)})",
+            hint="↑↓ move   Enter select   Esc back",
+        )
+        if choice is None or choice == "back":
+            return
+        if choice == "add":
+            _add_custom_flow(ui, config)
+            continue
+        _custom_actions(ui, config, str(choice).split(":", 1)[1])
+
+
+def _add_custom_flow(ui, config) -> CustomProviderConfig | None:
+    """Prompt for Name, Base URL, API Key (and optional model); save + test."""
+    ui.info("Add a custom provider — any OpenAI-compatible API.")
+    while True:
+        name = read_text("Name > ")
+        if name is None or not name.strip():
+            ui.dim("Cancelled — no provider added.")
+            return None
+        base_url = read_text("Base URL > ")
+        if base_url is None or not base_url.strip():
+            ui.dim("Cancelled — no provider added.")
+            return None
+        if not valid_base_url(base_url):
+            ui.error("Base URL must start with http:// or https://")
+            continue
+        key = read_text("API Key > ", password=True)
+        if key is None:
+            ui.dim("Cancelled — no provider added.")
+            return None
+        model = read_text("Model (optional) > ") or ""
+        try:
+            entry = config.add_custom_provider(name, base_url, key, model)
+        except ValueError as exc:
+            ui.error(str(exc))
+            continue
+        sync_custom_providers(config)
+        save_config(config)
+        ui.success(f"Saved custom provider '{entry.name}'.")
+        _test_connection(ui, config, entry.id)
+        return entry
+
+
+def _edit_custom_flow(ui, config, provider_id: str) -> None:
+    """Edit a saved custom provider; an empty answer keeps the current value."""
+    entry = config.custom_provider(provider_id)
+    if entry is None:
+        return
+    ui.info(f"Editing '{entry.name}' — press Enter to keep the current value.")
+    name = read_text(f"Name [{entry.name}] > ")
+    base_url = read_text(f"Base URL [{entry.base_url}] > ")
+    key = read_text("API Key (keep current) > ", password=True)
+    model = read_text(f"Model [{entry.model or 'none'}] > ")
+    try:
+        config.update_custom_provider(
+            provider_id,
+            name=(name.strip() if name and name.strip() else None),
+            base_url=(base_url.strip() if base_url and base_url.strip() else None),
+            api_key=(key.strip() if key and key.strip() else None),
+            model=(model.strip() if model and model.strip() else None),
+        )
+    except ValueError as exc:
+        ui.error(str(exc))
+        return
+    save_config(config)
+    sync_custom_providers(config)
+    ui.success("Saved.")
+
+
+def _test_connection(ui, config, provider_id: str) -> bool:
+    """Validate a provider's own credential with a real request."""
+    from ..core.providers import health as health_mod
+
+    try:
+        provider = get_provider(provider_id)
+    except ProviderError as exc:
+        ui.error(str(exc))
+        return False
+    with ui.thinking(f"Testing {provider.label}"):
+        result = provider.validate_key(config.get_api_key(provider_id))
+    if result.ok:
+        provider.status = STATUS_CONNECTED
+        health_mod.tracker().record_success(provider_id)
+        ui.success(result.message)
+    else:
+        provider.status = STATUS_OFFLINE
+        health_mod.tracker().record_failure(provider_id, reason=result.message)
+        ui.warning(result.message)
+    return result.ok
+
+
+def _custom_actions(ui, config, provider_id: str) -> None:
+    """Per-provider actions: use, edit, test, enable/disable, reorder, delete."""
+    while True:
+        entry = config.custom_provider(provider_id)
+        if entry is None:
+            return
+        state = "enabled" if entry.enabled else "disabled"
+        choice = run_menu(
+            [
+                MenuItem("Use this provider", "use"),
+                MenuItem("Edit", "edit"),
+                MenuItem("Test connection", "test"),
+                MenuItem("Disable" if entry.enabled else "Enable", "toggle"),
+                MenuItem("Move up", "up"),
+                MenuItem("Move down", "down"),
+                MenuItem("Delete", "delete"),
+                MenuItem("Back", "back"),
+            ],
+            title=f"{entry.name} — {state}",
+            hint="↑↓ move   Enter select   Esc back",
+        )
+        if choice is None or choice == "back":
+            return
+        if choice == "use":
+            select_provider(ui, config, entry.id)
+            return
+        if choice == "edit":
+            _edit_custom_flow(ui, config, provider_id)
+        elif choice == "test":
+            _test_connection(ui, config, provider_id)
+        elif choice == "toggle":
+            config.set_custom_enabled(provider_id, not entry.enabled)
+            save_config(config)
+            sync_custom_providers(config)
+            ui.success(f"'{entry.name}' {'disabled' if entry.enabled else 'enabled'}.")
+        elif choice in ("up", "down"):
+            moved = config.move_custom_provider(
+                provider_id, -1 if choice == "up" else 1
+            )
+            save_config(config)
+            sync_custom_providers(config)
+            ui.dim("Reordered." if moved else "Already at the edge.")
+        elif choice == "delete":
+            from ..ui.dialog import confirm_dialog
+
+            name = entry.name
+            if confirm_dialog(
+                f"Delete '{name}'?", yes_label="Delete", no_label="Keep", danger=True
+            ):
+                config.remove_custom_provider(provider_id)
+                save_config(config)
+                sync_custom_providers(config)
+                ui.success(f"Deleted '{name}'.")
+                return
 
 
 # --- model selection ---------------------------------------------------------
@@ -387,11 +641,20 @@ def select_model(ui, config, target: str = "") -> None:
 
 @command(
     "provider",
-    "Select the active provider "
-    "(Default, OpenRouter, FreeModel Claude, FreeModel Codex, AeroLink, Ollama)",
+    "Select the active provider (OpenRouter, Ollama, or a saved custom provider)",
 )
 def _provider_cmd(ctx: CommandContext, arg: str) -> CommandResult:
     select_provider(ctx.ui, ctx.config, arg.strip())
+    return CommandResult()
+
+
+@command(
+    "custom",
+    "Manage custom providers (add, edit, test, reorder, enable, delete)",
+    aliases=("custom-providers", "providers"),
+)
+def _custom_cmd(ctx: CommandContext, arg: str) -> CommandResult:
+    custom_providers_menu(ctx.ui, ctx.config)
     return CommandResult()
 
 

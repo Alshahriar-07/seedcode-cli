@@ -33,15 +33,17 @@ set "LOG_FILE=%LOG_DIR%\build.log"
 echo [INFO] Log file:   %LOG_FILE%
 echo ===== build.bat run: %DATE% %TIME% ===== >> "%LOG_FILE%"
 
-REM --- Find a Python 3.12+ interpreter --------------------------------------
+REM --- Find a Python 3.10+ interpreter --------------------------------------
 set "PY_CMD="
 call :try_python py -3.13
 if not defined PY_CMD call :try_python py -3.12
+if not defined PY_CMD call :try_python py -3.11
+if not defined PY_CMD call :try_python py -3.10
 if not defined PY_CMD call :try_python py -3
 if not defined PY_CMD call :try_python python
 if not defined PY_CMD call :try_python python3
 if not defined PY_CMD (
-    echo [ERROR] Python 3.12+ is required to build. Run install.bat first.
+    echo [ERROR] Python 3.10+ is required to build. Run install.bat first.
     exit /b 2
 )
 echo [INFO] Using interpreter: %PY_CMD%
@@ -264,13 +266,17 @@ echo.
 echo [STAGE 2/3] Compiling Release\SeedCodeSetup.exe with Inno Setup...
 
 REM Locate ISCC.exe: PATH first, then the standard install locations.
+REM Inno Setup 6 and 7 share the ISCC.exe name; check 7 first.
 set "ISCC="
 where iscc >nul 2>&1 && set "ISCC=iscc"
+if not defined ISCC if exist "%LOCALAPPDATA%\Programs\Inno Setup 7\ISCC.exe" set "ISCC=%LOCALAPPDATA%\Programs\Inno Setup 7\ISCC.exe"
+if not defined ISCC if exist "%ProgramFiles(x86)%\Inno Setup 7\ISCC.exe" set "ISCC=%ProgramFiles(x86)%\Inno Setup 7\ISCC.exe"
+if not defined ISCC if exist "%ProgramFiles%\Inno Setup 7\ISCC.exe" set "ISCC=%ProgramFiles%\Inno Setup 7\ISCC.exe"
 if not defined ISCC if exist "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" set "ISCC=%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe"
 if not defined ISCC if exist "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" set "ISCC=%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe"
 if not defined ISCC if exist "%ProgramFiles%\Inno Setup 6\ISCC.exe" set "ISCC=%ProgramFiles%\Inno Setup 6\ISCC.exe"
 if not defined ISCC (
-    echo [ERROR] Inno Setup 6 ^(ISCC.exe^) was not found.
+    echo [ERROR] Inno Setup ^(ISCC.exe^) was not found.
     echo         Install it from https://jrsoftware.org/isdl.php and re-run.
     exit /b 4
 )
@@ -290,9 +296,17 @@ if exist "%REPO_ROOT%\Release\%SETUP_NAME%.exe" (
     exit /b 5
 )
 
-REM /DAppVersionFromBuild injects the verified source version, so the
-REM installer metadata can never disagree with the executable it packages.
-"%ISCC%" /DAppVersionFromBuild=%SRC_VERSION% /DOutputBaseName=%SETUP_NAME% /O"%REPO_ROOT%\Release" "%~dp0setup.iss" >> "%LOG_FILE%" 2>&1
+REM AppVersionFromBuild injects the verified source version, so the installer
+REM metadata can never disagree with the executable it packages. Inno Setup 7
+REM only accepts the long switch spelling (--define=); the classic /D + /O
+REM form is kept as a fallback for Inno Setup 6. OutputBaseName drives the
+REM versioned filename; the .iss default OutputDir (..\..\Release) is used so
+REM a path containing spaces never has to be passed on the command line.
+"%ISCC%" --define=AppVersionFromBuild=%SRC_VERSION% --define=OutputBaseName=%SETUP_NAME% "%~dp0setup.iss" >> "%LOG_FILE%" 2>&1
+if errorlevel 1 (
+    echo [INFO] Long-option ISCC failed; retrying the classic /D form...
+    "%ISCC%" /DAppVersionFromBuild=%SRC_VERSION% /DOutputBaseName=%SETUP_NAME% /O"%REPO_ROOT%\Release" "%~dp0setup.iss" >> "%LOG_FILE%" 2>&1
+)
 if errorlevel 1 (
     echo [ERROR] Inno Setup compilation failed. See "%LOG_FILE%".
     exit /b 1
@@ -361,6 +375,6 @@ echo [SUCCESS] pipeline complete >> "%LOG_FILE%"
 exit /b 0
 
 :try_python
-"%1" %2 -c "import sys; raise SystemExit(0 if sys.version_info[:2] >= (3, 12) else 1)" >nul 2>&1
+"%1" %2 -c "import sys; raise SystemExit(0 if sys.version_info[:2] >= (3, 10) else 1)" >nul 2>&1
 if not errorlevel 1 set "PY_CMD=%1 %2"
 exit /b 0

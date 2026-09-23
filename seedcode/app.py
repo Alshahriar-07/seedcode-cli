@@ -32,7 +32,12 @@ from .core.agent import AgentEngine, strip_tool_blocks
 from .core.chat import ChatEngine, ChatError
 from .core.lifecycle import LifecycleError, lifecycle
 from .core.models import AppConfig
-from .core.providers import PROVIDERS, provider_label, provider_ready
+from .core.providers import (
+    PROVIDERS,
+    provider_label,
+    provider_ready,
+    sync_custom_providers,
+)
 from .core.providers.freemodel import AUTO_MODEL
 from .memory import HistoryStore
 from .tools import PermissionManager, PermissionMode
@@ -310,6 +315,14 @@ class _TaskPresenter:
             return
         if kind == "error":
             self.ui.dim(f"  ✖ {detail.splitlines()[0][:120]}")
+        elif kind == "switching_provider":
+            # A provider request failed and a healthy fallback took over; the
+            # task continues rather than restarting (v7.2.5).
+            self.ui.warning(f"  Switching provider: {detail}")
+            if flow is not None:
+                flow.set_activity("Switching provider")
+        elif kind == "retry":
+            self.ui.dim(f"  {detail}")
         elif kind == "limit":
             self.ui.warning(f"Assist stopped: {detail}")
         elif kind == "call" and flow is None:
@@ -384,10 +397,23 @@ class _TaskPresenter:
             self.ui.warning(detail)
         elif kind == "task_failed":
             self.ui.error(detail)
+        elif kind == "task_skipped":
+            # A skipped task is resolved, never verified work (v7.2.5).
+            self.ui.dim(f"  – {detail}")
         elif kind == "final_verify":
             self.ui.dim("  final verification…")
             if flow is not None:
                 flow.set_activity("Verifying the project (tests / build)")
+        elif kind == "reconnect":
+            # The connection dropped; the session is reconnecting and the task
+            # is preserved rather than failed (v7.2.5).
+            self.ui.warning(f"  {detail}")
+            if flow is not None:
+                flow.set_activity("Reconnecting to the provider")
+        elif kind == "reconnected":
+            self.ui.dim(f"  {detail}")
+        elif kind == "network_lost":
+            self.ui.warning(f"Network: {detail}")
         elif kind in ("retry", "continue"):
             self.ui.dim(f"  {detail}")
         if flow is not None and session is not None:
@@ -586,7 +612,13 @@ def _handle_codemode(
         if flow is not None:
             flow.set_state("paused")
             flow.stop()
-        ui.warning("Session paused — state saved. Send /resume to continue.")
+        # Surface the real reason (a network pause says so) but keep the
+        # actionable instruction identical for every pause.
+        reason = (session.reason or "").strip()
+        if reason and "connection" in reason.lower():
+            ui.warning(f"{reason}")
+        else:
+            ui.warning("Session paused — state saved. Send /resume to continue.")
         session_mod.set_current_session(session)
         return
 
@@ -620,6 +652,10 @@ def _report_session_summary(ui: UI, session) -> None:
     graph = session.graph
     done, total = graph.progress()
     ui.success(f"Project completed — {done}/{total} tasks verified")
+    skipped = graph.skipped_count()
+    if skipped:
+        # A skipped task is resolved, never counted as verified work.
+        ui.dim(f"  • Skipped: {skipped} task(s) not needed")
     evidence = session.session_evidence
     if evidence.tests:
         # What matters is the final state: the last test run passed.
@@ -1007,6 +1043,9 @@ def run(ui: UI) -> None:
     interactive menu remains available via /exit for provider/model/settings.
     """
     config = load_config()
+    # Register the saved custom providers before anything resolves a provider
+    # id (v7.2.5): the registry must reflect config.json from the first turn.
+    sync_custom_providers(config)
     set_active_theme(config.theme)
     ui.apply_theme(config.theme)
     ui.banner(config)
@@ -1017,8 +1056,15 @@ def run(ui: UI) -> None:
         config.is_configured(),
     )
 
+    def presenter_on_event(kind: str, detail: str) -> None:
+        """Surface provider retry/failover on the plain chat prompt (v7.2.5)."""
+        if kind == "switching_provider":
+            ui.warning(f"Switching provider: {detail}")
+        elif kind == "retry":
+            ui.dim(f"  {detail}")
+
     active_backend = config.provider
-    engine = ChatEngine(config)
+    engine = ChatEngine(config, on_event=presenter_on_event)
     history = HistoryStore(provider_id=active_backend)
     chat_session = _make_chat_session(ui)
 
@@ -1031,7 +1077,7 @@ def run(ui: UI) -> None:
             if config.provider != active_backend:
                 # Guided setup switched providers: rebuild the backend state.
                 active_backend = config.provider
-                engine = ChatEngine(config)
+                engine = ChatEngine(config, on_event=presenter_on_event)
                 history = HistoryStore(provider_id=active_backend)
             _chat_loop(ui, config, engine, history, chat_session)
         else:
@@ -1048,7 +1094,7 @@ def run(ui: UI) -> None:
             # backend/context and the new provider's own history store.
             _log.info("backend switched: %s -> %s", active_backend, config.provider)
             active_backend = config.provider
-            engine = ChatEngine(config)
+            engine = ChatEngine(config, on_event=presenter_on_event)
             history = HistoryStore(provider_id=active_backend)
 
         try:

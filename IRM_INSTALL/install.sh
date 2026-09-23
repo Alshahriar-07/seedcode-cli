@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Seed Code CLI v7.1.0 - official Linux/macOS remote installer.
+# Seed Code CLI v7.2.5 - official Linux/macOS remote installer.
 #
 # Usage (exactly as documented for remote install):
 #
@@ -14,13 +14,13 @@
 # Options (download-then-run form):
 #
 #     curl -fsSL https://seedcode-cli.vercel.app/install.sh -o install.sh
-#     bash install.sh --version 7.1.0 --no-path-update
+#     bash install.sh --version 7.2.5 --no-path-update
 #
 # This script never sees, stores, or prints an API key.
 
 set -euo pipefail
 
-VERSION="7.1.0"
+VERSION="7.2.5"
 NO_PATH_UPDATE=0
 FORCE=0
 REPO="Alshahriar-07/seedcode-cli"
@@ -56,7 +56,7 @@ die() {
 # --- arguments ---------------------------------------------------------------
 while [ $# -gt 0 ]; do
   case "$1" in
-    --version) [ $# -ge 2 ] || die "--version needs a value like 7.1.0"; VERSION="$2"; shift 2 ;;
+    --version) [ $# -ge 2 ] || die "--version needs a value like 7.2.5"; VERSION="$2"; shift 2 ;;
     --no-path-update) NO_PATH_UPDATE=1; shift ;;
     --force) FORCE=1; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -263,11 +263,11 @@ else
   for candidate in python3 python; do
     if command -v "$candidate" >/dev/null 2>&1; then PYTHON="$candidate"; break; fi
   done
-  [ -n "$PYTHON" ] || die "Python 3.12+ is required for this artifact, and no python3 was found on PATH."
+  [ -n "$PYTHON" ] || die "Python 3.10+ is required for this artifact, and no python3 was found on PATH."
 
   log "Installing"
   "$PYTHON" -m pip install --user --upgrade "${TMP_DIR}/${WHEEL}" \
-    || die "pip install failed. Install Python 3.12+ (with pip) and try again."
+    || die "pip install failed. Install Python 3.10+ (with pip) and try again."
 
   # The console script lands in pip's per-user scripts directory; use that
   # as the install directory so PATH is updated for the right location.
@@ -314,7 +314,8 @@ if [ -n "$RESOLVED" ] && [ "$RESOLVED" != "$INSTALLED_EXE" ]; then
   warn "Remove the older copy, or run this one directly: $INSTALLED_EXE"
 fi
 
-printf '\n  Seed Code CLI %s is installed.\n\n' "$VERSION"
+printf '\n  Seed Code CLI %s is installed.\n' "$VERSION"
+printf '  License: PolyForm Noncommercial License 1.0.0 (PolyForm-Noncommercial-1.0.0)\n\n'
 case ":${PATH}:" in
   *":${INSTALL_DIR}:"*)
     printf '  Run:  seedcode\n\n'

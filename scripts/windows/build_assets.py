@@ -154,7 +154,7 @@ VSVersionInfo(
       StringStruct('FileDescription', 'Seed Code - terminal AI coding assistant'),
       StringStruct('FileVersion', '{version}'),
       StringStruct('InternalName', 'seedcode'),
-      StringStruct('LegalCopyright', 'Copyright (c) Al Shahriar Sowan. MIT License.'),
+      StringStruct('LegalCopyright', 'Copyright (c) Al Shahriar Sowan. PolyForm Noncommercial License 1.0.0.'),
       StringStruct('OriginalFilename', 'seedcode.exe'),
       StringStruct('ProductName', 'Seed Code'),
       StringStruct('ProductVersion', '{version}')])]),

@@ -4,10 +4,15 @@ Every screen that shows a status uses these markers so the language stays
 uniform:
 
     ● Connected    ◐ Connecting    ○ Offline    ⚠ Error
-    ⟳ Loading      ✓ Ready         ✗ Failed
+    ○ No Key       ⟳ Loading       ✓ Ready      ✗ Failed
 
 Badges exist in two renderings: prompt_toolkit fragments (interactive
 selectors) and Rich markup (panels, dashboard).
+
+Note (v7.2.5): a provider that merely has no API key yet is **not** offline.
+A fresh pip install ships no built-in credential and no user key, so mapping
+``STATUS_NO_KEY`` onto the offline badge made the whole application look
+broken. ``No Key`` now says exactly what is missing.
 """
 
 from __future__ import annotations
@@ -25,6 +30,8 @@ BADGES: dict[str, tuple[str, str, str, str]] = {
     "connected": ("●", "Connected", "class:sel.ok", "seed.success"),
     "connecting": ("◐", "Connecting", "class:sel.warn", "seed.warning"),
     "offline": ("○", "Offline", "class:sel.off", "seed.dim"),
+    # A missing credential is a setup state, not a network failure.
+    "no_key": ("○", "No Key", "class:sel.warn", "seed.warning"),
     "error": ("⚠", "Error", "class:sel.err", "seed.error"),
     "loading": ("⟳", "Loading", "class:sel.warn", "seed.warning"),
     "ready": ("✓", "Ready", "class:sel.ok", "seed.success"),
@@ -36,7 +43,7 @@ _STATUS_TO_BADGE = {
     STATUS_CONNECTED: "connected",
     STATUS_UNKNOWN: "ready",
     STATUS_OFFLINE: "offline",
-    STATUS_NO_KEY: "offline",
+    STATUS_NO_KEY: "no_key",
     STATUS_BAD_KEY: "error",
 }
 

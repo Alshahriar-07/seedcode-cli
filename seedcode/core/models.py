@@ -6,6 +6,7 @@ validation happens in one place and the rest of the app can rely on typed data.
 
 from __future__ import annotations
 
+import re
 import time
 from typing import Any, Literal
 
@@ -36,9 +37,11 @@ DEFAULT_MAX_TOKENS = 1024
 # ``:free`` rule in :meth:`AppConfig.effective_max_tokens`).
 AGENT_MAX_TOKENS = 8192
 
-# The six supported backends (kept as a Literal so bad config fails loudly).
-# "default" is Seed Code's built-in connection — a provider of its own, not an
-# alias of "openrouter" (see seedcode.core.providers.default).
+# The built-in backends, kept as a Literal so a bad *built-in* id fails
+# loudly. A user-defined provider id (``custom:<slug>``) is also valid, which
+# is why ``AppConfig.active_provider`` is a plain ``str``: the Custom provider
+# system (v7.2.5) lets users save any number of their own configurations, and
+# a closed Literal could not express them.
 ProviderId = Literal[
     "default",
     "openrouter",
@@ -47,6 +50,63 @@ ProviderId = Literal[
     "aerolink",
     "ollama",
 ]
+
+#: Prefix that marks a user-defined provider id (``custom:<slug>``).
+CUSTOM_PROVIDER_PREFIX = "custom:"
+
+_SLUG_RE = re.compile(r"[^a-z0-9]+")
+
+
+def custom_provider_id(name: str) -> str:
+    """Stable id for a user-defined provider, derived from its display name."""
+    slug = _SLUG_RE.sub("-", (name or "").strip().lower()).strip("-")
+    return f"{CUSTOM_PROVIDER_PREFIX}{slug[:48] or 'provider'}"
+
+
+def is_custom_provider_id(provider_id: str) -> bool:
+    """Whether ``provider_id`` names a user-defined provider."""
+    return (provider_id or "").strip().lower().startswith(CUSTOM_PROVIDER_PREFIX)
+
+
+def valid_base_url(url: str) -> bool:
+    """Whether a user-entered base URL is an http(s) endpoint."""
+    return (url or "").strip().lower().startswith(("http://", "https://"))
+
+
+class CustomProviderConfig(BaseModel):
+    """A user-defined, OpenAI-compatible API provider (v7.2.5).
+
+    The Custom system lets the user point Seed Code at *any* compatible
+    endpoint (a self-hosted gateway, a proxy, another vendor) without that
+    vendor being hard-coded into the application. Each saved configuration is
+    fully self-contained: its own name, base URL, API key, model and enabled
+    flag, ordered by ``priority``. There is no artificial count limit — users
+    may save as many as they need, and each is persisted in ``config.json``
+    beside the built-in providers.
+
+    Credentials are stored exactly like every other provider's key (owner-only
+    file permissions) and are never logged or printed in full; see
+    :meth:`AppConfig.masked_key`.
+    """
+
+    id: str = ""
+    name: str = ""
+    base_url: str = ""
+    api_key: str = ""
+    model: str = ""
+    enabled: bool = True
+    #: Lower sorts first. Kept contiguous by the move/remove helpers.
+    priority: int = 0
+
+    @field_validator("id", "name", "base_url", "api_key", "model")
+    @classmethod
+    def _clean(cls, value: str) -> str:
+        return (value or "").strip()
+
+    @property
+    def label(self) -> str:
+        """Display name (falls back to the id if the name is empty)."""
+        return self.name or self.id
 
 
 class ToolCallRecord(BaseModel):
@@ -150,6 +210,7 @@ class AppConfig(BaseModel):
 
         active_provider: "default" | "openrouter" | "freemodel_claude"
                          | "freemodel_codex" | "aerolink" | "ollama"
+                         | "custom:<slug>"
         providers:
           default:          {api_key(unused), model}
           openrouter:       {api_key, model}
@@ -157,9 +218,12 @@ class AppConfig(BaseModel):
           freemodel_codex:  {api_key, model}
           aerolink:         {api_key, model}
           ollama:           {api_key(unused), model}
+        custom_providers:
+          - {id, name, base_url, api_key, model, enabled, priority}
 
     Each provider's entry is fully isolated: writing one never touches
     another, so a switch can never leak a key or a model between them.
+    User-defined providers (``custom_providers``) are likewise self-contained.
 
     Models are never hardcoded — each provider's ``model`` starts empty and
     the user selects one from the live catalogue. Older config formats
@@ -168,8 +232,10 @@ class AppConfig(BaseModel):
     automatically on load.
     """
 
-    active_provider: ProviderId = "default"
+    active_provider: str = "default"
     providers: dict[str, ProviderConfig] = Field(default_factory=_default_providers)
+    #: User-defined OpenAI-compatible providers (unbounded count), v7.2.5.
+    custom_providers: list[CustomProviderConfig] = Field(default_factory=list)
     ollama_host: str = "http://localhost:11434"
     theme: str = "seed"
     username: str = "You"
@@ -263,9 +329,19 @@ class AppConfig(BaseModel):
                     "freemodel_claude" if backend == "claude" else "freemodel_codex"
                 )
 
-        # Anything still unknown falls back to the built-in Default provider
-        # (the zero-setup option: no API key required).
-        if "active_provider" in data and data["active_provider"] not in _ALL_PROVIDERS:
+        # A user-defined provider id (``custom:<slug>``) is valid as long as it
+        # is actually defined in this config; anything else unknown falls back
+        # to the built-in Default provider (the zero-setup option).
+        custom_ids = {
+            norm(str(entry.get("id", "")))
+            for entry in (data.get("custom_providers") or [])
+            if isinstance(entry, dict)
+        }
+        if (
+            "active_provider" in data
+            and data["active_provider"] not in _ALL_PROVIDERS
+            and data["active_provider"] not in custom_ids
+        ):
             data["active_provider"] = _FALLBACK_PROVIDER
 
         # vNext: the standalone ``desktop_mode`` flag folded into the unified
@@ -331,24 +407,172 @@ class AppConfig(BaseModel):
     @property
     def model(self) -> str:
         """Model selected for the ACTIVE provider ('' if none yet)."""
-        return self.providers[self.active_provider].model
+        custom = self.custom_provider(self.active_provider)
+        if custom is not None:
+            return custom.model
+        entry = self.providers.get(self.active_provider)
+        return entry.model if entry else ""
 
     @model.setter
     def model(self, value: str) -> None:
+        custom = self.custom_provider(self.active_provider)
+        if custom is not None:
+            custom.model = value
+            return
+        if self.active_provider not in self.providers:
+            self.providers[self.active_provider] = ProviderConfig()
         self.providers[self.active_provider].model = value
 
     # --- key management -----------------------------------------------------
     def get_api_key(self, provider_id: str | None = None) -> str:
         """Key for ``provider_id`` (default: the active provider)."""
         pid = (provider_id or self.active_provider).lower()
+        custom = self.custom_provider(pid)
+        if custom is not None:
+            return custom.api_key
         entry = self.providers.get(pid)
         return entry.api_key if entry else ""
 
     def set_api_key(self, provider_id: str, key: str) -> None:
         pid = provider_id.lower()
+        custom = self.custom_provider(pid)
+        if custom is not None:
+            custom.api_key = key
+            return
         if pid not in self.providers:
             self.providers[pid] = ProviderConfig()
         self.providers[pid].api_key = key
+
+    # --- user-defined providers (Custom, v7.2.5) ----------------------------
+    def custom_provider(
+        self, provider_id: str | None = None
+    ) -> CustomProviderConfig | None:
+        """The saved custom configuration for ``provider_id`` (or None)."""
+        pid = (provider_id or self.active_provider).strip().lower()
+        for entry in self.custom_providers:
+            if entry.id.lower() == pid:
+                return entry
+        return None
+
+    def ordered_custom_providers(
+        self, *, enabled_only: bool = False
+    ) -> list[CustomProviderConfig]:
+        """Custom providers in priority order (optionally enabled only)."""
+        entries = [e for e in self.custom_providers if e.enabled or not enabled_only]
+        return sorted(entries, key=lambda e: (e.priority, e.name.lower()))
+
+    def add_custom_provider(
+        self,
+        name: str,
+        base_url: str,
+        api_key: str = "",
+        model: str = "",
+        *,
+        enabled: bool = True,
+    ) -> CustomProviderConfig:
+        """Create and append a user-defined provider (unbounded count).
+
+        Raises ``ValueError`` for an empty name or a non-http(s) base URL so
+        callers can show a precise error instead of saving a broken entry.
+        The id is derived from the name and made unique.
+        """
+        name = (name or "").strip()
+        base_url = (base_url or "").strip().rstrip("/")
+        if not name:
+            raise ValueError("a custom provider needs a name")
+        if not valid_base_url(base_url):
+            raise ValueError("base URL must start with http:// or https://")
+        base_id = custom_provider_id(name)
+        existing = {e.id.lower() for e in self.custom_providers}
+        pid = base_id.lower()
+        suffix = 2
+        while pid in existing:
+            pid = f"{base_id.lower()}-{suffix}"
+            suffix += 1
+        entry = CustomProviderConfig(
+            id=pid,
+            name=name,
+            base_url=base_url,
+            api_key=(api_key or "").strip(),
+            model=(model or "").strip(),
+            enabled=enabled,
+        )
+        self.custom_providers.append(entry)
+        self._renumber_custom()
+        return entry
+
+    def update_custom_provider(
+        self,
+        provider_id: str,
+        *,
+        name: str | None = None,
+        base_url: str | None = None,
+        api_key: str | None = None,
+        model: str | None = None,
+        enabled: bool | None = None,
+    ) -> CustomProviderConfig | None:
+        """Edit a saved custom provider; returns it, or None if unknown."""
+        entry = self.custom_provider(provider_id)
+        if entry is None:
+            return None
+        if name is not None and name.strip():
+            entry.name = name.strip()
+        if base_url is not None:
+            url = base_url.strip().rstrip("/")
+            if not valid_base_url(url):
+                raise ValueError("base URL must start with http:// or https://")
+            entry.base_url = url
+        if api_key is not None:
+            entry.api_key = api_key.strip()
+        if model is not None:
+            entry.model = model.strip()
+        if enabled is not None:
+            entry.enabled = bool(enabled)
+        return entry
+
+    def remove_custom_provider(self, provider_id: str) -> bool:
+        """Delete a saved custom provider. The active one falls back safely."""
+        entry = self.custom_provider(provider_id)
+        if entry is None:
+            return False
+        self.custom_providers.remove(entry)
+        self.providers.pop(entry.id.lower(), None)
+        if self.active_provider.lower() == entry.id.lower():
+            from .. import defaults as _defaults
+
+            self.active_provider = _defaults.DEFAULT_PROVIDER
+        self._renumber_custom()
+        return True
+
+    def set_custom_enabled(self, provider_id: str, enabled: bool) -> bool:
+        """Enable/disable a saved custom provider (disabled = never used)."""
+        entry = self.custom_provider(provider_id)
+        if entry is None:
+            return False
+        entry.enabled = bool(enabled)
+        return True
+
+    def move_custom_provider(self, provider_id: str, delta: int) -> bool:
+        """Move a custom provider up/down in the priority order."""
+        entry = self.custom_provider(provider_id)
+        if entry is None or delta == 0:
+            return False
+        order = self.ordered_custom_providers()
+        index = order.index(entry)
+        target = max(0, min(len(order) - 1, index + delta))
+        if target == index:
+            return False
+        order.insert(target, order.pop(index))
+        for position, item in enumerate(order):
+            item.priority = position
+        # Keep the persisted list in the same order the user now sees.
+        self.custom_providers = order
+        return True
+
+    def _renumber_custom(self) -> None:
+        """Keep priority contiguous after an add/delete."""
+        for position, item in enumerate(self.ordered_custom_providers()):
+            item.priority = position
 
     def provider_options(self, provider_id: str) -> dict[str, str]:
         """Mutable provider-specific options dict for ``provider_id``."""
@@ -368,6 +592,11 @@ class AppConfig(BaseModel):
         """
         if not self.model:
             return False
+        custom = self.custom_provider(self.active_provider)
+        if custom is not None:
+            # A custom provider is usable when it is enabled, has a model and
+            # carries its own key (never another provider's).
+            return bool(custom.enabled and custom.model and custom.api_key.strip())
         if self.active_provider == "ollama":
             return True
         if self.active_provider == "default":

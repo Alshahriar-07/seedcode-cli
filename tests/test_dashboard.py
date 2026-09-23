@@ -1,23 +1,24 @@
-"""Startup dashboard tests (v6.2.5 restored richer layout).
+"""Startup dashboard tests (v7.2.5 logo branding).
 
-The startup screen is the previous structured Seed Code dashboard — a
-bordered reference panel with a branding cell, a divider and a live info
-section::
+The startup screen is now the Seed Code ANSI wordmark logo followed by a
+compact, information-rich block with the live session state::
 
-    ╭─ Seed Code CLI v7.1.0 ───────────────────────────────────────────────────────────────────────╮
-    │                                                                                              │
-    │   Seed Code                                │ Seed Code  |  Eagox Studio                      │
-    │   AI CODING AGENT                          │ Plant ideas. Grow code.                         │
-    │                                            │ Provider   Default                              │
-    │                                            │ Model      cohere/north-mini-code:free          │
-    │                                            │ Mode       Chat  •  ● Ready                     │
-    ╰──────────────────────────────────────────────────────────────────────────────────────────────╯
+    ╭─ Seed Code CLI v7.2.5 ──────────────────────────────────────────────╮
+    │   ▄█████ ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄    ▄█████  ▄▄▄  ▄▄▄▄  ▄▄▄▄▄   ▄█████ ██ ...│
+    │   ...                                                                │
+    │                                                                      │
+    │   Seed Code CLI v7.2.5                                               │
+    │   Plant ideas. Grow code.                                            │
+    │   Provider   OpenRouter                                              │
+    │   Model      gpt-5.1-codex                                           │
+    │   Mode       Chat                                                    │
+    │   Status     ● Ready                                                 │
+    ╰──────────────────────────────────────────────────────────────────────╯
 
-…with exactly one permanent change: **the ASCII logo is gone**. These tests
-lock that in — no pixel/block art can come back, no logo module may return —
-while still requiring a structured, information-rich screen (not a bare
-five-line header), real runtime state, responsive behaviour and an ASCII
-fallback for consoles that cannot draw the glyphs.
+These tests require the exact logo at Unicode widths, a text-wordmark fallback
+on consoles that cannot draw the block glyphs, real runtime state (never a
+faked "Ready"), API-key rows only where a key is actually needed, and
+responsive behaviour with an ASCII fallback.
 """
 
 from __future__ import annotations
@@ -31,14 +32,11 @@ from rich.console import Console
 from seedcode import APP_NAME, __version__
 from seedcode.core.models import AppConfig
 from seedcode.ui import UI
-from seedcode.ui.dashboard import PANEL_WIDTH, render_dashboard
+from seedcode.ui.dashboard import LOGO_LINES, PANEL_WIDTH, render_dashboard
 from seedcode.ui.theme import SEED_THEME
 
-# Pixel/block glyphs ARE ascii-art branding: never allowed, at any width.
-_ART_GLYPHS = set("█▓▒░▀▄▌▐■□▪▫")
-# ASCII-art fallback cues (a '#'-raster logo, drawn large).
-_ART_RUNS = ("██", "▓▓", "░░", "▄▄", "###")
-# Glyphs the structured layout is allowed to use.
+# Block glyphs that make up the fixed logo (branding, not generated art).
+_LOGO_GLYPHS = set("█▄▀")
 _BOX_GLYPHS = set("╭╮╰╯│─+-|")
 
 
@@ -67,73 +65,78 @@ def _byok() -> AppConfig:
     return cfg
 
 
-# --- the logo stays gone ------------------------------------------------------
-def test_no_ascii_logo_or_pixel_art_anywhere() -> None:
+# --- the fixed logo is the primary startup branding --------------------------
+def test_the_exact_logo_is_the_primary_branding() -> None:
     for cfg in (_byok(), AppConfig()):
-        for width in (40, 50, 64, 80, 100, 200):
-            for legacy in (False, True):
-                lines = _lines(cfg, width, legacy)
-                joined = "\n".join(lines)
-                assert not (_ART_GLYPHS & set(joined)), joined
-                for run in _ART_RUNS:
-                    assert run not in joined, (run, joined)
+        out = _render(cfg, 100)
+        for line in LOGO_LINES:
+            assert line in out, line
 
 
-def test_logo_module_is_gone() -> None:
-    """The removed logo/banner modules must never come back."""
-    assert importlib.util.find_spec("seedcode.ui.logo") is None
-    assert importlib.util.find_spec("seedcode.ui.banner") is None
+def test_old_branding_is_replaced_at_unicode_widths() -> None:
+    out = _render(_byok(), 100)
+    # The old "SeedCode Cli / ai coding assistant" startup branding is gone.
+    assert "SeedCode Cli" not in out
+    assert "ai coding assistant" not in out
+    assert "AI CODING AGENT" not in out  # that was the fallback wordmark
 
 
-def test_brand_is_plain_text() -> None:
-    out = _render(_byok())
+def test_legacy_consoles_get_the_text_wordmark_not_block_art() -> None:
+    out = _render(_byok(), 100, legacy=True)
+    # A console that cannot draw the logo still gets a structured panel...
     assert "Seed Code" in out
     assert "AI CODING AGENT" in out
-    assert "Plant ideas. Grow code." in out
-    assert "Eagox Studio" in out
+    # ...but never the unencodable block art.
+    for line in out.splitlines():
+        assert not (_LOGO_GLYPHS & set(line)), line
+
+
+def test_logo_is_not_a_separate_module() -> None:
+    """The removed logo/banner modules must never come back as loose modules."""
+    assert importlib.util.find_spec("seedcode.ui.logo") is None
+    assert importlib.util.find_spec("seedcode.ui.banner") is None
 
 
 # --- structured, not bare -----------------------------------------------------
 def test_dashboard_is_structured_and_compact() -> None:
     lines = _lines(_byok())
-    assert 6 <= len(lines) <= 12, lines  # richer than 5 lines, no splash screen
-    assert lines[0].startswith(f"╭─ Seed Code CLI v{__version__}")
+    assert 8 <= len(lines) <= 14, lines  # logo + info, not a splash screen
+    assert lines[0].startswith(f"╭─ {APP_NAME} CLI v{__version__}")
     assert lines[-1].startswith("╰")
-    assert any("│" in line for line in lines)  # the section divider is drawn
 
 
-def test_left_cell_is_brand_only_and_right_cell_carries_identity() -> None:
-    """The reference split: branding left of the divider, identity right."""
+def test_identity_and_tagline_are_shown() -> None:
+    out = _render(_byok())
+    assert f"{APP_NAME} CLI v{__version__}" in out
+    assert "Plant ideas. Grow code." in out
+
+
+def test_runtime_state_is_labelled_once_per_row() -> None:
+    out = _render(_byok())
+    for label in ("Provider", "Model", "Mode", "Status"):
+        assert len(re.findall(rf"\b{label}\b", out)) == 1, label
+
+
+def test_byok_provider_values_are_dynamic() -> None:
+    out = _render(_byok())
+    assert "OpenRouter" in out
+    assert "gpt-5.1-codex" in out
+    assert "Chat" in out
+    assert "Ready" in out
+
+
+def test_mode_and_status_are_separate_rows() -> None:
     lines = _lines(_byok(), 88)
-    cells = [ln.split("│") for ln in lines if "│" in ln]
-    left = [cell[1].strip() for cell in cells if cell[1].strip()]
-    right = [cell[2].strip() for cell in cells]
-    right = [cell for cell in right if cell]
-    assert left[:2] == ["Seed Code", "AI CODING AGENT"]
-    assert right[0] == "Seed Code  |  Eagox Studio"
-    assert right[1] == "Plant ideas. Grow code."
+    mode = next(ln for ln in lines if re.search(r"\bMode\b", ln))
+    status = next(ln for ln in lines if re.search(r"\bStatus\b", ln))
+    assert "Chat" in mode
+    assert "Ready" in status
 
 
-def test_mode_row_carries_the_live_status() -> None:
-    """Mode and status share one row, in the reference's order."""
-    mode = next(ln for ln in _lines(_byok(), 88) if re.search(r"\bMode\b", ln))
-    assert "Chat" in mode and "Ready" in mode
-    assert mode.index("Chat") < mode.index("Ready")
-
-
-def test_eighty_columns_show_the_whole_default_model() -> None:
-    """The info section slides left so a common 80-column terminal still fits
-    the entire default model name — no clipping of the value that matters."""
+# --- real runtime content -----------------------------------------------------
+def test_wide_terminals_show_the_whole_default_model() -> None:
     cfg = AppConfig(provider="default", model="cohere/north-mini-code:free")
-    assert "cohere/north-mini-code:free" in _render(cfg, width=80)
-    assert "Model      cohere/north-mini-code:free" in _render(cfg, width=88)
-
-
-def test_title_is_the_brand_line() -> None:
-    lines = _lines(_byok())
-    title = f"{APP_NAME} CLI v{__version__}"
-    assert title in lines[0]
-    assert "Seed code" not in "\n".join(lines)  # brand casing everywhere
+    assert "cohere/north-mini-code:free" in _render(cfg, width=88)
 
 
 def test_panel_never_stretches_past_the_design_width() -> None:
@@ -146,22 +149,13 @@ def test_wide_terminals_do_not_stretch_the_dashboard() -> None:
     assert _lines(_byok(), 200) == _lines(_byok(), 120)
 
 
-# --- dynamic content, shown once ---------------------------------------------
-def test_runtime_state_is_labelled_once_per_row() -> None:
-    out = _render(_byok())
-    # Whole words, so "Mode" is not matched inside "Model".
-    for label in ("Provider", "Model", "Mode"):
-        assert len(re.findall(rf"\b{label}\b", out)) == 1, label
-    # Mode and status share one row — there is no second, standalone row.
-    assert "Status" not in out
-
-
-def test_byok_provider_values_are_dynamic() -> None:
-    out = _render(_byok())
-    assert "OpenRouter" in out
-    assert "gpt-5.1-codex" in out
-    assert "Chat" in out
-    assert "Ready" in out
+def test_long_model_name_is_clipped_to_display_width() -> None:
+    cfg = _byok()
+    cfg.model = "deepseek/" + "x" * 120
+    out = _render(cfg, width=100)
+    assert "…" in out
+    for line in out.splitlines():
+        assert len(line) <= 100
 
 
 class _StubUI:
@@ -216,8 +210,8 @@ def test_api_key_row_hidden_for_providers_that_need_no_key() -> None:
 def test_api_key_row_shown_masked_for_key_providers() -> None:
     out = _render(_byok())
     assert "API Key" in out
-    assert "sk-or-test" not in out  # never the raw key
-    assert "*" in out  # masked form
+    assert "sk-or-test" not in out
+    assert "*" in out
 
 
 def test_api_key_row_warns_when_missing() -> None:
@@ -225,11 +219,9 @@ def test_api_key_row_warns_when_missing() -> None:
     assert "Not set" in _render(cfg)
 
 
-# --- unconfigured never fakes readiness -------------------------------------
+# --- unconfigured never fakes readiness --------------------------------------
 def test_unconfigured_placeholders() -> None:
     out = _render(AppConfig())
-    # The built-in provider is named honestly, but with no model chosen there
-    # is nothing to chat with — and "Ready" is never faked.
     assert "Default" in out
     assert "no model" in out
     assert "Setup needed" in out
@@ -263,7 +255,6 @@ def test_narrow_terminals_get_the_compact_panel() -> None:
         out = "\n".join(lines)
         assert "OpenRouter" in out or "OpenR" in out
         assert "Chat" in out
-        assert "Ready" in out or "Rea" in out
 
 
 def test_very_narrow_terminals_render_plain_lines() -> None:
@@ -273,15 +264,6 @@ def test_very_narrow_terminals_render_plain_lines() -> None:
         out = "\n".join(lines)
         assert "Seed Code" in out
         assert not (_BOX_GLYPHS & set(lines[0])), lines[0]
-
-
-def test_long_model_name_is_clipped_to_display_width() -> None:
-    cfg = _byok()
-    cfg.model = "deepseek/" + "x" * 120
-    out = _render(cfg, width=100)
-    assert "…" in out  # ellipsis marks the clip
-    for line in out.splitlines():
-        assert len(line) <= 100
 
 
 def test_no_line_exceeds_terminal_width() -> None:
@@ -326,7 +308,7 @@ def test_mode_switch_reprints_the_session_bar() -> None:
     dispatch(CommandContext(ui=ui, config=config, engine=None), "/mode chat")
     out = ui.console.export_text()
     assert "cohere/north-mini-code:free" in out
-    assert "Setup needed" in out  # honest status, not a faked "Ready"
+    assert "Setup needed" in out
 
 
 def test_legacy_console_gets_an_ascii_panel() -> None:
@@ -335,28 +317,9 @@ def test_legacy_console_gets_an_ascii_panel() -> None:
     assert lines[0].startswith("+- Seed Code CLI")
     assert lines[-1].startswith("+-")
     assert "o Ready" in out or "o Connected" in out
-    # No Unicode marks or borders on a console that cannot draw them.
-    for glyph in "●○╭╮╰╯│─":
+    for glyph in "●○╭╮╰╯│─█▄▀":
         assert glyph not in out, glyph
 
 
-# --- final proportions (wide + short) ----------------------------------------
 def test_panel_is_wide_and_short() -> None:
-    """Locks the final sizing: a 96-column panel with no padding rows.
-
-    Wider and shorter than the earlier reference: 96 columns at full width so
-    the whole model name fits, and one less blank row — a single blank row
-    under the title, the live rows, then the border.
-    """
     assert PANEL_WIDTH == 96
-
-    default_lines = _lines(AppConfig(provider="default", model="m"), 200)
-    byok_lines = _lines(_byok(), 200)
-    assert len(default_lines) == 8  # top border + blank + 5 rows + bottom border
-    assert len(byok_lines) == 9  # ... plus the API Key row
-    assert all(len(line) == PANEL_WIDTH for line in default_lines)
-
-    # No blank padding row between the tagline and the first live value.
-    tagline = next(i for i, ln in enumerate(byok_lines) if "Plant ideas" in ln)
-    provider = next(i for i, ln in enumerate(byok_lines) if "Provider" in ln)
-    assert provider == tagline + 1

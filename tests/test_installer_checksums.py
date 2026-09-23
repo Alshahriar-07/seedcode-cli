@@ -430,10 +430,14 @@ def test_assets_carry_the_current_release_version() -> None:
 
 
 def test_official_install_commands_are_the_only_ones_documented() -> None:
-    """npm / pip / winget are not current distribution channels."""
+    """v7.2.5 channels: pip, the IRM installers, and GitHub Releases.
+
+    pyproject's ``[project.scripts]`` exposes the ``seedcode`` console command,
+    so ``pip install seedcode-cli`` is an official channel again; npm and
+    winget remain retired and must not be advertised.
+    """
     banned = (
         "npm install -g seedcode-cli",
-        "pip install seedcode-cli",
         "winget install SeedCode.CLI",
     )
     for path in (
@@ -447,4 +451,6 @@ def test_official_install_commands_are_the_only_ones_documented() -> None:
 
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     assert "irm https://seedcode-cli.vercel.app/install.ps1 | iex" in readme
+    assert "pip install seedcode-cli" in readme
+    assert "seedcode\n" in readme or "seedcode" in readme
     assert "curl -fsSL https://seedcode-cli.vercel.app/install.sh | bash" in readme
