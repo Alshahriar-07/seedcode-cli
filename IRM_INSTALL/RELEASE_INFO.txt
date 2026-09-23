@@ -1,74 +1,108 @@
-SEED CODE CLI v7.2.5
-====================
+Seed Code CLI
+=============
 
-Primary command (after any installation):
+Version: 7.2.5
+License: PolyForm Noncommercial License 1.0.0
+         (https://polyformproject.org/licenses/noncommercial/1.0.0/)
 
-    seedcode
-
-Official Installation
----------------------
-
-pip (any platform, Python 3.10+):
-
-    pip install seedcode-cli
-    seedcode
-
-Windows (PowerShell 5.1+):
-
-    irm https://seedcode-cli.vercel.app/install.ps1 | iex
-
-Linux / macOS:
-
-    curl -fsSL https://seedcode-cli.vercel.app/install.sh | bash
-
-After the official installers finish, open a NEW terminal and run:
-
-    seedcode
-
-`seedcode --version` prints: Seed Code CLI 7.2.5
-`python -m seedcode` is also supported as a developer invocation.
-
-Release artifacts (dist/release/7.2.5/)
----------------------------------------
-
-    seedcode_cli-7.2.5-py3-none-any.whl        Python wheel (pip install)
-    seedcode_cli-7.2.5.tar.gz                  Python source distribution
-    SeedCode-CLI-7.2.5-windows-x64.exe         Standalone Windows executable
-    SeedCode-CLI-Setup-7.2.5.exe               Windows setup installer (Inno Setup)
-    SHA256SUMS.txt                             SHA256 digest for every artifact
-
-Every artifact in SHA256SUMS.txt is verified before installation; a missing
-entry or a mismatching digest aborts the install instead of proceeding.
-
-License
--------
-
-Seed Code CLI is licensed under the PolyForm Noncommercial License 1.0.0
-(`PolyForm-Noncommercial-1.0.0`): free for personal learning and other
-noncommercial use, commercial use not permitted. The full text ships as the
-`LICENSE` file in this repository, inside the wheel/sdist metadata, and in the
-installed `README.md`. Third-party dependencies keep their own licenses.
-
-Requirements
-------------
-
-Python 3.10 or newer is supported (the wheel and sdist declare
-`requires-python = ">=3.10"`). No Python is required for the Windows
-standalone/setup executables.
-
-Provider configuration
+WHAT'S IN THIS RELEASE
 ----------------------
+The v7.2.5 release artifacts:
+  - Windows portable executable (x64)
+  - Windows Setup installer (x64)
+  - Python wheel (any OS)
+  - Python sdist (any OS)
+  - SHA256SUMS.txt checksum file covering all of the above
 
-Providers: OpenRouter, Ollama (auto-started when selected), and any number of
-user-defined Custom OpenAI-compatible providers. Api keys are stored in the
-per-user config (`~/.seedcode/config.json`) with owner-only permissions and
-are never printed in full. No private credential is embedded in any artifact.
+Primary command after any install method:  seedcode
+Developer fallback:                        python -m seedcode
 
-Distribution
-------------
+INSTALLATION METHODS
+--------------------
 
-Official Seed Code CLI releases are distributed through the IRM installer
-system, PyPI (`seedcode-cli`) and GitHub Releases.
+1) Windows - remote PowerShell installer (recommended on Windows)
 
-Version:
-7.2.5
+     irm https://seedcode-cli.vercel.app/install.ps1 | iex
+
+   Downloads the official SeedCode-CLI-7.2.5-windows-x64.exe from GitHub
+   Releases, verifies its SHA-256 against the release's SHA256SUMS.txt
+   (cross-checked against a pinned digest built into the installer; a
+   mismatch aborts, verification is never bypassed), installs per-user to
+   %LOCALAPPDATA%\Programs\SeedCode, adds that directory to the user PATH,
+   and verifies the installed binary reports version 7.2.5. PowerShell 5.1
+   and 7+ compatible; ANSI UI with graceful fallback; Ctrl+C safe.
+
+2) Windows - Setup installer
+
+   Download SeedCode-CLI-Setup-7.2.5.exe from
+   https://github.com/Alshahriar-07/seedcode-cli/releases and run it.
+   Installs per-user with a Start Menu shortcut and adds the install
+   directory to the user PATH so `seedcode` works in new terminals.
+   Preserves configuration during upgrades (user config lives in the
+   Seed Code config directory, not the install directory).
+
+3) Windows - portable executable
+
+   Download SeedCode-CLI-7.2.5-windows-x64.exe from the releases page and
+   run it directly. No installation, no PATH changes; `seedcode --version`
+   reports 7.2.5. For a persistent `seedcode` command, use method 1 or 2.
+
+4) Linux / macOS - remote shell installer
+
+     curl -fsSL https://seedcode-cli.vercel.app/install.sh | bash
+
+   Downloads the official seedcode_cli-7.2.5-py3-none-any.whl from GitHub
+   Releases, verifies its SHA-256 against the release's SHA256SUMS.txt
+   (cross-checked against a pinned digest built into the installer; a
+   mismatch aborts, verification is never bypassed), installs with pipx
+   when available (otherwise pip --user, with PEP 668 handling), creates a
+   `seedcode` shim in ~/.local/bin, and verifies the installed binary
+   reports 7.2.5. Clean ANSI UI with ASCII fallback; Ctrl+C safe.
+
+5) Any OS - pip
+
+     pip install seedcode-cli
+
+   Then run:
+
+     seedcode          (primary command)
+     python -m seedcode   (developer fallback)
+
+   First launch initializes the per-user configuration in the Seed Code
+   config directory (never inside site-packages), shows provider/model
+   status, and prompts for an API key if none is configured. The wheel
+   requires Python 3.10+.
+
+6) Node.js launcher (npm)
+
+     npm install -g @alshahriar-07/seedcode-cli
+
+   Thin wrapper that downloads the official release binary for your
+   platform on first run and execs it.
+
+UPGRADE SAFETY
+--------------
+Upgrades preserve user configuration and provider/API settings. The Windows
+installers upgrade in place; configuration lives in the Seed Code config
+directory and is never deleted by an installer.
+
+CHECKSUMS
+---------
+Every release artifact has a SHA-256 entry in SHA256SUMS.txt:
+
+  cd dist/release/7.2.5
+  sha256sum -c SHA256SUMS.txt          # Linux/macOS
+  Get-FileHash <file> -Algorithm SHA256  # Windows
+
+Both remote installers verify before installing: they read the release's
+SHA256SUMS.txt as the authoritative expected value, cross-check it against a
+digest pinned in the installer (verified against the actual published
+artifacts), and abort on any mismatch. If the release checksum file is
+unreachable, the pinned digest is used as the expected value and the
+installer says so. Verification is never bypassed.
+
+SUPPORT
+-------
+Releases:  https://github.com/Alshahriar-07/seedcode-cli/releases
+Issues:    https://github.com/Alshahriar-07/seedcode-cli/issues
+Docs:      https://seedcode-cli.vercel.app

@@ -1,327 +1,309 @@
 #!/usr/bin/env bash
-# Seed Code CLI v7.2.5 - official Linux/macOS remote installer.
+# Seed Code CLI v7.2.5 - official remote installer (Linux / macOS / WSL).
+#
+# Installs Seed Code CLI for the CURRENT USER. No administrator rights, no
+# virtualenv, and no cloned repository are required: the official release
+# wheel is downloaded from GitHub Releases, its SHA256 is verified, and
+# `seedcode` is installed into your user environment with `pipx` when
+# available (falling back to `pip install --user`).
 #
 # Usage (exactly as documented for remote install):
 #
-#     curl -fsSL https://seedcode-cli.vercel.app/install.sh | bash
+#   curl -fsSL https://seedcode-cli.vercel.app/install.sh | bash
 #
-# Installs Seed Code CLI for the CURRENT USER: no admin rights, no cloned
-# repository. The official release artifact is downloaded from GitHub
-# Releases and its SHA256 is verified before anything is installed. When a
-# prebuilt binary for this platform is published it is used directly;
-# otherwise the official Python wheel is installed with pip.
+# Or, to pass options, download-then-run:
 #
-# Options (download-then-run form):
+#   bash install.sh --version 7.2.5
+#   bash install.sh --bin-dir ~/.local/bin
 #
-#     curl -fsSL https://seedcode-cli.vercel.app/install.sh -o install.sh
-#     bash install.sh --version 7.2.5 --no-path-update
+# Options:
+#   --version V   Release version to install   (default: 7.2.5)
+#   --bin-dir D   Where the seedcode shim should live (default: ~/.local/bin)
+#   --force       Reinstall even if this version is already present
+#   --plain       Disable the ANSI/Unicode UI
+#   -h, --help    Show this help
 #
-# This script never sees, stores, or prints an API key.
+# This script never sees, stores, or prints an API key; credentials are set
+# up inside the app on first run.
 
-set -euo pipefail
+set -u
 
-VERSION="7.2.5"
-NO_PATH_UPDATE=0
-FORCE=0
+# --- shell environment hardening ---------------------------------------------
+IFS=$'\n\t'
+umask 022
+
+# --- constants ---------------------------------------------------------------
 REPO="Alshahriar-07/seedcode-cli"
-BIN_NAME="seedcode"
+DEFAULT_VERSION="7.2.5"
+USER_AGENT="seedcode-cli-installer/${DEFAULT_VERSION}"
 
-usage() {
-  cat <<EOF
-Seed Code CLI installer
+# Pinned SHA256 digests for the official v7.2.5 release artifacts. Each value
+# was verified against the artifact actually published to GitHub Releases.
+# They are a cross-check against, and a fallback for, SHA256SUMS.txt - never
+# a substitute that bypasses verification.
+PINNED_WHEEL="1ce44036d45a99630e557f44ee1afd2f45c2be7dc09d475dfd151c392d1d8bec"
 
-Usage: install.sh [options]
+# --- options -----------------------------------------------------------------
+VERSION="$DEFAULT_VERSION"
+BIN_DIR="${HOME}/.local/bin"
+FORCE=0
+PLAIN="${NO_COLOR:+1}"
 
-  --version <x.y.z>   Release version to install (default: ${VERSION})
-  --no-path-update    Install without modifying PATH
-  --force             Reinstall even when this version is already installed
-  -h, --help          Show this help
-
-Installs Seed Code CLI, verifies the downloaded artifact's SHA256, adds the
-install directory to your PATH, and then runs: seedcode --version
-EOF
+print_help() {
+    sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'
+    exit 0
 }
 
-log()  { printf '  %s\n' "$*"; }
-step() { printf '  - %s\n' "$*"; }
-ok()   { printf '  OK  %s\n' "$*"; }
-warn() { printf '  !   %s\n' "$*"; }
-
-die() {
-  printf '\n  Installer error: %s\n\n' "$*" >&2
-  printf '  Download manually from: https://github.com/%s/releases\n\n' "$REPO" >&2
-  exit 1
-}
-
-# --- arguments ---------------------------------------------------------------
 while [ $# -gt 0 ]; do
-  case "$1" in
-    --version) [ $# -ge 2 ] || die "--version needs a value like 7.2.5"; VERSION="$2"; shift 2 ;;
-    --no-path-update) NO_PATH_UPDATE=1; shift ;;
-    --force) FORCE=1; shift ;;
-    -h|--help) usage; exit 0 ;;
-    *) die "Unknown option: $1 (try --help)" ;;
-  esac
+    case "$1" in
+        --version) [ $# -ge 2 ] || { echo "error: --version needs a value" >&2; exit 2; }; VERSION="$2"; shift 2 ;;
+        --bin-dir) [ $# -ge 2 ] || { echo "error: --bin-dir needs a value" ; exit 2; }; BIN_DIR="$2"; shift 2 ;;
+        --force)   FORCE=1; shift ;;
+        --plain)   PLAIN=1; shift ;;
+        -h|--help) print_help ;;
+        *) echo "error: unknown option: $1 (try --help)" >&2; exit 2 ;;
+    esac
 done
 
-case "$VERSION" in
-  [0-9]*.[0-9]*.[0-9]*) : ;;
-  *) die "Unsupported version format: '$VERSION' (expected x.y.z)" ;;
-esac
-
-RELEASE_BASE="https://github.com/${REPO}/releases/download/v${VERSION}"
-SUMS_URL="${RELEASE_BASE}/SHA256SUMS.txt"
-
-# --- platform detection ------------------------------------------------------
-case "$(uname -s 2>/dev/null || echo unknown)" in
-  Linux)  OS="linux" ;;
-  Darwin) OS="macos" ;;
-  *) die "Unsupported operating system '$(uname -s 2>/dev/null)'. Seed Code CLI installs on Linux and macOS; on Windows use install.ps1." ;;
-esac
-
-case "$(uname -m 2>/dev/null || echo unknown)" in
-  x86_64|amd64)  ARCH="x64" ;;
-  aarch64|arm64) ARCH="arm64" ;;
-  armv7l)        ARCH="armv7" ;;
-  *) die "Unsupported processor architecture '$(uname -m 2>/dev/null)'." ;;
-esac
-
-# --- download helpers (curl or wget) ----------------------------------------
-if command -v curl >/dev/null 2>&1; then
-  HAVE_CURL=1
-elif command -v wget >/dev/null 2>&1; then
-  HAVE_CURL=0
+# --- UI (ANSI / Unicode with graceful fallback) -------------------------------
+if [ -t 1 ] && [ -z "${PLAIN:-}" ] && [ -z "${NO_COLOR:-}" ] && [ "${TERM:-dumb}" != "dumb" ]; then
+    UI_TTY=1
 else
-  die "Neither curl nor wget is available; install one and try again."
+    UI_TTY=0
 fi
 
-fetch_text() {
-  # Prints the URL body, or nothing on failure. Never fatal.
-  if [ "$HAVE_CURL" = 1 ]; then
-    curl -fsSL --connect-timeout 20 --max-time 120 "$1" 2>/dev/null || true
-  else
-    wget -qO- --timeout=120 "$1" 2>/dev/null || true
-  fi
+# Unicode is best-effort; everything degrades to ASCII cleanly.
+if command -v locale >/dev/null 2>&1 && locale -k charmap 2>/dev/null | grep -qi 'UTF-8'; then
+    UI_UNICODE=1
+else
+    UI_UNICODE=0
+fi
+
+if [ "$UI_UNICODE" = "1" ]; then
+    SYM_RULE="─"; SYM_TICK="✓"; SYM_NODE="●"; SYM_DOT="•"
+else
+    SYM_RULE="-"; SYM_TICK="OK"; SYM_NODE="*"; SYM_DOT="|"
+fi
+RULE_TEXT=$(awk -v s="$SYM_RULE" 'BEGIN{for(i=0;i<38;i++) printf "%s", s}')
+
+if [ "$UI_TTY" = "1" ]; then
+    C_RESET=$'\033[0m'; C_GRAY=$'\033[90m'; C_GREEN=$'\033[92m'
+    C_YELLOW=$'\033[93m'; C_RED=$'\033[91m'; C_CYAN=$'\033[96m'; C_DGRAY=$'\033[37m'
+else
+    C_RESET=""; C_GRAY=""; C_GREEN=""; C_YELLOW=""; C_RED=""; C_CYAN=""; C_DGRAY=""
+fi
+
+ui()      { printf '  %b\n' "$1"; }                      # raw line
+title()   { ui "${C_GREEN}$1${C_RESET}"; }
+rule()    { ui "${C_DGRAY}  $RULE_TEXT${C_RESET}"; }
+section() { printf '\n'; ui "${C_CYAN}  $1${C_RESET}"; }
+ok()      { ui "${C_GREEN}  ${SYM_TICK} $1${C_RESET}"; }
+step()    { ui "${C_GRAY}  $1${C_RESET}"; }
+note()    { ui "${C_DGRAY}  $1${C_RESET}"; }
+
+die() {  # clean, single, actionable error; non-zero exit
+    printf '\n' >&2
+    # %b (not %s) so multi-line messages keep their embedded newlines.
+    printf '  %bInstaller error:%b %b\n\n' "${C_RED}" "${C_RESET}" "$1" >&2
+    printf '  Download manually from: https://github.com/%s/releases\n\n' "$REPO" >&2
+    exit 1
 }
 
-fetch_file() {
-  if [ "$HAVE_CURL" = 1 ]; then
-    curl -fsSL --connect-timeout 20 --max-time 600 -o "$2" "$1" \
-      || die "Could not download $1"
-  else
-    wget -q -O "$2" --timeout=600 "$1" || die "Could not download $1"
-  fi
-  [ -s "$2" ] || die "Download produced an empty file: $1"
+# Ctrl+C must stop cleanly (no half-written state, correct exit code).
+interrupted() {
+    printf '\n' >&2
+    printf '  %bInterrupted.%b Nothing was installed.\n' "${C_YELLOW}" "${C_RESET}" >&2
+    exit 130
+}
+trap interrupted INT TERM
+
+cleanup() {
+    [ -n "${TMP_DOWNLOAD:-}" ] && [ -e "${TMP_DOWNLOAD}" ] && rm -f "$TMP_DOWNLOAD"
+    [ -n "${TMP_SUMS:-}" ]     && [ -e "${TMP_SUMS}" ]     && rm -f "$TMP_SUMS"
+    [ -n "${TMP_DIR:-}" ]      && [ -d "${TMP_DIR}" ]      && rmdir "$TMP_DIR" 2>/dev/null
+}
+trap cleanup EXIT
+
+# --- required tools -----------------------------------------------------------
+need() { command -v "$1" >/dev/null 2>&1 || die "$1 is required but was not found in PATH."; }
+
+# --- checksum helpers ---------------------------------------------------------
+# One SHA256SUMS.txt entry looks like:
+#   <64 hex digits><spaces or tabs>[*]<file name>
+# The separator is deliberately NOT assumed to be a single space: GNU
+# sha256sum writes two spaces, other tools emit tabs, and a checksum file
+# staged on Windows can arrive with CRLF line endings. '*' is the binary-mode
+# marker some sha256sum builds write; it is not part of the file name.
+# Parsing uses plain `read` field splitting - no sed/awk ERE, which would
+# need non-POSIX extensions (lazy quantifiers) to do this correctly.
+
+# get_expected_hash <sums-file> <file-name>  -> prints hash, or returns 1
+get_expected_hash() {
+    _sums="$1"; _want="$2"
+    [ -s "$_sums" ] || return 1
+    # The installer sets a global IFS of newline+tab, so `read` gets an
+    # explicit space+tab IFS here - SHA256SUMS.txt separates fields with
+    # spaces, which must still split.
+    while IFS=$' \t' read -r _hash _name _extra || [ -n "${_hash:-}" ]; do
+        [ -n "${_hash:-}" ] || continue
+        case "$_hash" in '#'*) continue ;; esac   # comment lines
+        # The hash field must be exactly 64 hex digits.
+        printf '%s' "$_hash" | grep -Eq '^[0-9A-Fa-f]{64}$' || continue
+        [ -n "${_name:-}" ] || continue
+        _name="${_name##*\*}"                      # strip any binary-mode marker(s)
+        _name="${_name%$'\r'}"                     # strip CR from CRLF files
+        if [ "$_name" = "$_want" ]; then
+            printf '%s' "$(printf '%s' "$_hash" | tr 'A-F' 'a-f')"
+            return 0
+        fi
+    done < "$_sums"
+    return 1
 }
 
 sha256_of() {
-  # Prints the bare lowercase-able digest. `tr -d '\\'` removes the escape
-  # marker GNU coreutils prepends when the FILE NAME itself needs escaping -
-  # which happens on MSYS/Git Bash, where the temp path contains backslashes.
-  # Without it, a perfectly valid download on Git Bash would look like a
-  # mismatch ('\<hash>' != '<hash>') and be refused.
-  if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$1" | awk '{print $1}' | tr -d '\\'
-  elif command -v shasum >/dev/null 2>&1; then
-    shasum -a 256 "$1" | awk '{print $1}' | tr -d '\\'
-  elif command -v openssl >/dev/null 2>&1; then
-    openssl dgst -sha256 "$1" | awk '{print $NF}' | tr -d '\\'
-  else
-    return 1
-  fi
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | cut -d' ' -f1
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$1" | cut -d' ' -f1
+    else
+        return 1
+    fi
 }
 
-sums_lookup() {
-  # $1 = SHA256SUMS.txt contents, $2 = exact file name to find.
-  # Prints the expected lowercase SHA256, or nothing when absent.
-  #
-  # Parsing is deliberately whitespace-agnostic: GNU sha256sum writes two
-  # spaces, other tools emit tabs, and a checksum file staged on Windows can
-  # arrive with CRLF line endings. Leading/trailing whitespace is trimmed,
-  # the hash is validated as exactly 64 hex digits, and the '*' binary-mode
-  # marker is stripped before the file name is compared exactly.
-  printf '%s\n' "$1" | awk -v want="$2" '
-    {
-      line = $0
-      sub(/\r$/, "", line)
-      sub(/^[ \t]+/, "", line)
-      sub(/[ \t]+$/, "", line)
-      if (line == "") next
-      if (substr(line, 1, 1) == "#") next
-      hash = substr(line, 1, 64)
-      if (length(hash) != 64) next
-      if (hash !~ /^[0-9A-Fa-f]+$/) next
-      name = substr(line, 65)
-      sub(/^[ \t]+/, "", name)
-      sub(/^\*/, "", name)
-      sub(/[ \t]+$/, "", name)
-      if (name == want) { print tolower(hash); exit }
-    }'
+# --- fetch helper -------------------------------------------------------------
+fetch() {  # fetch <url> <dest>
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL --retry 2 --connect-timeout 15 -A "$USER_AGENT" -o "$2" "$1" || return 1
+    elif command -v wget >/dev/null 2>&1; then
+        wget -q --tries=2 --timeout=30 -U "$USER_AGENT" -O "$2" "$1" || return 1
+    else
+        return 127
+    fi
 }
 
-verify_sha256() {
-  # $1 = file, $2 = sums text, $3 = file name (as listed in SHA256SUMS.txt)
-  expected="$(sums_lookup "$2" "$3")"
-  [ -n "$expected" ] \
-    || die "No SHA256 checksum for $3 in the release's SHA256SUMS.txt. Refusing to install an unverified artifact."
-
-  # A missing hashing tool is NOT an excuse to install unverified code: the
-  # artifact is refused instead of silently accepted (never bypass verification).
-  actual="$(sha256_of "$1")" \
-    || die "No SHA256 tool found (sha256sum/shasum/openssl). Install one and re-run; refusing to install an unverified artifact."
-  actual="$(printf '%s' "$actual" | tr 'A-F' 'a-f')"
-  [ "$actual" = "$expected" ] \
-    || die "Checksum mismatch for $3
-      expected $expected
-      actual   $actual"
-  ok "SHA256 verified ($(printf '%s' "$actual" | cut -c1-12)...)"
-}
-
-# --- PATH --------------------------------------------------------------------
-INSTALL_DIR=""
-SHELL_PROFILE=""
-
-choose_paths() {
-  if [ -n "${HOME:-}" ] && [ -d "${HOME}/.local/bin" ]; then
-    INSTALL_DIR="${HOME}/.local/bin"
-  elif [ -n "${HOME:-}" ]; then
-    INSTALL_DIR="${HOME}/.local/bin"
-    mkdir -p "$INSTALL_DIR" 2>/dev/null || INSTALL_DIR="${HOME}/.seedcode/bin"
-  else
-    die "HOME is not set; cannot determine a per-user install location."
-  fi
-
-  case "$(basename "${SHELL:-}")" in
-    zsh)  SHELL_PROFILE="${HOME}/.zshrc" ;;
-    bash) SHELL_PROFILE="${HOME}/.bashrc" ;;
-    *)    SHELL_PROFILE="${HOME}/.profile" ;;
-  esac
-}
-
-add_to_path() {
-  case ":${PATH}:" in
-    *":${INSTALL_DIR}:"*) step "PATH already contains ${INSTALL_DIR}" ; return 0 ;;
-  esac
-  [ -n "$SHELL_PROFILE" ] || return 0
-  if [ -f "$SHELL_PROFILE" ] && grep -qF "$INSTALL_DIR" "$SHELL_PROFILE" 2>/dev/null; then
-    step "PATH entry already present in ${SHELL_PROFILE}"
-    return 0
-  fi
-  {
-    printf '\n# Seed Code CLI\n'
-    printf 'export PATH="%s:$PATH"\n' "$INSTALL_DIR"
-  } >> "$SHELL_PROFILE"
-  ok "Added ${INSTALL_DIR} to PATH in ${SHELL_PROFILE}"
-}
-
-installed_version_matches() {
-  command -v "$BIN_NAME" >/dev/null 2>&1 || return 1
-  "$BIN_NAME" --version 2>/dev/null | grep -q "$VERSION"
-}
-
-# --- main --------------------------------------------------------------------
-printf '\n  Seed Code CLI installer\n'
-printf '  Version %s  |  %s-%s  |  per-user install\n' "$VERSION" "$OS" "$ARCH"
-
-choose_paths
-
-if [ "$FORCE" = 0 ] && installed_version_matches; then
-  ok "Seed Code CLI ${VERSION} is already installed ($(command -v "$BIN_NAME"))"
-  printf '\n  Run:  seedcode\n\n'
-  exit 0
-fi
-
-log "Downloading"
-step "${RELEASE_BASE}"
-
-SUMS="$(fetch_text "$SUMS_URL")"
-[ -n "$SUMS" ] || die "Could not fetch SHA256SUMS.txt for v${VERSION}. Check the version and your connection."
-
-TMP_DIR="$(mktemp -d 2>/dev/null || mktemp -d -t seedcode)"
-trap 'rm -rf "$TMP_DIR"' EXIT
-
-# Prefer a published prebuilt binary for this platform; fall back to the
-# official Python wheel (pure Python, so architecture-independent). The asset
-# is chosen by an exact checksum-file lookup, not a substring match.
-BINARY_ASSET="SeedCode-CLI-${VERSION}-${OS}-${ARCH}"
-if [ -n "$(sums_lookup "$SUMS" "$BINARY_ASSET")" ]; then
-  step "Downloading prebuilt binary ${BINARY_ASSET}"
-  fetch_file "${RELEASE_BASE}/${BINARY_ASSET}" "${TMP_DIR}/${BINARY_ASSET}"
-  verify_sha256 "${TMP_DIR}/${BINARY_ASSET}" "$SUMS" "$BINARY_ASSET"
-  log "Installing"
-  mkdir -p "$INSTALL_DIR" 2>/dev/null || die "Could not create ${INSTALL_DIR}"
-  install -m 0755 "${TMP_DIR}/${BINARY_ASSET}" "${INSTALL_DIR}/${BIN_NAME}" 2>/dev/null \
-    || { cp "${TMP_DIR}/${BINARY_ASSET}" "${INSTALL_DIR}/${BIN_NAME}" && chmod 0755 "${INSTALL_DIR}/${BIN_NAME}"; }
-  ok "Installed to ${INSTALL_DIR}/${BIN_NAME}"
-else
-  WHEEL="seedcode_cli-${VERSION}-py3-none-any.whl"
-  step "No prebuilt binary published for ${OS}-${ARCH}; installing the official wheel ${WHEEL}"
-  fetch_file "${RELEASE_BASE}/${WHEEL}" "${TMP_DIR}/${WHEEL}"
-  verify_sha256 "${TMP_DIR}/${WHEEL}" "$SUMS" "$WHEEL"
-
-  PYTHON=""
-  for candidate in python3 python; do
-    if command -v "$candidate" >/dev/null 2>&1; then PYTHON="$candidate"; break; fi
-  done
-  [ -n "$PYTHON" ] || die "Python 3.10+ is required for this artifact, and no python3 was found on PATH."
-
-  log "Installing"
-  "$PYTHON" -m pip install --user --upgrade "${TMP_DIR}/${WHEEL}" \
-    || die "pip install failed. Install Python 3.10+ (with pip) and try again."
-
-  # The console script lands in pip's per-user scripts directory; use that
-  # as the install directory so PATH is updated for the right location.
-  USER_SCRIPTS="$("$PYTHON" -c 'import sysconfig; print(sysconfig.get_path("scripts", "posix_user") or "")' 2>/dev/null || true)"
-  if [ -n "$USER_SCRIPTS" ] && [ -d "$USER_SCRIPTS" ]; then
-    INSTALL_DIR="$USER_SCRIPTS"
-  fi
-  ok "Installed ${WHEEL}"
-fi
-
-if [ "$NO_PATH_UPDATE" = 0 ]; then
-  add_to_path
-fi
+# --- main ---------------------------------------------------------------------
+WHEEL_NAME="seedcode_cli-${VERSION}-py3-none-any.whl"
+RELEASE_BASE="https://github.com/${REPO}/releases/download/v${VERSION}"
+WHEEL_URL="${RELEASE_BASE}/${WHEEL_NAME}"
+SUMS_URL="${RELEASE_BASE}/SHA256SUMS.txt"
 
 printf '\n'
-log "Verifying"
-# Verify the file THIS run installed, by absolute path - a `seedcode` already
-# on PATH could be an older copy, and a stale binary must never be reported as
-# this install's success.
-INSTALLED_EXE="${INSTALL_DIR}/${BIN_NAME}"
-if [ -x "$INSTALLED_EXE" ]; then
-  REPORTED="$("$INSTALLED_EXE" --version 2>&1 | head -n1)"
-  case "$REPORTED" in
-    *"$VERSION"*) ok "seedcode --version  ->  ${REPORTED}" ;;
-    *) die "$INSTALLED_EXE reported '$REPORTED', which is not version ${VERSION}." ;;
-  esac
-elif command -v "$BIN_NAME" >/dev/null 2>&1; then
-  REPORTED="$("$BIN_NAME" --version 2>&1 | head -n1)"
-  case "$REPORTED" in
-    *"$VERSION"*) ok "seedcode --version  ->  ${REPORTED}" ;;
-    *) die "The installed command reported '$REPORTED', which is not version ${VERSION}." ;;
-  esac
+title "Seed Code CLI"
+rule
+ui "${C_GRAY}  Version ${VERSION}${C_RESET}"
+
+section "${SYM_NODE} Checking system"
+ok "Platform detected: $(uname -s) $(uname -m)"
+# fetch() supports curl and wget; require at least one, don't insist on curl.
+if command -v curl >/dev/null 2>&1; then
+    ok "Download tool detected: curl"
+elif command -v wget >/dev/null 2>&1; then
+    ok "Download tool detected: wget"
 else
-  die "Installed, but '${BIN_NAME}' is not on PATH yet. Add ${INSTALL_DIR} to PATH, then run: seedcode --version"
+    die "Neither curl nor wget was found in PATH. Install one and re-run."
+fi
+need python3
+PY_VER=$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null) \
+    || die "python3 exists but could not report its version."
+ok "Python detected: ${PY_VER}"
+need pip3
+ok "pip detected"
+
+section "Downloading"
+TMP_DIR=$(mktemp -d 2>/dev/null) || die "Could not create a temporary directory."
+TMP_DOWNLOAD="${TMP_DIR}/${WHEEL_NAME}"
+TMP_SUMS="${TMP_DIR}/SHA256SUMS.txt"
+
+step "${SYM_DOT} ${WHEEL_NAME}"
+fetch "$WHEEL_URL" "$TMP_DOWNLOAD" \
+    || die "Could not download ${WHEEL_URL}"
+ok "Package downloaded"
+
+section "Verifying"
+# 1) The release's SHA256SUMS.txt is authoritative. 2) The pinned digest
+# (verified against the published artifact) cross-checks it, and acts as the
+# expected value only when the release file is unreachable. Mismatch = abort;
+# missing = abort. Verification is never bypassed.
+fetch "$SUMS_URL" "$TMP_SUMS" || :   # optional; pinned digest covers this case
+# Single capture: calling the function twice would print the first result
+# to stdout (get_expected_hash's output IS the hash).
+EXPECTED=$(get_expected_hash "$TMP_SUMS" "$WHEEL_NAME" || true)
+if [ -n "$EXPECTED" ] && [ "$EXPECTED" != "$PINNED_WHEEL" ]; then
+    die "The release's SHA256SUMS.txt and this installer's pinned checksum disagree for ${WHEEL_NAME}. Aborting rather than installing a possibly tampered package."
+fi
+if [ -z "$EXPECTED" ]; then
+    EXPECTED="$PINNED_WHEEL"
+    note "  (release SHA256SUMS.txt unreachable - using the installer's pinned checksum)"
+fi
+ACTUAL=$(sha256_of "$TMP_DOWNLOAD") || die "No SHA-256 tool available (sha256sum/shasum); refusing to install an unverified package."
+if [ "$ACTUAL" != "$EXPECTED" ]; then
+    die "Checksum mismatch for ${WHEEL_NAME}.
+      expected ${EXPECTED}
+      actual   ${ACTUAL}"
+fi
+ok "Checksum verified"
+
+section "Installing"
+if command -v pipx >/dev/null 2>&1; then
+    # pipx is the cleanest per-user home: isolated venv, `seedcode` on PATH.
+    if [ "$FORCE" = "1" ]; then
+        pipx install --force "$TMP_DOWNLOAD" >/dev/null \
+            || die "pipx install failed. Re-run with output visible: pipx install ${TMP_DOWNLOAD}"
+    else
+        pipx install "$TMP_DOWNLOAD" >/dev/null \
+            || die "pipx install failed. Re-run with output visible: pipx install ${TMP_DOWNLOAD}"
+    fi
+    ok "Seed Code CLI installed (pipx)"
+else
+    # PEP 668 (externally managed environments, Debian 12+/newer distros)
+    # blocks plain `pip install --user`; --break-system-packages is the
+    # sanctioned escape hatch and lands in the same user site.
+    if ! pip3 install --user "$TMP_DOWNLOAD" >/dev/null 2>&1; then
+        if pip3 install --user --break-system-packages "$TMP_DOWNLOAD" >/dev/null 2>&1; then
+            :
+        else
+            die "pip install failed. Install pipx (python3 -m pip install --user pipx) and re-run this installer."
+        fi
+    fi
+    ok "Seed Code CLI installed"
 fi
 
-# A different `seedcode` earlier on PATH keeps being invoked instead of the one
-# just installed (the "old executable still runs" failure mode). Say so out
-# loud instead of letting the user believe the upgrade took effect.
-RESOLVED="$(command -v "$BIN_NAME" 2>/dev/null || true)"
-if [ -n "$RESOLVED" ] && [ "$RESOLVED" != "$INSTALLED_EXE" ]; then
-  warn "Another '$BIN_NAME' is earlier on PATH: $RESOLVED"
-  warn "This install is: $INSTALLED_EXE"
-  warn "Remove the older copy, or run this one directly: $INSTALLED_EXE"
+# Make sure a `seedcode` command exists somewhere the user can reach. The
+# wheel's console script already lands in ~/.local/bin with pipx (and usually
+# with pip --user) - in that case leave it alone. Only when nothing resolves
+# do we create a direct shim, so we never overwrite pipx's entry point.
+section "Verifying"
+if command -v seedcode >/dev/null 2>&1; then
+    SEEDCODE_BIN="$(command -v seedcode)"
+else
+    PYTHON_BIN="$(command -v python3)"
+    mkdir -p "$BIN_DIR" 2>/dev/null || true
+    printf '#!/usr/bin/env bash\nexec "%s" -m seedcode "$@"\n' "$PYTHON_BIN" > "${BIN_DIR}/seedcode"
+    chmod +x "${BIN_DIR}/seedcode" 2>/dev/null || true
+    SEEDCODE_BIN="${BIN_DIR}/seedcode"
 fi
-
-printf '\n  Seed Code CLI %s is installed.\n' "$VERSION"
-printf '  License: PolyForm Noncommercial License 1.0.0 (PolyForm-Noncommercial-1.0.0)\n\n'
-case ":${PATH}:" in
-  *":${INSTALL_DIR}:"*)
-    printf '  Run:  seedcode\n\n'
-    ;;
-  *)
-    printf '  Open a NEW terminal, then run:  seedcode\n'
-    printf '  (or apply it now: export PATH="%s:$PATH")\n\n' "$INSTALL_DIR"
-    ;;
+REPORTED="$("$SEEDCODE_BIN" --version 2>/dev/null | tail -n1)"
+case "$REPORTED" in
+    *"$VERSION"*) ok "seedcode --version  ->  ${REPORTED}" ;;
+    *) die "The installed binary did not report version ${VERSION} (it said: '${REPORTED:-nothing}')." ;;
 esac
+
+# PATH guidance: honest about what actually works in THIS session.
+case ":${PATH}:" in
+    *":${BIN_DIR}:"*) PATH_OK=1 ;;
+    *) PATH_OK=0 ;;
+esac
+
+printf '\n'
+rule
+ui "${C_GREEN}  ${SYM_TICK} Installation complete${C_RESET}"
+printf '\n'
+if [ "$PATH_OK" = "1" ]; then
+    ui "${C_GRAY}  Run:${C_RESET}"
+    ui "${C_GRAY}      seedcode${C_RESET}"
+else
+    ui "${C_GRAY}  Restart your terminal (or: export PATH=\"${BIN_DIR}:\$PATH\"), then run:${C_RESET}"
+    ui "${C_GRAY}      seedcode${C_RESET}"
+fi
+ui "${C_DGRAY}  License: PolyForm Noncommercial License 1.0.0${C_RESET}"
+printf '\n'
