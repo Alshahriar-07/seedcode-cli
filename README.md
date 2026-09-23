@@ -616,7 +616,7 @@ projects or with sensitive applications.
 
 - **Created by:** Al Shahriar Sowan — <https://alshahriarsayon.vercel.app/>
 - **Studio:** Eagox Studio — <https://eagoxstudio.vercel.app/>
-- **Contact:** github@eagox.studio
+- **Contact:** seedcode.ai@gmail.com
 
 ## License
 
