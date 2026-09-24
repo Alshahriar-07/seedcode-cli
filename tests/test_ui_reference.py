@@ -54,7 +54,7 @@ def test_command_hint_is_a_single_compact_line() -> None:
     render_command_hint(console)
     lines = [ln for ln in console.export_text().splitlines() if ln.strip()]
     assert len(lines) == 1
-    for name in ("help", "status", "codemode", "assist", "provider", "model"):
+    for name in ("help", "status", "codemode", "agent", "provider", "model"):
         assert f"/{name}" in lines[0]
 
 
@@ -64,7 +64,7 @@ def test_command_hint_only_lists_real_commands() -> None:
     console = _console()
     render_command_hint(console)
     text = console.export_text()
-    for name in ("help", "status", "codemode", "assist", "provider", "model"):
+    for name in ("help", "status", "codemode", "agent", "provider", "model"):
         assert name in _REGISTRY
         assert f"/{name}" in text
 

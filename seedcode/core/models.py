@@ -243,9 +243,12 @@ class AppConfig(BaseModel):
     # Completion-token budget for chat requests. Users may override in
     # config.json; the value is clamped before every request.
     max_tokens: int = DEFAULT_MAX_TOKENS
-    # Agent mode: when on, the model may act on the project through the tool
-    # engine. permission_mode bounds what it may touch (see seedcode.tools).
-    agent_mode: bool = False
+    # The runtime mode (v8.1.0): exactly chat | code | agent. Chat only
+    # converses; Code is the workspace coding agent; Agent is general-purpose
+    # execution. There is no fourth mode — the old Assist Mode is Agent Mode
+    # (see seedcode.core.modes). ``agent_mode`` stays available as a derived
+    # compatibility property rather than a second stored field.
+    mode: Literal["chat", "code", "agent"] = "chat"
     # Single hierarchical permission level (see seedcode.tools.permissions):
     # read_only < workspace < desktop < full_system. Desktop automation is a
     # capability of the ``desktop``/``full_system`` levels — there is no
@@ -268,6 +271,19 @@ class AppConfig(BaseModel):
         if not isinstance(data, dict):
             return data
         data = dict(data)  # never mutate the caller's dict
+
+        # v8.1.0: one canonical mode. A legacy ``agent_mode`` boolean maps onto
+        # it (True -> agent), and the obsolete key is dropped so it can never
+        # resurface as a competing source of truth. Unknown/legacy mode names
+        # (including "assist") resolve through the shared parser, so no fourth
+        # mode can be created by a stored value.
+        from .modes import Mode, parse_mode
+
+        legacy_agent = data.pop("agent_mode", None)
+        data["mode"] = parse_mode(
+            data.get("mode"),
+            default=Mode.AGENT if legacy_agent else Mode.CHAT,
+        ).value
 
         def norm(pid: str) -> str:
             """Provider id normalisation (OpenRouter is a first-class backend)."""
@@ -368,6 +384,25 @@ class AppConfig(BaseModel):
             if pid not in self.providers:
                 self.providers[pid] = ProviderConfig()
         return self
+
+    # --- mode (derived compatibility view over ``mode``) ---------------------
+    @property
+    def agent_mode(self) -> bool:
+        """Whether the model may act on the project (Code or Agent mode).
+
+        Compatibility shim for the pre-8.1 boolean: the mode is the single
+        source of truth now and this derives from it, so the two can never
+        disagree. Assigning it selects a mode (True -> Agent, False -> Chat).
+        """
+        return self.mode in ("code", "agent")
+
+    @agent_mode.setter
+    def agent_mode(self, value: bool) -> None:
+        if value:
+            if self.mode == "chat":
+                self.mode = "agent"  # type: ignore[assignment]
+        else:
+            self.mode = "chat"  # type: ignore[assignment]
 
     # --- desktop capability (derived from the permission level) --------------
     @property

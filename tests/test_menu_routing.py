@@ -60,10 +60,11 @@ def test_main_menu_has_reference_items_and_shortcuts(monkeypatch) -> None:
     by_value = {item.value: item for item in captured["items"]}
     assert by_value["codemode"].shortcut == "1"
     assert by_value["agent"].shortcut == "2"
-    assert by_value["assist"].shortcut == "3"
-    assert by_value["memory"].shortcut == "4"
-    assert by_value["settings"].shortcut == "5"
-    assert by_value["exit"].shortcut == "6"
+    assert by_value["memory"].shortcut == "3"
+    assert by_value["settings"].shortcut == "4"
+    assert by_value["exit"].shortcut == "5"
+    # No fourth mode is exposed: Assist Mode is Agent Mode now.
+    assert "assist" not in by_value
     # Start Chat stays reachable so the menu is never a dead end.
     assert "chat" in by_value
     assert "Seed Code v" in captured["kwargs"]["title"]

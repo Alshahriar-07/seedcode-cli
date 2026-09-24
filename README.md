@@ -5,10 +5,21 @@
 > ### Faster. Smaller. Smarter. Workspace-aware.
 > *Plant ideas. Grow code.*
 
-Seed Code is a premium terminal-based AI coding assistant. v7.2.5 pairs
-streaming chat and permission-gated desktop control with **Code Mode** — a
-workspace-aware coding agent backed by persistent `.seedcode` project memory
-— behind the Seed Code startup logo and a compact block of live session state.
+Seed Code is a premium terminal-based AI coding assistant and task runner.
+v8.1.0 exposes exactly **three modes** — **Chat Mode**, **Code Mode** and
+**Agent Mode** — over a multi-provider, multi-model engine, with project-aware
+Code Mode and a real Agent Mode execution loop, behind the Seed Code startup
+logo and a compact block of live session state.
+
+| Mode | What it does |
+| --- | --- |
+| **Chat Mode** | Conversation: questions, explanations, brainstorming. Never acts on your project. |
+| **Code Mode** | A real coding agent for the current workspace: inspect, plan, edit, run, verify, and keep working until the task is verified. |
+| **Agent Mode** | General-purpose multi-step execution using the available tools, verified before it is reported complete. |
+
+The retired **Assist Mode** is no longer a separate mode; its capabilities now
+belong to Agent Mode. `/assist` and `/desktop` remain accepted aliases, but
+nothing in the UI presents a fourth mode.
 
 - **Providers:** choose **OpenRouter**, **Ollama** (started automatically when
   you select it), or any number of your own **Custom** OpenAI-compatible
@@ -20,10 +31,11 @@ workspace-aware coding agent backed by persistent `.seedcode` project memory
 - **Professional startup screen:** the Seed Code ANSI logo with the live
   provider, model, mode and status beneath it, behind a responsive bordered
   panel, with an ASCII fallback for consoles that cannot draw the block art.
-- **Step-by-step tasks:** Code, Assist and Agent Mode show a live task flow
-  (analyze → inspect → plan → implement → test → verify) that reflects what
-  the agent really did, and hands the prompt back when the task ends.
-- **Version:** 7.2.5 (`seedcode --version`)
+- **Step-by-step tasks:** Code Mode shows the real plan as a live checklist,
+  and Agent Mode shows an event-driven step flow — both reflect what the agent
+  really did, and hand the prompt back when the task ends. Completing a task
+  never closes the application.
+- **Version:** 8.1.0 (`seedcode --version`)
 
 ## Installation
 
@@ -37,7 +49,6 @@ seedcode
 
 ```bash
 pip install seedcode-cli
-seedcode
 ```
 
 Requires **Python 3.10 or newer**. The wheel exposes the `seedcode` console
@@ -83,8 +94,8 @@ Python required) and both run the same CLI:
 
 | Download | What it is |
 | --- | --- |
-| `SeedCode-CLI-Setup-7.2.5.exe` | **Setup installer (recommended).** A wizard that installs to Program Files, adds Seed Code to the system `PATH`, creates a Start Menu shortcut with an optional desktop shortcut, verifies the installation before reporting success, and ships a clean uninstaller that never deletes your project data silently. |
-| `SeedCode-CLI-7.2.5-windows-x64.exe` | **Standalone executable.** A single portable `seedcode.exe` — no installation and no admin rights. The Windows IRM installer above downloads exactly this file. Run it directly from wherever you put it. |
+| `SeedCode-CLI-Setup-8.1.0.exe` | **Setup installer (recommended).** A wizard that installs to Program Files, adds Seed Code to the system `PATH`, creates a Start Menu shortcut with an optional desktop shortcut, verifies the installation before reporting success, and ships a clean uninstaller that never deletes your project data silently. |
+| `SeedCode-CLI-8.1.0-windows-x64.exe` | **Standalone executable.** A single portable `seedcode.exe` — no installation and no admin rights. The Windows IRM installer above downloads exactly this file. Run it directly from wherever you put it. |
 
 Both are published on the
 [Releases page](https://github.com/Alshahriar-07/seedcode-cli/releases) with
@@ -93,7 +104,7 @@ their SHA256 in `SHA256SUMS.txt`.
 After installing by any route:
 
 ```bash
-seedcode --version    # -> Seed Code CLI 7.2.5
+seedcode --version    # -> Seed Code CLI 8.1.0
 ```
 
 > **`seedcode` not recognized?** Open a *new* terminal. `PATH` changes only
@@ -122,7 +133,7 @@ logo is permanently gone (the brand is plain text); the layout, sections and
 status indicators stay:
 
 ```text
-╭─ Seed Code CLI v7.2.5 ───────────────────────────────────────────────────────────────────────╮
+╭─ Seed Code CLI v8.1.0 ───────────────────────────────────────────────────────────────────────╮
 │                                                                                              │
 │   Seed Code                                │ Seed Code  |  Eagox Studio                      │
 │   AI CODING AGENT                          │ Plant ideas. Grow code.                         │
@@ -130,7 +141,7 @@ status indicators stay:
 │                                            │ Model      cohere/north-mini-code:free          │
 │                                            │ Mode       Chat  •  ● Ready                     │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────╯
-Commands  /help  /status  /codemode  /assist  /provider  /model
+Commands  /help  /status  /codemode  /agent  /provider  /model
 You >
 ```
 
@@ -201,12 +212,14 @@ Switch with `/provider` — the picker groups choices by what they need
 provider's backend, current model, and key state. Pick models with `/model`
 (OpenRouter filters `free` vs `pro` models; FreeModel offers Auto mode).
 
-## Assist Mode and permissions
+## Agent Mode and permissions
 
-Assist Mode lets the model act on your project through the tool engine:
+Agent Mode lets the model act on your project through the tool engine: a
+multi-step task that uses real tools, verifies what it did, and reports what
+actually happened instead of claiming success:
 
 ```text
-/assist on
+/agent on
 ```
 
 Permission modes (view/set with `/permission`):
@@ -220,8 +233,8 @@ Permission modes (view/set with `/permission`):
 
 ## Code Mode
 
-Code Mode is Assist Mode sharpened into a real coding agent for the current
-project. Your working directory becomes the **workspace**:
+Code Mode is a real coding agent for the current project. Your working
+directory becomes the **workspace**:
 
 ```text
 /codemode on        # treat the CWD as the workspace, enable .seedcode memory
@@ -234,7 +247,7 @@ targeted searches, reads only what it needs, plans, edits, runs a relevant
 command or test, and reports what changed. File operations stay inside the
 workspace root.
 
-### Persistent task execution (v7.1.0)
+### Persistent task execution
 
 Code Mode is a **long-running agent**, not one model call. A request becomes a
 plan (a task graph with dependencies and acceptance criteria), and the session
@@ -324,15 +337,15 @@ my-project/
 - **Not source code** — `.seedcode/` is excluded from workspace search,
   indexing, and the agent's project view.
 
-## Task flow (Code / Assist / Agent Mode)
+## Task flow (Code Mode / Agent Mode)
 
-Every task in Code Mode, Assist Mode or Agent Mode is shown as a compact live
-flow, and each step changes state only when the work behind it really
-happened. Code Mode shows the protocol header, the plan as a checklist, and a
-single live action line:
+Every task in Code Mode or Agent Mode is shown as a compact live flow, and
+each step changes state only when the work behind it really happened. Code
+Mode shows the protocol header, the plan as a checklist, and a single live
+action line:
 
 ```text
-╭─ SEEDCODE 7.2.5 • CODE MODE ────────────────╮
+╭─ SEEDCODE 8.1.0 • CODE MODE ────────────────╮
 │ ● RUNNING   Task 3/8   Build authentication │
 │   ████████████░░░░  72% • 4m 32s • 18 calls │
 │ → Running: pytest tests/auth                │
@@ -351,7 +364,7 @@ the session moves into those phases. The panel re-fits itself on every refresh,
 so resizing the terminal mid-session cannot leave a panel wider than the
 screen — it degrades to a single status line when the space runs out.
 
-Assist Mode and Agent Mode keep the step-by-step flow:
+Agent Mode keeps the event-driven step flow:
 
 ```text
 Task  ·  Code Mode
@@ -429,20 +442,20 @@ The agent runs commands through the tool engine's `run_command` tool:
 | `/provider` | Switch the active AI provider |
 | `/apikey` | Add, replace, remove, or validate a provider key |
 | `/model` | Browse and select the provider's model catalogue |
-| `/mode` | Show or switch the mode: `chat` / `assist` / `code` / `agent` |
+| `/mode` | Show or switch the mode: `chat` / `code` / `agent` |
 | `/chat` | Switch to plain Chat Mode (`/chat on`) |
-| `/agent` | Enable or disable Assist Mode (alias `/assist`) |
+| `/agent` | Select Agent Mode (`on` / `off`; aliases `/assist`, `/desktop`) |
 | `/codemode` | Workspace-aware Code Mode (`on` / `off` / `status`) |
 | `/workspace` | Show the active Code Mode workspace |
 | `/session` | Inspect the Code Mode session: state, evidence, per-task records |
 | `/pause` | Pause the running Code Mode session (state is kept) |
 | `/resume` | Resume a paused session from its checkpoint |
 | `/stop` | Safely stop the running Code Mode session |
-| `/permission` | View or set the Assist permission mode (alias `/permissions`) |
+| `/permission` | View or set the Agent Mode permission level (alias `/permissions`) |
 | `/computer` | Show Computer Engine status and permissions |
 | `/screenshot` | Capture a screenshot |
 | `/windows` | List open windows |
-| `/tools` | List tools available in Assist Mode |
+| `/tools` | List the tools available to the agent modes |
 | `/index` | Show a compact project tree |
 | `/files` | Search project files |
 | `/history` | Browse saved sessions |
@@ -546,21 +559,21 @@ stage fails loudly on a version mismatch, so a stale binary can never ship.
 
 Details: [`scripts/windows/README.md`](scripts/windows/README.md).
 
-### Release artifacts (v7.2.5)
+### Release artifacts (v8.1.0)
 
-Release: [v7.2.5](https://github.com/Alshahriar-07/seedcode-cli/releases/tag/v7.2.5)
+Release: [v8.1.0](https://github.com/Alshahriar-07/seedcode-cli/releases/tag/v8.1.0)
 
 | Artifact | Purpose |
 | --- | --- |
-| `SeedCode-CLI-Setup-7.2.5.exe` | Windows installer (Inno Setup) |
-| `SeedCode-CLI-7.2.5-windows-x64.exe` | Standalone Windows EXE — downloaded by the Windows IRM installer |
-| `seedcode_cli-7.2.5-py3-none-any.whl` | Python wheel — downloaded by the Linux IRM installer |
-| `seedcode_cli-7.2.5.tar.gz` | Python source distribution |
+| `SeedCode-CLI-Setup-8.1.0.exe` | Windows installer (Inno Setup) |
+| `SeedCode-CLI-8.1.0-windows-x64.exe` | Standalone Windows EXE — downloaded by the Windows IRM installer |
+| `seedcode_cli-8.1.0-py3-none-any.whl` | Python wheel — downloaded by the Linux IRM installer |
+| `seedcode_cli-8.1.0.tar.gz` | Python source distribution |
 | `SHA256SUMS.txt` | SHA256 checksums; verified by both installers |
 
-Built artifacts are collected in `dist/release/7.2.5/` during a release
+Built artifacts are collected in `dist/release/8.1.0/` during a release
 build. Publishing (GitHub Release) is a separate step; the remote installers
-read the release named `v7.2.5`.
+read the release named `v8.1.0`.
 
 ### The remote installers
 
@@ -609,7 +622,7 @@ read the release named `v7.2.5`.
 - The release build consumes the local `.env` only during packaging; the
   secret never enters source control, logs, manifests, or package metadata.
 
-Review permissions before enabling Assist Mode — especially in unfamiliar
+Review permissions before enabling Agent Mode — especially in unfamiliar
 projects or with sensitive applications.
 
 ## Credits

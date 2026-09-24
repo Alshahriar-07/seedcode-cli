@@ -122,4 +122,4 @@ def test_entry_point_function_exists_and_module_entrypoint_works() -> None:
 def test_version_is_the_single_25_release() -> None:
     from seedcode import __version__
 
-    assert __version__ == "7.2.5"
+    assert __version__ == "8.1.0"

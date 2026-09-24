@@ -17,8 +17,10 @@ from .badges import badge_for_status, badge_text
 
 
 def mode_label(config: AppConfig) -> str:
-    """The user-facing mode: Chat or Assist (never Agent/Desktop)."""
-    return "Assist" if config.agent_mode else "Chat"
+    """The user-facing mode: Chat Mode / Code Mode / Agent Mode (v8.1.0)."""
+    from ..core.modes import mode_title
+
+    return mode_title(getattr(config, "mode", "chat"))
 
 
 def session_statusbar(console: Console, config: AppConfig) -> None:

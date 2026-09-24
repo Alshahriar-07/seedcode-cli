@@ -16,7 +16,7 @@ Releases:
 A compatibility launcher retained for users who already manage tooling through
 npm. It is a thin wrapper around the official release: on Windows it downloads
 the official `SeedCode-CLI-<version>-windows-x64.exe` for this package's
-version (currently **7.2.5**) from the GitHub release, verifies its SHA256
+version (currently **8.1.0**) from the GitHub release, verifies its SHA256
 against the release's `SHA256SUMS.txt`, caches it under `~/.seedcode/npm/`,
 and runs it — Python is never required. On Linux and macOS it defers to the
 official installer rather than shipping a binary.

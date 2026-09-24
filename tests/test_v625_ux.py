@@ -151,7 +151,7 @@ def test_mode_code_enables_code_mode(monkeypatch, tmp_path) -> None:
         cms.reset()
 
 
-def test_mode_agent_routes_to_assist(monkeypatch) -> None:
+def test_mode_agent_enables_agent_mode(monkeypatch) -> None:
     from seedcode.commands import assist as assist_cmd
 
     monkeypatch.setattr(assist_cmd, "save_config", lambda config: None)
@@ -159,14 +159,14 @@ def test_mode_agent_routes_to_assist(monkeypatch) -> None:
     ui, ctx = _ctx()
     dispatch(ctx, "/mode agent")
     assert ctx.config.agent_mode
-    assert any("Assist Mode ON" in m for m in ui.messages)
+    assert any("Agent Mode ON" in m for m in ui.messages)
 
 
 def test_mode_rejects_unknown_mode() -> None:
     ui, ctx = _ctx()
     dispatch(ctx, "/mode banana")
     assert any("[Command Error]" in m for m in ui.messages)
-    assert any("chat|assist|code|agent" in m for m in ui.messages)
+    assert any("chat|code|agent" in m for m in ui.messages)
 
 
 def test_status_and_mode_agree_on_the_mode_label() -> None:
@@ -384,4 +384,4 @@ def test_version_flag_prints_machine_readable_version(monkeypatch, capsys) -> No
     cli.main()
     out = capsys.readouterr().out.strip()
     assert out == f"Seed Code CLI {__import__('seedcode').__version__}"
-    assert out.startswith("Seed Code CLI 7.2.5")
+    assert out.startswith("Seed Code CLI 8.1.0")

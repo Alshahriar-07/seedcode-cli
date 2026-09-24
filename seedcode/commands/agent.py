@@ -1,6 +1,8 @@
-"""Legacy commands: /agent and /permission.
+"""Agent Mode commands: /agent and /permission (v8.1.0).
 
-The old Agent Mode was merged into Assist Mode — /agent now routes there.
+/agent is the primary route into Agent Mode — the single general-purpose
+execution mode that the retired Assist Mode folded into. /assist and
+/desktop remain accepted aliases so an existing habit keeps working.
 /permission keeps its dedicated interactive picker; /index and /tools stay
 as inspection commands.
 """
@@ -15,7 +17,7 @@ from . import CommandContext, CommandResult, command, show_session_bar
 from .assist import disable_assist, enable_assist
 
 
-@command("agent", "Legacy alias for Assist Mode. Usage: /agent [on|off]")
+@command("agent", "Select Agent Mode (general-purpose execution). Usage: /agent [on|off]")
 def _agent(ctx: CommandContext, arg: str) -> CommandResult:
     raw = arg.strip().lower()
     if raw in ("on", "off"):
@@ -27,8 +29,6 @@ def _agent(ctx: CommandContext, arg: str) -> CommandResult:
         ctx.ui.dim("Expected: /agent on|off")
         return CommandResult()
 
-    # Agent Mode was merged into Assist Mode — route there transparently.
-    ctx.ui.dim("(/agent is now Assist Mode)")
     if enable:
         enable_assist(ctx.ui, ctx.config)
     else:
@@ -39,7 +39,7 @@ def _agent(ctx: CommandContext, arg: str) -> CommandResult:
 
 @command(
     "permission",
-    "Show or set the Assist permission mode",
+    "Show or set the tool permission level",
     aliases=("perm", "permissions"),
 )
 def _permission(ctx: CommandContext, arg: str) -> CommandResult:
@@ -85,7 +85,7 @@ def _index(ctx: CommandContext, arg: str) -> CommandResult:
     return CommandResult()
 
 
-@command("tools", "List the tools available in Assist Mode")
+@command("tools", "List the tools available to the agent modes")
 def _tools(ctx: CommandContext, arg: str) -> CommandResult:
     from ..ui.layout import columns_grid
 
@@ -95,6 +95,6 @@ def _tools(ctx: CommandContext, arg: str) -> CommandResult:
         kind = "changes files/system" if tool.mutates else "read-only"
         rows.append((name, f"{tool.description}  ({kind})"))
     ctx.ui.panel(
-        columns_grid(rows, ("seed.primary", "seed.text")), title="Assist Tools"
+        columns_grid(rows, ("seed.primary", "seed.text")), title="Agent Tools"
     )
     return CommandResult()

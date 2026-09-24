@@ -290,7 +290,7 @@ def test_flow_frame_never_overflows_narrow_terminals() -> None:
 
 def test_assist_mode_flow_keeps_the_step_rows_and_activity_line() -> None:
     console = _console()
-    flow = TaskFlow(console, mode_label="Assist Mode", task="Fix the bug")
+    flow = TaskFlow(console, mode_label="Agent Mode", task="Fix the bug")
     assert flow.header is None  # no Code Mode header outside Code Mode
     flow.begin()
     flow.observe_tool_start("edit_file", {"path": "a.py"})

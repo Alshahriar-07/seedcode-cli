@@ -1,422 +1,141 @@
-# Seed Code CLI v7.2.5 — Release Notes
+# Seed Code CLI v8.1.0 — Release Notes
 
-**Version:** 7.2.5 · **Tag:** `v7.2.5` · **Date:** 2026-09-23
+**Version:** 8.1.0 · **Tag:** `v8.1.0`
 
-v7.2.5 is a reliability and **provider-system** release. It closes the two
-reliability gaps 7.1.0 left open — Code Mode can now record a task it does not
-need, and a lost connection pauses the session instead of failing a task — and
-overhauls the provider layer: the user-facing list is **OpenRouter / Ollama /
-Custom**, users may save *unlimited* custom OpenAI-compatible providers, a
-failing request fails over to the next healthy provider **without restarting
-the task**, provider health is tracked with bounded cooldowns, and selecting
-Ollama **starts the local server automatically**.
+v8.1.0 is a **modes and task-lifecycle** release. Seed Code now exposes exactly
+three modes — **Chat**, **Code** and **Agent** — resolved through a single
+shared source of truth so no surface can disagree or invent a fourth, and the
+entire release surface (package, installers, checksums, documentation) is
+synchronised on 8.1.0. Completing a task never closes the application: the
+session returns to a ready prompt and accepts the next request.
 
-Everything below is behavior that is implemented and covered by the test suite
-in this repository.
+---
 
-## What's new in 7.2.5
+## What's new in 8.1.0
 
-### Code Mode reliability
+### Exactly three modes
 
-- New `SKIPPED` task state: a task the model declares not needed, or whose
-  prerequisite can never finish, is recorded (with its reason, transitively)
-  and never counted as verified work; a project cannot be `complete` from
-  skips alone.
-- Network-aware recovery: a transient provider failure reconnects with longer
-  backoff, and if it still cannot recover the session **pauses** with the plan,
-  files and checkpoint intact (`SessionConnectivityError`) instead of reporting
-  the task as failed. Permanent errors (bad key, unknown model) still fail.
+| Mode | What it does |
+| --- | --- |
+| **Chat Mode** | Conversation: questions, explanations, brainstorming. Never acts on your project. |
+| **Code Mode** | A real coding agent for the current workspace: inspect, plan, edit, run, verify, and keep working until the task is verified. |
+| **Agent Mode** | General-purpose multi-step execution using the available tools, verified before it is reported complete. |
 
-### Provider system
+- A new single source of truth, `seedcode.core.modes`, owns the mode enum,
+  labels, descriptions and parsing. `/mode`, `/chat`, `/codemode`, `/agent`,
+  `/assist`, `/desktop`, the dashboard, the status bar, the interactive menu and
+  the task header all resolve through it.
+- **Assist Mode is retired as a separate mode**; its capabilities now belong to
+  Agent Mode. `assist` and `desktop` remain accepted *input* aliases and route
+  to Agent Mode, so an existing habit or stored value keeps working — but no
+  fourth mode can be selected or displayed.
+- The interactive main menu no longer offers a separate "Assist Mode" entry.
 
-- **OpenRouter / Ollama / Custom** is the advertised list. Default, FreeModel
-  and AeroLink remain for backward compatibility but are not offered for new
-  setups.
-- **Custom providers** (`seedcode.core.providers.custom`): add any
-  OpenAI-compatible endpoint (name, base URL, API key, optional model). Test
-  the connection, edit, enable/disable, reorder by priority, select and delete;
-  configurations persist in `config.json` with no count limit, and keys are
-  only ever shown masked.
-- **Provider health** (`seedcode.core.providers.health`): `unknown · healthy ·
-  retrying · temporarily_unavailable · rate_limited · authentication_error ·
-  offline`, each with a bounded cooldown; a rejected key is never retried in
-  the session.
-- **Automatic failover** (`seedcode.core.providers.failover`): retry the same
-  provider, then switch to the next healthy configuration and retry the same
-  request — conversation, task and TODO state are preserved, so work resumes
-  rather than restarts.
-- **Ollama auto-start** (`seedcode.core.providers.ollama_start`): detect the
-  server, re-check to avoid a duplicate launch, start `ollama serve`
-  cross-platform, poll for readiness within a bounded timeout, and continue.
+### Task lifecycle
 
-## Official installation
+- **A completed task does not close the application.** Every task path —
+  success, failure, provider error, `Ctrl+C` — finishes the task view, prints a
+  status and returns to a ready prompt. Only `/exit` leaves the chat loop.
+- Code Mode keeps its evidence-based task graph: a task is only `COMPLETED`
+  when its acceptance criteria are satisfied by observed evidence, and a step
+  is never reported done unless the work behind it really happened.
+- The live progress view is driven by the model's plan and by real tool
+  events, so what is on screen is what actually ran.
 
-**`seedcode` is the primary command** after every installation method.
+### Provider persistence and default configuration
 
-pip (any platform, Python 3.10+):
+- Adding a custom provider no longer disturbs the built-in providers: an
+  existing per-provider key and model survive the save, and both the default
+  provider set and the custom provider remain after a configuration reload.
+- A fresh configuration initialises cleanly: with no built-in credential in the
+  build, the active provider is reported as a setup state (`Setup needed` /
+  `No Key`) rather than a misleading missing-key error. No credential is ever
+  hardcoded, and keys are stored per provider in `~/.seedcode/config.json`,
+  masked or absent in every display, log and error message.
+
+### Distribution
+
+- **Version 8.1.0** is read from a single place (`seedcode.__version__`) and
+  propagated to the wheel, sdist, CLI `--version`, the executable, the remote
+  installers, `IRM_INSTALL/RELEASE_INFO.txt` and the release workflow.
+- **`IRM_INSTALL/install.sh` rewritten** to the documented checksum contract:
+  it prefers the platform standalone binary and falls back to the official
+  wheel; either way it fetches, verifies against the release's
+  `SHA256SUMS.txt`, then installs, and verifies the file it installed by
+  absolute path. A missing entry, a mismatch, or an unreachable checksum file
+  aborts — verification is never bypassed.
+- The Windows installer's pinned-checksum map is reset for 8.1.0; digests are
+  computed from the real published artifacts at release time and never
+  invented.
+- Added `.github/CODE_OF_CONDUCT.md` and `.github/SECURITY.md`.
+
+---
+
+## Release artifacts (v8.1.0)
+
+| Artifact | Purpose |
+| --- | --- |
+| `SeedCode-CLI-Setup-8.1.0.exe` | Windows setup installer (Inno Setup wizard, uninstaller, Start Menu entry) |
+| `SeedCode-CLI-8.1.0-windows-x64.exe` | Standalone Windows executable (portable; downloaded by the Windows IRM installer) |
+| `seedcode_cli-8.1.0-py3-none-any.whl` | Python wheel (`pip install seedcode-cli`) |
+| `seedcode_cli-8.1.0.tar.gz` | Python source distribution |
+| `SHA256SUMS.txt` | SHA256 checksums covering every artifact above |
+
+Both remote installers read `SHA256SUMS.txt` from the release named `v8.1.0`
+and refuse to install anything that is not listed or that fails its digest.
+
+## Verify a download
 
 ```bash
-pip install seedcode-cli
-seedcode
+# Linux / macOS
+sha256sum -c SHA256SUMS.txt
+
+# Windows (PowerShell)
+Get-FileHash .\SeedCode-CLI-8.1.0-windows-x64.exe -Algorithm SHA256
 ```
 
-Windows:
+## Verification performed
+
+The following was verified against this repository (offline, no network):
+
+| Check | How | Result |
+| --- | --- | --- |
+| Three modes only | `seedcode.core.modes` label set; legacy aliases resolve to Chat/Code/Agent | Pass |
+| Config migration | legacy `agent_mode` config loads and round-trips to `mode` | Pass |
+| Code Mode end-to-end task | `tests/test_v710_e2e_todo_app.py` (real agent loop, real subprocess tests) | Pass |
+| Agent Mode multi-step | `tests/test_task_flow.py` (both code-mode and non-code-mode paths) | Pass |
+| Completion does not exit | task-flow tests assert `Ready for next task.` and a live session; no `sys.exit`/`os._exit` on the task path | Pass |
+| Provider persistence | defaults + a custom provider survive save and reload | Pass |
+| Installer checksum contract | `tests/test_installer_checksums.py` | Pass |
+| Source audit — no hardcoded credentials / no telemetry | repository-wide search | Pass |
+
+The Windows standalone executable and the Inno Setup installer are produced by
+`scripts/windows/build.bat` on a Windows release runner (PyInstaller + Inno
+Setup); the checksums in `SHA256SUMS.txt` are computed from those final
+artifacts at build time.
+
+## Install
 
 ```powershell
+# Windows
 irm https://seedcode-cli.vercel.app/install.ps1 | iex
 ```
 
-Linux / macOS:
-
 ```bash
+# Linux / macOS
 curl -fsSL https://seedcode-cli.vercel.app/install.sh | bash
+
+# Any platform (Python 3.10+)
+pip install seedcode-cli
 ```
-
-The installers download the official release artifact, verify its SHA256
-against the release's `SHA256SUMS.txt` **before** installing, install
-per-user, configure `PATH`, and finish by running `seedcode --version`.
-Verification is mandatory: a missing checksum entry, a mismatching digest,
-or a host with no SHA256 tool makes the installer stop instead of installing
-unverified code. `python -m seedcode` remains supported as a developer
-invocation.
-
-## Release assets
-
-Version **7.2.5**, tag **`v7.2.5`** —
-<https://github.com/Alshahriar-07/seedcode-cli/releases/tag/v7.2.5>
-
-| Asset | Kind |
-| --- | --- |
-| `SeedCode-CLI-7.2.5-windows-x64.exe` | Standalone Windows executable (portable; downloaded by the Windows IRM installer) |
-| `SeedCode-CLI-Setup-7.2.5.exe` | Windows setup installer (Inno Setup wizard, uninstaller, Start Menu entry) |
-| `seedcode_cli-7.2.5-py3-none-any.whl` | Python wheel (`pip install seedcode-cli`) |
-| `seedcode_cli-7.2.5.tar.gz` | Python source distribution |
-| `SHA256SUMS.txt` | SHA256 digest for every attached asset; verified by both installers |
-
-Artifact names are part of the release contract — the installers look each
-one up by exact name in `SHA256SUMS.txt`, so they must not be renamed. Every
-release must attach the full set above, including the wheel: `install.sh` has
-no verifiable artifact to install on Linux/macOS without it.
-
-## Verification performed (v7.2.5)
-
-Everything below was executed against the **final** artifacts staged in
-`dist/release/7.2.5/`; nothing here is carried over from an earlier build. The
-release was rebuilt from the frozen source before these runs, and
-`SHA256SUMS.txt` was generated **after** the last artifact was written.
-
-| Check | Command | Result |
-| --- | --- | --- |
-| Full test suite | `python -m pytest -q` | **941 passed, 0 failed** |
-| Source version | `python -m seedcode --version` | `Seed Code CLI 7.2.5` |
-| Wheel console script | `seedcode --version` (clean venv, outside the repo) | `Seed Code CLI 7.2.5` |
-| Wheel module entry | `python -m seedcode --version` | `Seed Code CLI 7.2.5` |
-| Portable EXE | `dist/seedcode.exe --version` | `Seed Code CLI 7.2.5` |
-| Setup EXE metadata | `(Get-Item ...).VersionInfo.ProductVersion` | `7.2.5` |
-| Setup EXE branding | `build_assets.py --verify-exe` | embeds the Seed Code icon |
-| Installer syntax | `bash -n install.sh` · PowerShell `Parser::ParseFile` | both clean |
-| Python 3.10 grammar | `ast.parse(..., feature_version=(3, 10))`, 133 files | no syntax errors |
-| Checksums | `sha256sum -c SHA256SUMS.txt` | all four artifacts `OK` |
-
-The wheel was installed into a **clean virtual environment** from
-`dist/release/7.2.5/`, with the working directory moved outside the repository
-so `import seedcode` could only resolve to site-packages. That install created
-the `seedcode` console script and reported `Seed Code CLI 7.2.5`. A first run
-with a fresh, empty profile created `~/.seedcode/`, rendered the dashboard, and
-reported `Status: Setup needed` — the application is **not** reported as
-offline merely because no credential exists yet.
-
-The exact ANSI logo was asserted verbatim against the **installed** dashboard
-at 80 and 100 columns; narrower or non-Unicode consoles get the documented
-text wordmark fallback instead of broken art.
-
-Staged assets in `dist/release/7.2.5/` (digests regenerated from the final
-files, then independently verified):
-
-```text
-7cebb50bc0b051d415328af74f57891dd3a5883a0edd9a9228a3d7305fe5e2cd  seedcode_cli-7.2.5-py3-none-any.whl
-2a6c099d020dce608c78f0325b5c05873a99dc71f34025131c6113301638196c  seedcode_cli-7.2.5.tar.gz
-434e65aeb31fdb3e47994d2de918a3d2b4a185c0830ec9ab471ef20a244d196d  SeedCode-CLI-7.2.5-windows-x64.exe
-9a1554a37cfffda834cbc7c243e928286e8dfe355fe401a2fba43e7da6e2b107  SeedCode-CLI-Setup-7.2.5.exe
-```
-
-## License
-
-Seed Code CLI is licensed under the **PolyForm Noncommercial License 1.0.0**
-(`PolyForm-Noncommercial-1.0.0`). The `LICENSE` file, the wheel/sdist metadata,
-and the Windows executable version resource all identify the project with this
-license; the MIT label previously used by Seed Code is retired. Third-party
-dependencies keep their own licenses, unchanged.
 
 ## Upgrade safety
 
-The installers upgrade **in place** onto the same per-user directory and never
-delete user data: `~/.seedcode/config.json` (including every saved custom
-provider), `~/.seedcode/history`, `~/.seedcode/logs`, and each project's
-`.seedcode/` directory are untouched by both the Setup wizard and the IRM
-scripts. A stale install can never masquerade as the new one: both installers
-verify the binary they just installed **by absolute path** and name any older
-`seedcode` that resolves earlier on `PATH`.
+Upgrades preserve user configuration and provider/API settings. Configuration
+lives in the Seed Code config directory (`~/.seedcode/`), never inside the
+install directory, and is never deleted by an installer.
 
-## Previous release: v7.1.0 — What's new
+---
 
-v7.1.0 turned **Code Mode into a real long-running software-engineering
-agent**. A model response is no longer a task result: a request becomes a plan
-— a task graph with dependencies and acceptance criteria — and the session
-works each task through as many model/tool cycles as it needs, verifies it
-against observed evidence, repairs its own failures, and only then starts the
-next one. The Code Mode UI was redesigned into a compact professional header
-with a live action line and a `/session` inspection view, and the
-desktop-control cleanup paths can no longer close an application the agent
-opened.
-
-### Session engine — a task graph, not a single turn
-
-Code Mode now drives a **task graph** instead of one agent turn:
-
-```
-request → plan → task graph → for each task (dependency order):
-            work → model/tool cycles → verify acceptance criteria
-            → repair and re-verify on failure → COMPLETED
-          → final verification → project completed
-```
-
-- **Explicit task lifecycle.** `PENDING · RUNNING · VERIFYING · BLOCKED ·
-  RECOVERING · FAILED · COMPLETED · CANCELLED`, shown in the UI and persisted
-  with the plan.
-- **Dependencies.** A task is not started until its prerequisites are
-  completed; the scheduler activates the next runnable task automatically, so
-  Task 1 → Task 2 → Task 3 proceeds without a second user message.
-- **Acceptance criteria are machine-checked.** `file: <path>`,
-  `file: <path> | contains: <text>`, `run: <command>`, `tests`, `no-errors`
-  are verified against what actually happened. A model that replies "done"
-  while the tests fail is sent back to fix them.
-- **Per-task execution records.** Each task maintains its current action,
-  files inspected and affected, commands with their outcome, tool calls, test
-  results, errors, retry count, timestamps and its verification result. The
-  record is written to `.seedcode/plan.json`, so a resumed session knows per
-  task what was already done.
-- **Evidence, not claims.** `TurnEvidence` is filled by the tool loop itself
-  (the files a mutating tool really wrote, the exit status of the commands
-  that really ran, the tests among them, unresolved errors). Task completion
-  is decided from that evidence.
-- **A task is a unit of work, not a model call.** A task may take many model
-  calls, many tool calls, several file reads and writes, several shell
-  commands, failing tests, fixes, retries and a final verification — the loop
-  continues until the task is complete, blocked, cancelled or genuinely
-  failed.
-- **Inspected files are tracked** as part of the persistent session context,
-  so a resumed task does not re-read what it already looked at.
-
-### Reliability
-
-- **Provider retry with backoff.** A failed model request is retried
-  (bounded, with growing delay) and only then surfaces as a clean failure —
-  the checkpoint keeps the position so the work is resumable.
-- **Command failure → diagnose → fix → re-run.** A failing command becomes a
-  repair cycle with the real error text; the task is not completed until the
-  re-run passes.
-- **Repeated-failure blocker.** If the same action produces the same failure
-  without progress, the task stops as `BLOCKED` with an explicit reason
-  instead of looping forever. There is no arbitrary "maximum 3 model calls"
-  cap — a large project may legitimately need many iterations.
-- **Context compaction.** Raw history beyond a recent window is folded into a
-  structural summary at safe message boundaries, so long sessions keep a
-  bounded context without losing the working state.
-- **Checkpoint / resume.** Every meaningful transition is persisted to
-  `.seedcode/checkpoints/latest.json` (plan, current task, progress, changed
-  files, discoveries, commands, errors, tests, fixes, blockers, next action,
-  counters). A pause, `Ctrl+C`, provider failure, output/context limit or
-  interruption resumes from the current task rather than from zero.
-- **Unicode regression fixed.** A lone/unpaired surrogate (from model output,
-  a tool result, file content, terminal bytes or a serialized structure) used
-  to abort a session with `'utf-8' codec can't encode … surrogates not
-  allowed`. All text now passes one normalization at every boundary: a split
-  high+low pair is repaired back into its real character, an unpaired
-  surrogate becomes U+FFFD, and valid Unicode (Bangla, Arabic, Chinese,
-  Japanese, Cyrillic, emoji, combining marks) is untouched.
-
-### UI
-
-- **Compact Code Mode header** — two rows while working, one while idle, no
-  decorative art:
-
-  ```text
-  ╭─ SEEDCODE 7.1.0 • CODE MODE ────────────────╮
-  │ ● RUNNING   Task 3/8   Build authentication │
-  │   ████████████░░░░  72% • 4m 32s • 18 calls │
-  │ → Running: pytest tests/auth                │
-  ╰─────────────────────────────────────────────╯
-  ```
-
-- **Live action line.** One line describing the real work — `→ Reading
-  src/auth/login.py`, `→ Editing package.json`, `→ Running pytest tests/auth`
-  — which switches to `Verifying acceptance criteria` and `Verifying the
-  project (tests / build)` when the session enters those phases.
-- **Task checklist** with `✓ completed · ● current · ○ pending · ✗ failed ·
-  ■ blocked/cancelled`, so the current task is always obvious.
-- **`/session` inspection view.** The detailed state the live view keeps off
-  screen: status, progress, current task and action, elapsed time, model/tool
-  calls, recoveries, tests, commands, files inspected and changed, blockers,
-  and the checkpoint/resumability of a stopped session — plus one row per
-  task with its state, verification result and own execution record.
-- **`/status` session row.** `RUNNING (1/3 verified) — Task 2`, or
-  `PAUSED (2/3 verified) — resumable with /resume`. No row is drawn when
-  there is no session.
-- **Evidence-gated completion is visible.** A finished project closes with
-  the evidence that verified it:
-
-  ```text
-  ✓ Project completed — 3/3 tasks verified
-    ✓ Verification: accepted
-    ✓ Tests: passed
-    ✓ Files: 4 affected
-    ✓ Commands: 7/7 ok
-    • Inspected: 12 item(s)
-  Ready for next task.
-  ```
-
-- **Stop/resume messaging.** `/stop` and `Ctrl+C` report that the plan,
-  completed work and project files were kept and point at `/resume` — a
-  stopped session is resumable, not a dead end. `/pause` takes effect at the
-  next safe boundary between model calls/tool cycles; the synchronous REPL is
-  not interruptible mid-call, which is why `Ctrl+C` remains the immediate
-  stop.
-- **Responsive and safe.** The panel re-fits on every refresh (a terminal
-  resize cannot leave it wider than the screen), degrades to a single status
-  line on narrow terminals, and renders ASCII borders, marks and progress
-  bars on consoles that cannot draw or encode the glyphs. Every string is
-  normalized through the same Unicode-safe layer; no UI element can end a
-  session.
-- **The desktop-safety rule is explicit:** if Seed Code opens an application
-  (Chrome, Edge, VS Code, Explorer, a media player), it is left open. Only an
-  explicit user request closes it.
-
-### Desktop safety
-
-- Opening an application or browser window records the launch in a session
-  ledger. A cleanup path — teardown hook, workflow reset, any code that did
-  not explicitly ask to close something — can no longer terminate a
-  user-facing application: the close is refused with a clear reason.
-- Explicit requests still work exactly as before (`close_app` / `app_close`,
-  `browser_close`), and forced process kills require the same explicit
-  intent.
-- A blind `Ctrl+W` is no longer used as a "close the current tab" fallback,
-  because it could close the application itself.
-- Internal cleanup is unchanged: releasing keyboard/mouse control, closing
-  DevTools sockets and dropping cached drivers still happen on teardown. The
-  teardown hook explicitly leaves opened applications open and logs which
-  ones.
-
-### Providers, modes and compatibility
-
-- **Providers preserved:** Default, OpenRouter, FreeModel (Claude and Codex),
-  AeroLink and Ollama/Local, with their existing key rules (Default and
-  Ollama need no key; everyone else needs their own) and their own model
-  slots.
-- **Modes preserved:** Chat, Code, Agent and Assist. The Code Mode session
-  engine sits behind the same command (`/codemode on`), and Assist/Agent keep
-  their existing step-by-step task flow.
-- **Commands preserved:** every existing command still resolves (plus the
-  new `/session`), `/hotkeys`-style shortcuts and the interactive menu are
-  unchanged, and the installer's assumptions about the package name, entry
-  point and layout are untouched.
-- **Version source is single:** `seedcode/__init__.py::__version__`. The
-  CLI, the wheel/sdist (via hatchling), the installers, the Inno Setup
-  metadata, the npm launcher (via `package.json`) and the docs all follow it.
-
-## Previous release: v7.1.0 — Verification performed
-
-Every result below comes from an actual run against the artifacts the v7.1.0
-release staged in `dist/release/7.1.0/`. Those artifacts are now archived under
-`dist/release/archive/7.1.0/` and are **not** referenced by any installer or
-installation instruction: the active release path is always the current
-version's directory.
-
-### Build and validation results
-
-| Check | Command | Result |
-| --- | --- | --- |
-| Source version | `python -m seedcode --version` | `Seed Code CLI 7.1.0` |
-| Full test suite | `python -m pytest -q` | **899 passed, 0 failed** |
-| Windows executable | `dist/seedcode.exe --version` | `Seed Code CLI 7.1.0` |
-| Installer checksum test | `pytest tests/test_installer_checksums.py` | passed |
-
-Staged assets in `dist/release/7.1.0/` (hashes as generated, verified below):
-
-```text
-975cf3c7c55fd8eec8ebda4eb433d5de156a49bfdc6d648ecf21f50ffa3813cc  SeedCode-CLI-7.1.0-windows-x64.exe
-3ba3c20f6b02b704a04e08e159d9e86202c3df434f8e8646d288a614d96a84ea  SeedCode-CLI-Setup-7.1.0.exe
-8231a5921a7bd904b1a6290c04bff428d27389d5bab395da8f4c5e3331199f5e  seedcode_cli-7.1.0-py3-none-any.whl
-1ef7397860f70c7ecb38c0a6491bcec9b649394d03fdf6a80aa066030ca81804  seedcode_cli-7.1.0.tar.gz
-```
-
-- **Windows `--version`.** The portable build reports `Seed Code CLI 7.1.0`.
-  It was then driven end-to-end in an isolated profile directory —
-  interactive startup, a chat turn, Code Mode enabled, and the Unicode/ASCII
-  fallback path on a console that cannot draw the glyphs — and exited cleanly
-  each time.
-- **Wheel.** The built wheel was installed into a fresh virtual environment,
-  where `python -m seedcode --version` reported `Seed Code CLI 7.1.0` and a
-  smoke run completed. The wheel contains `_default_key_template.py` (empty)
-  and never the generated `_default_key.py`, so a key is not shipped in the
-  published package.
-- **`install.ps1`** was run against the staged 7.1.0 assets: fresh install
-  (download → SHA256 verified → install → `seedcode --version` → `7.1.0`),
-  re-run without `-Force` ("already installed", exit 0), `-Force` reinstall,
-  and a run with an older `seedcode` shadowing it earlier on `PATH` (the
-  installer reports the version of the file it actually installed by absolute
-  path and warns that another copy is earlier on `PATH`).
-- **`install.sh`** was validated on its Linux path: platform detection
-  selected `linux-x64`, no prebuilt binary is published for that platform so
-  it fell back to the wheel, the download's SHA256 was verified against the
-  release's `SHA256SUMS.txt`, and the run finished with
-  `seedcode --version → Seed Code CLI 7.1.0` and exit 0. Its checksum parsing
-  was also checked against the real `SHA256SUMS.txt` (CRLF- and
-  whitespace-tolerant, exact name match) including a stale `6.2.5` name
-  resolving to nothing.
-
-### Tests
-
-- `python -m pytest -q` — **899 passed, 0 failed** (see above).
-- New v7.1.0 suites:
-  - `tests/test_v710_codemode.py` — task engine, session loop, verification,
-    recovery, retry, checkpoint/resume, `/pause` `/resume` `/stop`.
-  - `tests/test_v710_ui.py` — compact header, checklist, action line,
-    responsiveness, resize, ASCII fallback.
-  - `tests/test_v710_session_view.py` — session view, per-task records,
-    evidence, `/session` and `/status`.
-  - `tests/test_v710_unicode_safety.py` — surrogates at every boundary.
-  - `tests/test_v710_desktop_guard.py` — applications stay open.
-  - `tests/test_v710_e2e_todo_app.py` — a real end-to-end run in which the
-    actual `AgentEngine` and real tools build a small todo project (plan →
-    TODOs → file creation → modification → commands → a real failing `pytest`
-    run → a model-driven fix → green tests → next task → final verification),
-    and the finished project is independently re-tested with pytest
-    afterwards.
-
-### UI rendering
-
-- The startup dashboard, the Code Mode header, the session view and the final
-  evidence block were rendered directly at 20, 30, 40, 64, 80, 88, 96, 100 and
-  120 columns and on a legacy (raster-font) console, asserting that no line
-  exceeds its terminal width and that a console which cannot encode the
-  glyphs gets the ASCII rendering of the same information.
-
-## Previous release: v7.1.0 — Known limitations
-
-- **Live provider calls were not exercised here.** The chat/completion paths
-  are covered by offline unit tests and scripted agents; no request was sent
-  to a real provider during this release pass.
-- **Publishing is owner action.** No GitHub release, tag, PyPI upload, npm
-  publish or Vercel deployment was performed from this environment
-  (constraints: no publishing credentials, and external publishing is
-  explicitly out of scope). The artifacts are built and staged locally for
-  review.
-- **Linux/macOS standalone binaries are not built.** The Linux/macOS
-  installers install the wheel (or defer to the official installer); no
-  ELF/mach-O artifact is produced by the Windows build pipeline.
-- **The remote installer one-liners point at `https://seedcode-cli.vercel.app`,
-  which this repository does not deploy.** Re-publishing that deployment is
-  an owner action; the sources of truth are `IRM_INSTALL/install.ps1` and
-  `IRM_INSTALL/install.sh`.
+Version **8.1.0**, tag **`v8.1.0`** —
+<https://github.com/Alshahriar-07/seedcode-cli/releases/tag/v8.1.0>

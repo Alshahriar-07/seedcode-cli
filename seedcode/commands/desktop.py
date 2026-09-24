@@ -1,9 +1,9 @@
-"""Desktop-related commands: /desktop (legacy → Assist), /computer,
+"""Desktop-related commands: /desktop (legacy → Agent Mode), /computer,
 /screenshot, /windows.
 
-The old Desktop Mode was merged into Assist Mode — /desktop now routes
+The old Desktop Mode was merged into Agent Mode — /desktop now routes
 there. /computer shows engine status; /screenshot and /windows work
-immediately (no Assist turn needed) so the user can sanity-check the
+immediately (no Agent Mode turn needed) so the user can sanity-check the
 engine by hand.
 """
 
@@ -16,19 +16,19 @@ from . import CommandContext, CommandResult, command, show_session_bar
 from .assist import disable_assist, enable_assist
 
 
-@command("desktop", "Legacy alias for Assist Mode. Usage: /desktop [on|off]")
+@command("desktop", "Legacy alias for Agent Mode. Usage: /desktop [on|off]")
 def _desktop(ctx: CommandContext, arg: str) -> CommandResult:
     raw = arg.strip().lower()
     if raw in ("on", "off"):
         enable = raw == "on"
     elif not raw:
-        enable = not ctx.config.agent_mode  # bare /desktop toggles Assist
+        enable = not ctx.config.agent_mode  # bare /desktop toggles Agent Mode
     else:
         ctx.ui.warning("Usage: /desktop [on|off]")
         return CommandResult()
 
-    # Desktop Mode was merged into Assist Mode — route there transparently.
-    ctx.ui.dim("(/desktop is now Assist Mode)")
+    # Desktop Mode was merged into Agent Mode — route there transparently.
+    ctx.ui.dim("(/desktop is now Agent Mode)")
     if enable:
         enable_assist(ctx.ui, ctx.config)
     else:
@@ -44,7 +44,7 @@ def _computer(ctx: CommandContext, arg: str) -> CommandResult:
     table = Table.grid(padding=(0, 3))
     table.add_column(style="seed.dim", justify="right", no_wrap=True)
     table.add_column(style="seed.text")
-    table.add_row("Mode", "Assist" if ctx.config.agent_mode else "Chat  (/assist on)")
+    table.add_row("Mode", "Agent" if ctx.config.agent_mode else "Chat  (/agent on)")
     table.add_row("Engine", reason if not ok else "Available")
     missing = missing_packages()
     if missing:

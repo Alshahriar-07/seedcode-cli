@@ -164,14 +164,14 @@ class TestGating:
         from seedcode.tools.base import ToolError
 
         perm.desktop = None
-        with pytest.raises(ToolError, match="/assist on"):
+        with pytest.raises(ToolError, match="/agent on"):
             run(perm, "computer_state")
 
     def test_disabled_session_blocks(self, engine, perm):
         from seedcode.tools.base import ToolError
 
         perm.desktop.enabled = False
-        with pytest.raises(ToolError, match="/assist on"):
+        with pytest.raises(ToolError, match="/agent on"):
             run(perm, "computer_state")
 
     def test_unavailable_engine_blocks(self, engine, perm, monkeypatch):

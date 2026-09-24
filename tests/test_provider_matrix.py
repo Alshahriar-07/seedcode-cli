@@ -5,7 +5,7 @@ Offline checks for the release requirement that:
 * every supported provider is a separate, independently configured choice;
 * the API-key rule is provider-specific (Default and Ollama need no key;
   OpenRouter, FreeModel Claude/Codex and AeroLink each need their own);
-* every provider works in every mode (chat / assist / code) without the UI
+* every provider works in every mode (chat / agent / code) without the UI
   or the mode label raising;
 * switching across all providers keeps every provider's key and model
   isolated, so no key can leak from one to another;
@@ -35,8 +35,8 @@ PROVIDER_IDS = tuple(PROVIDERS)
 KEYLESS = ("default", "ollama")
 BYOK = tuple(pid for pid in PROVIDER_IDS if pid not in KEYLESS)
 
-MODES = ("chat", "assist", "code")
-_MODE_LABEL = {"chat": "Chat", "assist": "Assist Mode", "code": "Code Mode"}
+MODES = ("chat", "agent", "code")
+_MODE_LABEL = {"chat": "Chat Mode", "agent": "Agent Mode", "code": "Code Mode"}
 
 
 @pytest.fixture(autouse=True)
@@ -137,7 +137,7 @@ def test_every_provider_works_in_every_mode(monkeypatch, provider_id: str, mode:
     monkeypatch.setattr(status_cmd, "codemode_state", lambda: stub)
 
     cfg = AppConfig(provider=provider_id, model="test-model")
-    cfg.agent_mode = mode in ("assist", "code")
+    cfg.agent_mode = mode in ("agent", "code")
 
     assert mode_label(cfg) == _MODE_LABEL[mode]
 

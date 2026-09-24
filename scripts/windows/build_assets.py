@@ -21,7 +21,7 @@ longer exists), so nothing here is shared with the CLI header. Everything is
 deterministic: same inputs, byte-identical outputs.
 
 Usage:
-    python build_assets.py --version 7.1.0
+    python build_assets.py --version 8.1.0
     python build_assets.py --verify-exe ..\\..\\dist\\seedcode.exe
 """
 

@@ -150,23 +150,28 @@ def _key_status(config: AppConfig) -> str:
 
 
 def _mode_status(config: AppConfig) -> str:
-    """Menu status for the Code Mode item (ON only when really active)."""
+    """Menu status for the Code Mode item (ON only when really active).
+
+    Code Mode has its own workspace session, so its status must reflect that
+    session alone. Reading ``agent_mode`` here made the item read ON whenever
+    Agent Mode was on, even though no Code Mode workspace was active — a live
+    status that did not match the live state.
+    """
     try:
         from .codemode_state import codemode_state
 
-        if codemode_state().enabled:
-            return "ON"
+        return "ON" if codemode_state().enabled else "OFF"
     except Exception:
-        pass
-    return "ON" if config.agent_mode else "OFF"
+        return "OFF"
 
 
 def _main_menu(config: AppConfig):
     """The interactive main menu; returns an action id or None (exit).
 
-    v6.2.5 reference layout: the six mode/setup actions carry Ctrl+1..Ctrl+6
+    v6.2.5 reference layout: the mode/setup actions carry Ctrl+1..Ctrl+5
     shortcuts that execute the real handlers (no decorative items), followed
-    by the chat/setup actions kept from earlier releases.
+    by the chat/setup actions kept from earlier releases. There are exactly
+    three modes; Assist Mode no longer exists as a menu entry.
     """
     provider = PROVIDERS.get(config.provider)
     badge = badge_for_status(provider.status if provider is not None else "")
@@ -174,10 +179,9 @@ def _main_menu(config: AppConfig):
         [
             MenuItem("Code Mode", "codemode", status=_mode_status(config), shortcut="1"),
             MenuItem("Agent Mode", "agent", shortcut="2"),
-            MenuItem("Assist Mode", "assist", shortcut="3"),
-            MenuItem("Project Memory", "memory", shortcut="4"),
-            MenuItem("Settings", "settings", shortcut="5"),
-            MenuItem("Exit", "exit", shortcut="6"),
+            MenuItem("Project Memory", "memory", shortcut="3"),
+            MenuItem("Settings", "settings", shortcut="4"),
+            MenuItem("Exit", "exit", shortcut="5"),
             MenuItem("Start Chat", "chat", status=_model_status(config), badge=badge),
             MenuItem("Provider", "provider", status=_provider_status(config)),
             MenuItem("API Key", "apikey", status=_key_status(config)),
@@ -324,7 +328,7 @@ class _TaskPresenter:
         elif kind == "retry":
             self.ui.dim(f"  {detail}")
         elif kind == "limit":
-            self.ui.warning(f"Assist stopped: {detail}")
+            self.ui.warning(f"Agent Mode stopped: {detail}")
         elif kind == "call" and flow is None:
             # With a task view on screen the step list already shows the tool
             # work; without one, narrate it (the plain/legacy experience).
@@ -497,7 +501,7 @@ def agent_presenter(agent: AgentEngine) -> _TaskPresenter | None:
 
 
 def _task_mode_label(config: AppConfig) -> str:
-    """The mode named in a task header (Code Mode sharpens Assist Mode)."""
+    """The mode named in a task header (Chat / Code Mode / Agent Mode)."""
     try:
         from .codemode_state import codemode_state
 
@@ -505,7 +509,9 @@ def _task_mode_label(config: AppConfig) -> str:
             return "Code Mode"
     except Exception:
         pass
-    return "Assist Mode"
+    from .core.modes import active_mode, mode_title
+
+    return mode_title(active_mode(config))
 
 
 def _save_codemode_summary(agent: AgentEngine, text: str, outcome: str) -> None:
@@ -681,7 +687,7 @@ def _handle_agent(
     text: str,
     presenter: _TaskPresenter | None = None,
 ) -> None:
-    """Run one full Assist/Code turn (tool loop) and render the final answer.
+    """Run one full Agent/Code turn (tool loop) and render the final answer.
 
     The turn is shown as a compact live task flow whose step states follow real
     engine activity (see :mod:`seedcode.ui.tasks`) — never a fake progress bar.
@@ -766,7 +772,7 @@ def _handle_agent(
 def _make_agent(
     ui: UI, config: AppConfig, presenter: "_TaskPresenter | None" = None
 ) -> AgentEngine:
-    """Build an Assist engine bound to the CWD and the configured permissions."""
+    """Build an Agent Mode engine bound to the CWD and configured permissions."""
     # Lazy import (matching _make_desktop_session): the optional, platform-
     # specific computer package stays out of app.py's top-level import graph.
     from .computer import is_available
@@ -818,7 +824,7 @@ def _make_desktop_session(ui: UI):
 
     The session is bound to the process-wide
     :class:`~seedcode.computer.SessionPermissionManager` so a permission the
-    user granted once at ``/assist on`` keeps holding even though this gate is
+    user granted once at ``/agent on`` keeps holding even though this gate is
     rebuilt whenever the permission level changes.
     """
     from .computer import DesktopGrant, DesktopSession, session_permissions
@@ -866,14 +872,14 @@ def _chat_loop(
 ) -> None:
     """Interactive chat until /exit (returns to the main menu).
 
-    Only an explicit exit leaves here: a finished task (Code Mode, Assist
-    Mode, Agent Mode or a plain chat turn) returns to the prompt with
+    Only an explicit exit leaves here: a finished task (Code Mode, Agent
+    Mode or a plain chat turn) returns to the prompt with
     ``Ready for next task.`` and the session keeps running.
     """
     ctx = CommandContext(ui=ui, config=config, engine=engine)
     ui.dim(INPUT_HINT)
 
-    # The Assist engine is built lazily on the first assist-mode turn and
+    # The Agent engine is built lazily on the first agent-mode turn and
     # rebuilt when the permission or desktop mode changes (its system
     # prompt and permission gates reflect both). The presenter that owns the
     # live step view lives for the whole chat session, so each turn can bind
@@ -1120,8 +1126,6 @@ def run(ui: UI) -> None:
                 _dispatch_command(ui, config, engine, "/codemode on")
             elif choice == "agent":
                 _dispatch_command(ui, config, engine, "/agent on")
-            elif choice == "assist":
-                _dispatch_command(ui, config, engine, "/assist on")
             elif choice == "memory":
                 _dispatch_command(ui, config, engine, "/codemode status")
             elif choice == "settings":

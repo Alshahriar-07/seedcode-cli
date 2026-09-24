@@ -30,13 +30,13 @@ class StubUI:
 @pytest.fixture()
 def ctx(monkeypatch):
     # Never write the real user's config from tests. /desktop routes into
-    # Assist Mode, so the save happens there.
+    # Agent Mode, so the save happens there.
     monkeypatch.setattr("seedcode.commands.assist.save_config", lambda config: None)
     return CommandContext(ui=StubUI(), config=AppConfig(), engine=None)
 
 
 def force_available(monkeypatch, ok=True, reason="ok"):
-    # Both the desktop command and Assist Mode probe the engine.
+    # Both the desktop command and Agent Mode probe the engine.
     monkeypatch.setattr(
         "seedcode.commands.desktop.is_available", lambda: (ok, reason)
     )
@@ -46,15 +46,15 @@ def force_available(monkeypatch, ok=True, reason="ok"):
 
 
 class TestDesktopToggle:
-    """/desktop is a legacy alias that now routes into Assist Mode."""
+    """/desktop is a legacy alias that now routes into Agent Mode."""
 
     def test_on_enables_assist(self, ctx, monkeypatch):
         force_available(monkeypatch)
         dispatch(ctx, "/desktop on")
-        # Assist Mode turns on; desktop capability follows engine availability.
+        # Agent Mode turns on; desktop capability follows engine availability.
         assert ctx.config.agent_mode is True
         assert ctx.config.desktop_mode is True
-        assert any("Assist Mode ON" in t for t in ctx.ui.texts("success"))
+        assert any("Agent Mode ON" in t for t in ctx.ui.texts("success"))
 
     def test_on_without_engine_still_enables_assist(self, ctx, monkeypatch):
         force_available(monkeypatch, ok=False, reason="Missing packages: pyautogui")

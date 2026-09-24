@@ -1,7 +1,7 @@
 """/palette and /files — the command palette (Ctrl+K) and project search (Ctrl+P).
 
 The palette lists every high-level action (Change Provider, Change Model,
-Settings, History, Doctor, Clear History, About, Theme, Assist Mode, Search
+Settings, History, Doctor, Clear History, About, Theme, Agent Mode, Search
 Projects) as a fuzzy-searchable selector, VS Code style. The chat REPL
 binds Ctrl+K / Ctrl+P to these commands so they open mid-conversation.
 """
@@ -16,7 +16,7 @@ from . import CommandContext, CommandResult, command, dispatch
 
 
 def _actions(ctx: CommandContext) -> list[PaletteAction]:
-    assist_on = ctx.config.agent_mode
+    agent_on = ctx.config.agent_mode
     return [
         PaletteAction("Change Provider", "/provider", detail="switch AI backend"),
         PaletteAction("Change Model", "/model", detail="browse the live catalogue"),
@@ -28,9 +28,9 @@ def _actions(ctx: CommandContext) -> list[PaletteAction]:
         PaletteAction("About", "/about", detail="version and credits"),
         PaletteAction("Theme", "/theme", detail="pick a colour theme (live preview)"),
         PaletteAction(
-            "Assist Mode",
-            f"/assist {'off' if assist_on else 'on'}",
-            detail=f"currently {'on' if assist_on else 'off'}",
+            "Agent Mode",
+            f"/agent {'off' if agent_on else 'on'}",
+            detail=f"currently {'on' if agent_on else 'off'}",
         ),
         PaletteAction("Search Projects", "__files__", detail="fuzzy project file search"),
         PaletteAction("Keyboard Shortcuts", "/shortcuts", detail="key reference"),

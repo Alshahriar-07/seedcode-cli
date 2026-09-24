@@ -243,7 +243,7 @@ def test_success_outcome_is_persistent_and_prompts_for_more() -> None:
 
 def test_failure_outcome_shows_the_reason_and_stays_usable() -> None:
     console = _console()
-    flow = TaskFlow(console, mode_label="Assist Mode", task="Do the thing").begin()
+    flow = TaskFlow(console, mode_label="Agent Mode", task="Do the thing").begin()
     flow.finish("failed", "Provider rejected the request")
 
     out = console.export_text()
@@ -254,7 +254,7 @@ def test_failure_outcome_shows_the_reason_and_stays_usable() -> None:
 
 def test_cancelled_outcome_is_reported() -> None:
     console = _console()
-    flow = TaskFlow(console, mode_label="Assist Mode", task="Long job").begin()
+    flow = TaskFlow(console, mode_label="Agent Mode", task="Long job").begin()
     flow.finish("cancelled")
 
     out = console.export_text()
@@ -573,7 +573,7 @@ class _RecordingAgent:
 def test_chat_loop_runs_task_after_task_and_exits_only_on_command(
     monkeypatch, tmp_path: Path, code_mode: bool
 ) -> None:
-    """Assist Mode and Code Mode: task, task, manual exit — CLI alive throughout."""
+    """Agent Mode and Code Mode: task, task, manual exit — CLI alive throughout."""
     if code_mode:
         cms.enable(tmp_path)
     config = AppConfig(provider="openrouter", model="test/model", agent_mode=True)

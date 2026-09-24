@@ -19,7 +19,7 @@ _COMMAND_ORDER: tuple[str, ...] = (
     "/help",
     "/status",
     "/codemode",
-    "/assist",
+    "/agent",
     "/provider",
     "/model",
 )

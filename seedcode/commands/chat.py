@@ -1,7 +1,7 @@
 """/chat — explicit Chat Mode (plain conversation, no tools).
 
 /chat      — show the current mode.
-/chat on   — leave Assist/Code Mode and return to plain Chat: the AI answers
+/chat on   — leave Code/Agent Mode and return to plain Chat: the AI answers
              with text only and never touches the filesystem or terminal.
 
 Chat Mode is the default runtime mode; this command exists so a user can
@@ -19,7 +19,7 @@ def _chat(ctx: CommandContext, arg: str) -> CommandResult:
     raw = arg.strip().lower()
     if raw in ("", "status"):
         ctx.ui.info(f"Mode: {mode_label(ctx.config)}")
-        ctx.ui.dim("Switch with: /chat on · /assist on · /codemode on (or /mode chat|assist|code)")
+        ctx.ui.dim("Switch with: /chat on · /agent on · /codemode on (or /mode chat|code|agent)")
         return CommandResult()
 
     if raw != "on":

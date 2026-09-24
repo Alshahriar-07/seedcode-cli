@@ -50,7 +50,7 @@ SENSITIVE_CATEGORIES = frozenset(
     }
 )
 
-# The non-sensitive categories Assist Mode grants up-front in ONE prompt when it
+# The non-sensitive categories Agent Mode grants up-front in ONE prompt when it
 # starts, so the session never re-asks for routine control during a task. These
 # are exactly the categories a normal automation session touches; sensitive
 # categories are deliberately excluded — they always confirm per action.
@@ -84,10 +84,10 @@ def _deny_all(category: str, description: str) -> DesktopGrant:
 
 @dataclass
 class SessionPermissionManager:
-    """Session-wide desktop grants, requested ONCE when Assist Mode starts.
+    """Session-wide desktop grants, requested ONCE when Agent Mode starts.
 
     This is the fix for "asks for permission on every action": instead of
-    prompting lazily the first time each category is touched, Assist Mode calls
+    prompting lazily the first time each category is touched, Agent Mode calls
     :meth:`request` at start-up to grant the whole routine-control set in a
     single dialog. Every :class:`DesktopSession` created for the session
     (the app rebuilds them whenever the permission level changes) consults the
@@ -123,7 +123,7 @@ class SessionPermissionManager:
         return category in self.denied
 
     def reset(self) -> None:
-        """Forget the session decision (Assist Mode turned off)."""
+        """Forget the session decision (Agent Mode turned off)."""
         self.granted.clear()
         self.denied.clear()
         self.requested = False

@@ -1,6 +1,6 @@
 """Code Mode state (v6.2.0): workspace-aware coding agent session state.
 
-Code Mode is Assist Mode sharpened for the current project:
+Code Mode is the workspace-aware coding mode for the current project:
 
 * the CWD at ``/codemode on`` becomes the *workspace* root;
 * ``.seedcode/`` project memory is ensured and the index refreshed

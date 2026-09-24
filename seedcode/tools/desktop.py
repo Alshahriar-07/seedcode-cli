@@ -82,11 +82,11 @@ def _engine(perm: "PermissionManager") -> "ComputerEngine":
     if not perm.level.allows_desktop:
         raise ToolError(
             "Desktop control needs Desktop permission or higher. The user can "
-            "enable it with /assist on or raise it with /permission desktop."
+            "enable it with /agent on or raise it with /permission desktop."
         )
     if perm.desktop is None or not perm.desktop.enabled:
         raise ToolError(
-            "Desktop tools are disabled. The user can enable them with /assist on."
+            "Desktop tools are disabled. The user can enable them with /agent on."
         )
     ok, reason = is_available()
     if not ok:

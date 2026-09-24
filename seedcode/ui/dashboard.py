@@ -1,14 +1,14 @@
-"""The Seed Code startup dashboard (v7.2.5).
+"""The Seed Code startup dashboard (v8.1.0).
 
 The primary startup branding is the Seed Code ANSI wordmark logo, followed by
 a compact, information-dense block with the live session state::
 
-    ╭─ Seed Code CLI v7.2.5 ───────────────────────────────────────────────────────╮
+    ╭─ Seed Code CLI v8.1.0 ───────────────────────────────────────────────────────╮
     │   ▄█████ ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄    ▄█████  ▄▄▄  ▄▄▄▄  ▄▄▄▄▄   ▄█████ ██     ██     │
     │   ▀▀▀▄▄▄ ██▄▄  ██▄▄  ██▀██   ██     ██▀██ ██▀██ ██▄▄    ██     ██     ██     │
     │   █████▀ ██▄▄▄ ██▄▄▄ ████▀   ▀█████ ▀███▀ ████▀ ██▄▄▄   ▀█████ ██████ ██     │
     │                                                                              │
-    │   Seed Code CLI v7.2.5                                                       │
+    │   Seed Code CLI v8.1.0                                                       │
     │   Plant ideas. Grow code.                                                    │
     │   Provider   OpenRouter                                                      │
     │   Model      gpt-5.1-codex                                                   │
@@ -21,7 +21,7 @@ Every value under it comes from live application state — nothing is hardcoded
 and "Ready" is never faked for an unconfigured session. The ``API Key`` row is
 rendered **only** for providers that actually require a key.
 
-Terminal compatibility (v7.2.5):
+Terminal compatibility (v8.1.0):
 
 * Block glyphs need a Unicode-aware console. A raster-font ``cmd.exe`` or a
   redirected stream that cannot encode them gets the same panel with a text
@@ -103,15 +103,17 @@ def _model_value(config: AppConfig) -> str:
 
 
 def _mode_value(config: AppConfig) -> str:
-    """The user-facing mode, read from real session state."""
-    try:
-        from ..codemode_state import codemode_state
+    """The user-facing mode, read from real session state (v8.1.0).
 
-        if codemode_state().enabled:
-            return "Code Mode"
-    except Exception:
-        pass
-    return "Assist Mode" if config.agent_mode else "Chat"
+    Chat is shown without the " Mode" suffix so the compact dashboard keeps
+    exactly one ``Mode`` row label (see the design invariant asserted in
+    ``tests/test_dashboard.py``); the agentic modes keep their full name so the
+    session's capability is unambiguous at a glance.
+    """
+    from ..core.modes import Mode, active_mode, mode_title
+
+    mode = active_mode(config)
+    return "Chat" if mode is Mode.CHAT else mode_title(mode)
 
 
 def _status_value(config: AppConfig, ready_mark: str, idle_mark: str) -> Text:

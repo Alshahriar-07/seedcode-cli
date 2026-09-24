@@ -1,12 +1,14 @@
-"""Assist Mode: unified AI + computer control.
+"""Agent Mode: unified AI + tool/computer execution (v8.1.0).
 
-/assist on  — enables the full capability set (AI, filesystem, terminal,
-              git, browser, keyboard, mouse, windows, vision, OCR, desktop
-              automation).
-/assist off — back to plain chat.
+/agent on   — selects Agent Mode: the full capability set (AI, filesystem,
+              terminal, git, browser, keyboard, mouse, windows, vision, OCR,
+              desktop automation).
+/agent off  — back to plain Chat Mode.
 
-Assist Mode is the ONLY automation mode Seed Code exposes. The old Agent
-and Desktop modes were merged into it; their commands now route here.
+Agent Mode is the single general-purpose execution mode. The retired Assist
+Mode is this mode under its old name: ``/assist`` and ``/desktop`` still work
+and route here, but they never create a fourth mode. Code Mode is the
+workspace-aware coding agent (see :mod:`seedcode.commands.codemode`).
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ from ..config import save_config
 from ..tools import TOOL_REGISTRY, PermissionMode
 from . import CommandContext, CommandResult, command, show_session_bar
 
-# The Assist capability set, in display order. Desktop-engine rows are
+# The Agent Mode capability set, in display order. Desktop-engine rows are
 # marked so they can be dimmed when the Computer Engine is unavailable.
 _CAPABILITIES: tuple[tuple[str, str, bool], ...] = (
     ("AI", "Chat, reasoning, and code generation", False),
@@ -35,7 +37,7 @@ _CAPABILITIES: tuple[tuple[str, str, bool], ...] = (
 )
 
 
-@command("assist", "Enable/disable Assist Mode (unified AI + computer control)")
+@command("assist", "Legacy alias for Agent Mode. Usage: /assist [on|off]")
 def _assist(ctx: CommandContext, arg: str) -> CommandResult:
     raw = arg.strip().lower()
     if raw in ("on", "off"):
@@ -46,7 +48,7 @@ def _assist(ctx: CommandContext, arg: str) -> CommandResult:
         return CommandResult()
     else:
         ctx.ui.warning("[Command Error] Invalid syntax.")
-        ctx.ui.dim("Expected: /assist on|off")
+        ctx.ui.dim("Expected: /agent on|off (or /assist on|off)")
         return CommandResult()
 
     if enable:
@@ -58,7 +60,7 @@ def _assist(ctx: CommandContext, arg: str) -> CommandResult:
 
 
 def capability_table(desktop_ok: bool) -> Table:
-    """The Assist capability list (✓ rows; unavailable rows dim).
+    """The Agent Mode capability list (✓ rows; unavailable rows dim).
 
     OCR is probed independently of the rest of the desktop stack: it needs a
     native engine the Python packages do not supply, so marking it available
@@ -91,12 +93,13 @@ def _ocr_available() -> bool:
 
 
 def enable_assist(ui, config) -> None:
-    """Enable Assist Mode: the full capability set in one switch."""
-    config.agent_mode = True
+    """Select Agent Mode: the full capability set in one switch."""
+    config.mode = "agent"
 
-    # Desktop capabilities require the Computer Engine. When available, Assist
-    # runs at the ``desktop`` level so the AI can drive the computer; otherwise
-    # it stays at ``workspace`` (AI + filesystem + terminal + git still work).
+    # Desktop capabilities require the Computer Engine. When available, Agent
+    # Mode runs at the ``desktop`` level so the AI can drive the computer;
+    # otherwise it stays at ``workspace`` (AI + filesystem + terminal + git
+    # still work).
     desktop_ok, desktop_reason = is_available()
     config.permission_mode = (
         PermissionMode.DESKTOP.value_str if desktop_ok
@@ -104,9 +107,9 @@ def enable_assist(ui, config) -> None:
     )
     save_config(config)
 
-    ui.success("Assist Mode ON")
+    ui.success("Agent Mode ON")
     ui.blank()
-    ui.panel(capability_table(desktop_ok), title="Assist Mode")
+    ui.panel(capability_table(desktop_ok), title="Agent Mode")
     if not desktop_ok:
         ui.dim(f"Desktop capabilities unavailable: {desktop_reason}")
     ui.blank()
@@ -143,14 +146,14 @@ def request_session_permissions(ui) -> bool:
         f"  • {CATEGORY_LABELS.get(c, c)}" for c in SESSION_GRANT_CATEGORIES
     )
     description = (
-        "Grant these for this session so Assist doesn't interrupt every step:\n"
+        "Grant these for this session so Agent Mode doesn't interrupt every step:\n"
         f"{wanted}\n"
         "Sensitive actions (registry writes, passwords, system power, deletions, "
         "purchases) will still ask each time."
     )
 
     try:
-        answer = ui.confirm_desktop("Assist Mode session permissions", description)
+        answer = ui.confirm_desktop("Agent Mode session permissions", description)
     except Exception:
         # No interactive prompt available (headless/non-TTY): leave the
         # per-action flow in place rather than silently granting anything.
@@ -161,25 +164,27 @@ def request_session_permissions(ui) -> bool:
         session.request(SESSION_GRANT_CATEGORIES, allow=True)
         ui.dim("Desktop control granted for this session — you won't be asked again.")
     else:
-        ui.dim("Declined: Assist will ask before each desktop action.")
+        ui.dim("Declined: Agent Mode will ask before each desktop action.")
     return allowed
 
 
 def disable_assist(ui, config) -> None:
-    """Disable Assist Mode: back to plain chat."""
+    """Leave Agent Mode: back to plain Chat."""
     from ..computer.permissions import session_permissions
 
-    config.agent_mode = False
+    config.mode = "chat"
     # Drop back to the safe editing level (removes desktop capability).
     config.permission_mode = PermissionMode.WORKSPACE.value_str
     save_config(config)
-    # Forget the session-wide desktop grant: turning Assist back on asks again.
+    # Forget the session-wide desktop grant: turning Agent Mode back on asks again.
     session_permissions().reset()
-    ui.success("Assist Mode OFF — back to plain chat")
+    ui.success("Agent Mode OFF — back to plain chat")
 
 
 def _show_status(ctx: CommandContext) -> None:
-    """Show current Assist Mode status."""
+    """Show current Agent Mode status."""
+    from ..core.modes import active_mode, mode_title
+
     on = ctx.config.agent_mode
     desktop_ok, desktop_reason = is_available()
 
@@ -188,8 +193,8 @@ def _show_status(ctx: CommandContext) -> None:
     table.add_column()
 
     state = "[seed.accent]ON[/seed.accent]" if on else "[seed.dim]OFF[/seed.dim]"
-    table.add_row("Assist Mode", state)
-    table.add_row("Mode", "Assist" if on else "Chat")
+    table.add_row("Agent Mode", state)
+    table.add_row("Mode", mode_title(active_mode(ctx.config)))
     if not desktop_ok:
         table.add_row("Desktop", f"Unavailable: {desktop_reason}")
     table.add_row("Permission", ctx.config.permission_mode.replace("_", " ").title())
@@ -198,6 +203,6 @@ def _show_status(ctx: CommandContext) -> None:
     desktop_tools = [n for n, t in TOOL_REGISTRY.items() if t.group == "desktop"]
     table.add_row("Available tools", f"{len(core_tools)} core, {len(desktop_tools)} desktop")
 
-    ctx.ui.panel(table, title="Assist Mode")
+    ctx.ui.panel(table, title="Agent Mode")
     ctx.ui.blank()
-    ctx.ui.dim("Toggle with: /assist on | /assist off")
+    ctx.ui.dim("Toggle with: /agent on | /agent off (alias: /assist)")

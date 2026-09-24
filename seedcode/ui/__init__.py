@@ -261,4 +261,4 @@ class UI:
 
     def confirm_tool_action(self, category_label: str, description: str) -> str:
         """Approve a dangerous agent tool action; returns 'y', 'a', or 'n'."""
-        return self._confirm("Assist Action", category_label, description)
+        return self._confirm("Agent Action", category_label, description)

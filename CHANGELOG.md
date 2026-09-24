@@ -4,6 +4,84 @@ All notable changes to Seed Code CLI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [8.1.0] — 2026-09-24
+
+A modes, task-lifecycle and release-packaging release. Seed Code now exposes
+exactly **three modes** — Chat, Code and Agent — with one shared resolver so no
+surface can disagree or invent a fourth, and the whole release surface
+(package, installers, checksums) is synchronised on **8.1.0**. Everything
+below is implemented in this repository and covered by the test suite.
+
+### Modes
+
+- **Exactly three user-facing modes**: Chat Mode, Code Mode and Agent Mode.
+  A new single source of truth, `seedcode.core.modes`, owns the enum, the
+  labels, the descriptions and the parsing; `/mode`, `/chat`, `/codemode`,
+  `/agent`, `/assist`, `/desktop`, the dashboard, the status bar, the menu and
+  the task header all resolve through it.
+- **Assist Mode is retired as a mode.** Its capabilities now belong to Agent
+  Mode. `assist`, `desktop`, `codemode` and `code` remain accepted *input*
+  aliases (`assist`/`desktop` → Agent Mode, `codemode` → Code Mode) so existing
+  habits and stored configurations keep working, but no fourth mode can be
+  selected or displayed.
+- `AppConfig.mode` (`"chat" | "code" | "agent"`) replaces the legacy
+  `agent_mode` boolean, with a migration that reads old configs (including a
+  stored `"assist"`) and a read/write `agent_mode` compatibility property, so
+  old configuration files load unchanged and round-trip to the new field.
+- The interactive main menu no longer offers a separate "Assist Mode" entry
+  (it was a fourth mode); the mode actions are Code Mode and Agent Mode.
+- The `/tools` panel is titled "Agent Tools" and the desktop tools' guidance
+  now points at `/agent on` as the primary route.
+
+### Task lifecycle
+
+- **Completing a task never closes the application.** Every task path (success,
+  failure, provider error, `Ctrl+C`) finishes the task view, prints a status and
+  returns to a ready prompt that accepts the next request. Only `/exit` leaves
+  the chat loop, and even that returns to the menu rather than the process.
+- Code Mode keeps its evidence-based task graph: a task is `COMPLETED` only
+  when its acceptance criteria are satisfied by observed evidence (files that
+  exist, a command that exited 0, tests that passed, no unresolved error), and
+  a step is never reported done unless the work behind it really happened.
+- The live progress view is driven by the model's *plan* (the task graph
+  checklist) and by real tool events, so what is on screen is what actually
+  ran.
+
+### UI
+
+- The dashboard, status bar, `/status`, `/mode` and the task header all name the
+  active mode from live state through `seedcode.core.modes`, so no surface can
+  show a stale or contradictory mode name.
+- Fixed the Code Mode menu item reporting `ON` whenever Agent Mode was on: it
+  now reflects the Code Mode workspace session alone.
+- The command hint advertises `/agent` as the primary Agent Mode route.
+
+### Distribution
+
+- **Version synchronised to 8.1.0** across the package (`seedcode.__version__`,
+  which the wheel, sdist, CLI, executable and release workflow all read), the
+  remote installers, `IRM_INSTALL/RELEASE_INFO.txt`, the npm launcher metadata
+  and the Windows installer definition.
+- **Linux/macOS installer rewritten to the release checksum contract.**
+  `IRM_INSTALL/install.sh` now prefers the platform standalone binary
+  (`SeedCode-CLI-<ver>-<os>-<arch>`) and falls back to the official wheel; in
+  both paths it fetches the artifact, verifies it against the release's
+  `SHA256SUMS.txt` (`sums_lookup` / `verify_sha256` / `sha256_of`, tolerant of
+  spaces, tabs, CRLF and the GNU binary-mode marker while still requiring 64
+  hex digits and an exact file name), then installs — and it verifies the file
+  it installed by absolute path, reporting any older `seedcode` that is earlier
+  on `PATH`. A missing entry, a mismatch, or an unreachable checksum file all
+  abort: verification is never bypassed.
+- The Windows installer's pinned-checksum map is reset for 8.1.0. Digests are
+  computed from the real published artifacts at release time (never invented);
+  with no pinned entry the release `SHA256SUMS.txt` is the sole authority and
+  an unreachable checksum file refuses the install instead of proceeding.
+- Restored the installer/release checksum tests to green: the Linux installer
+  once again implements the documented `sums_lookup`/`verify_sha256` contract,
+  and the installers, README and `RELEASE_INFO.txt` all carry the 8.1.0
+  artifact names.
+- Added a Code of Conduct and a Security Policy (see `.github/`).
+
 ## [7.2.5] — 2026-09-23
 
 A reliability and provider-system release. 7.1.0 left two reliability gaps

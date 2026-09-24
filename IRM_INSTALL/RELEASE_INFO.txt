@@ -1,13 +1,13 @@
 Seed Code CLI
 =============
 
-Version: 7.2.5
+Version: 8.1.0
 License: PolyForm Noncommercial License 1.0.0
          (https://polyformproject.org/licenses/noncommercial/1.0.0/)
 
 WHAT'S IN THIS RELEASE
 ----------------------
-The v7.2.5 release artifacts:
+The v8.1.0 release artifacts:
   - Windows portable executable (x64)
   - Windows Setup installer (x64)
   - Python wheel (any OS)
@@ -17,6 +17,22 @@ The v7.2.5 release artifacts:
 Primary command after any install method:  seedcode
 Developer fallback:                        python -m seedcode
 
+v8.1.0 IS A MODE + TASK-LIFECYCLE RELEASE
+-----------------------------------------
+Seed Code now exposes exactly three modes:
+
+  * Chat Mode  - conversation only; never acts on the project.
+  * Code Mode  - a real coding agent for the current workspace: inspect, plan,
+                 edit, run, verify, and keep working until the task is done.
+  * Agent Mode - general-purpose multi-step execution using the available
+                 tools, verified before it is reported as complete.
+
+The old Assist Mode is no longer a separate mode: its capabilities belong to
+Agent Mode. `/assist` and `/desktop` remain accepted as aliases so an existing
+habit keeps working, but nothing in the UI presents a fourth mode. Completing a
+task never closes the application: the session returns to a ready prompt and
+accepts the next request.
+
 INSTALLATION METHODS
 --------------------
 
@@ -24,17 +40,16 @@ INSTALLATION METHODS
 
      irm https://seedcode-cli.vercel.app/install.ps1 | iex
 
-   Downloads the official SeedCode-CLI-7.2.5-windows-x64.exe from GitHub
-   Releases, verifies its SHA-256 against the release's SHA256SUMS.txt
-   (cross-checked against a pinned digest built into the installer; a
-   mismatch aborts, verification is never bypassed), installs per-user to
-   %LOCALAPPDATA%\Programs\SeedCode, adds that directory to the user PATH,
-   and verifies the installed binary reports version 7.2.5. PowerShell 5.1
-   and 7+ compatible; ANSI UI with graceful fallback; Ctrl+C safe.
+   Downloads the official SeedCode-CLI-8.1.0-windows-x64.exe from GitHub
+   Releases and verifies its SHA-256 against the release's SHA256SUMS.txt. A
+   mismatch aborts; verification is never bypassed. It installs per-user to
+   %LOCALAPPDATA%\Programs\SeedCode, adds that directory to the user PATH, and
+   verifies the installed binary reports version 8.1.0. PowerShell 5.1 and 7+
+   compatible; ANSI UI with graceful fallback; Ctrl+C safe.
 
 2) Windows - Setup installer
 
-   Download SeedCode-CLI-Setup-7.2.5.exe from
+   Download SeedCode-CLI-Setup-8.1.0.exe from
    https://github.com/Alshahriar-07/seedcode-cli/releases and run it.
    Installs per-user with a Start Menu shortcut and adds the install
    directory to the user PATH so `seedcode` works in new terminals.
@@ -43,21 +58,23 @@ INSTALLATION METHODS
 
 3) Windows - portable executable
 
-   Download SeedCode-CLI-7.2.5-windows-x64.exe from the releases page and
+   Download SeedCode-CLI-8.1.0-windows-x64.exe from the releases page and
    run it directly. No installation, no PATH changes; `seedcode --version`
-   reports 7.2.5. For a persistent `seedcode` command, use method 1 or 2.
+   reports 8.1.0. For a persistent `seedcode` command, use method 1 or 2.
 
 4) Linux / macOS - remote shell installer
 
      curl -fsSL https://seedcode-cli.vercel.app/install.sh | bash
 
-   Downloads the official seedcode_cli-7.2.5-py3-none-any.whl from GitHub
-   Releases, verifies its SHA-256 against the release's SHA256SUMS.txt
-   (cross-checked against a pinned digest built into the installer; a
-   mismatch aborts, verification is never bypassed), installs with pipx
-   when available (otherwise pip --user, with PEP 668 handling), creates a
-   `seedcode` shim in ~/.local/bin, and verifies the installed binary
-   reports 7.2.5. Clean ANSI UI with ASCII fallback; Ctrl+C safe.
+   Downloads the official SeedCode-CLI-8.1.0-<os>-<arch> standalone binary
+   from GitHub Releases when the release publishes one for this platform, and
+   otherwise downloads the official seedcode_cli-8.1.0-py3-none-any.whl. Either
+   way the downloaded file's SHA-256 is verified against the release's
+   SHA256SUMS.txt before anything is installed (a mismatch aborts, and an
+   unreachable checksum file aborts too - verification is never bypassed).
+   Installs to ~/.local/bin and verifies the installed binary reports 8.1.0.
+   pipx is used for the wheel when available (otherwise pip --user, with
+   PEP 668 handling). Clean ANSI UI with ASCII fallback; Ctrl+C safe.
 
 5) Any OS - pip
 
@@ -73,13 +90,6 @@ INSTALLATION METHODS
    status, and prompts for an API key if none is configured. The wheel
    requires Python 3.10+.
 
-6) Node.js launcher (npm)
-
-     npm install -g @alshahriar-07/seedcode-cli
-
-   Thin wrapper that downloads the official release binary for your
-   platform on first run and execs it.
-
 UPGRADE SAFETY
 --------------
 Upgrades preserve user configuration and provider/API settings. The Windows
@@ -90,16 +100,15 @@ CHECKSUMS
 ---------
 Every release artifact has a SHA-256 entry in SHA256SUMS.txt:
 
-  cd dist/release/7.2.5
-  sha256sum -c SHA256SUMS.txt          # Linux/macOS
+  cd dist/release/8.1.0
+  sha256sum -c SHA256SUMS.txt            # Linux/macOS
   Get-FileHash <file> -Algorithm SHA256  # Windows
 
 Both remote installers verify before installing: they read the release's
-SHA256SUMS.txt as the authoritative expected value, cross-check it against a
-digest pinned in the installer (verified against the actual published
-artifacts), and abort on any mismatch. If the release checksum file is
-unreachable, the pinned digest is used as the expected value and the
-installer says so. Verification is never bypassed.
+SHA256SUMS.txt as the authoritative expected value and abort on any mismatch
+or a missing entry. If the checksum file is unreachable, the install aborts
+rather than proceeding unverified - verification is never bypassed. All
+digests are computed from the final published artifacts; none are invented.
 
 SUPPORT
 -------

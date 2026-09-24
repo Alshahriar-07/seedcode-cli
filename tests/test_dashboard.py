@@ -1,13 +1,13 @@
-"""Startup dashboard tests (v7.2.5 logo branding).
+"""Startup dashboard tests (v8.1.0 logo branding).
 
 The startup screen is now the Seed Code ANSI wordmark logo followed by a
 compact, information-rich block with the live session state::
 
-    ╭─ Seed Code CLI v7.2.5 ──────────────────────────────────────────────╮
+    ╭─ Seed Code CLI v8.1.0 ──────────────────────────────────────────────╮
     │   ▄█████ ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄    ▄█████  ▄▄▄  ▄▄▄▄  ▄▄▄▄▄   ▄█████ ██ ...│
     │   ...                                                                │
     │                                                                      │
-    │   Seed Code CLI v7.2.5                                               │
+    │   Seed Code CLI v8.1.0                                               │
     │   Plant ideas. Grow code.                                            │
     │   Provider   OpenRouter                                              │
     │   Model      gpt-5.1-codex                                           │
@@ -179,10 +179,10 @@ class _StubUI:
         return "n"
 
 
-def test_code_mode_and_assist_mode_are_named(monkeypatch, tmp_path) -> None:
+def test_code_mode_and_agent_mode_are_named(monkeypatch, tmp_path) -> None:
     cfg = _byok()
     cfg.agent_mode = True
-    assert "Assist Mode" in _render(cfg)
+    assert "Agent Mode" in _render(cfg)
 
     from seedcode import codemode_state as cms
     from seedcode.commands import CommandContext, dispatch

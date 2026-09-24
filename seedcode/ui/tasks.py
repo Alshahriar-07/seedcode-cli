@@ -1,4 +1,4 @@
-"""Live, step-by-step task progress for Code / Assist / Agent mode (v7.1.0).
+"""Live, step-by-step task progress for Code Mode / Agent Mode (v8.1.0).
 
 This is a *truthful* progress view, not a decoration. Every step state is
 driven by an event the engine actually produced:
@@ -522,7 +522,7 @@ class TaskFlow:
         # activity footer once the outcome has been decided.
         if not self._finished:
             if self.header is None:
-                # Without the header (Assist Mode) the activity line is the
+                # Without the header (Agent Mode) the activity line is the
                 # only place the live action shows.
                 activity = live_action_line(self._activity, legacy=self._legacy)
                 if activity is not None:

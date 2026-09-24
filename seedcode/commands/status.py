@@ -1,7 +1,7 @@
 """/status — the live runtime state of the current session (v7.1.0).
 
 One panel, every value read from real application state: the active provider
-and its backend, the selected model, the current mode (Chat / Assist / Code),
+and its backend, the selected model, the current mode (Chat / Code / Agent),
 the Code Mode session (its state, verified progress and whether a stopped one
 can be resumed), the workspace, the provider connection status, and where
 config and project memory live. Nothing here is hardcoded or fabricated — a
@@ -23,14 +23,15 @@ from . import CommandContext, CommandResult, command
 
 
 def mode_label(config) -> str:
-    """The active mode: Code Mode sharpens Assist, which sharpens Chat.
+    """The active mode label: Chat Mode / Code Mode / Agent Mode.
 
-    Shared by /status, /mode, and /chat so every surface names the mode the
-    same way from the same source of truth.
+    Delegates to the single mode resolver (:mod:`seedcode.core.modes`) so
+    /status, /mode, /chat, the dashboard and the header can never disagree,
+    and the retired Assist Mode can never reappear as a fourth name.
     """
-    if codemode_state().enabled:
-        return "Code Mode"
-    return "Assist Mode" if config.agent_mode else "Chat"
+    from ..core.modes import mode_label as _label
+
+    return _label(config)
 
 
 # Backward-compatible private name.
