@@ -58,12 +58,13 @@ def test_main_menu_has_reference_items_and_shortcuts(monkeypatch) -> None:
     _main_menu(AppConfig())
 
     by_value = {item.value: item for item in captured["items"]}
-    assert by_value["codemode"].shortcut == "1"
-    assert by_value["agent"].shortcut == "2"
-    assert by_value["memory"].shortcut == "3"
-    assert by_value["settings"].shortcut == "4"
-    assert by_value["exit"].shortcut == "5"
-    # No fourth mode is exposed: Assist Mode is Agent Mode now.
+    assert by_value["agent"].shortcut == "1"
+    assert by_value["memory"].shortcut == "2"
+    assert by_value["settings"].shortcut == "3"
+    assert by_value["exit"].shortcut == "4"
+    # Code Mode is no longer a separate mode or menu entry; its workspace
+    # capability lives inside Agent Mode.
+    assert "codemode" not in by_value
     assert "assist" not in by_value
     # Start Chat stays reachable so the menu is never a dead end.
     assert "chat" in by_value
@@ -85,8 +86,10 @@ def test_menu_codemode_action_reaches_the_real_handler(tmp_path: Path, monkeypat
     try:
         ui = _StubUI()
         config = AppConfig()
-        # Exactly what the "Code Mode" menu item (Ctrl+1) dispatches.
-        _dispatch_command(ui, config, None, "/codemode on")
+        # The workspace capability is now reached through /agent on (which also
+        # selects Agent Mode) and directly through /codemode on.
+        _dispatch_command(ui, config, None, "/agent on")
+        assert config.agent_mode
         assert cms.codemode_state().enabled
         assert cms.codemode_state().workspace == tmp_path.resolve()
     finally:

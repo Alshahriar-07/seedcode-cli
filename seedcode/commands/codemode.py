@@ -1,10 +1,14 @@
-"""/codemode — workspace-aware Code Mode (v6.2.0).
+"""/codemode — the Agent Mode workspace coding capability (v8.2.5).
+
+Code Mode is no longer a separate mode: its workspace-aware coding behaviour
+is a native capability of Agent Mode. This command activates that capability
+for the current directory.
 
 /codemode on      — treat the CWD as the project workspace: ensure .seedcode,
-                    refresh the index incrementally, and switch the agent to
-                    workspace-aware coding behavior.
-/codemode off     — back to the previous mode (memory stays on disk).
-/codemode status  — workspace, memory, and index state.
+                    refresh the index incrementally, and make Agent Mode
+                    workspace-aware.
+/codemode off     — deactivate the workspace capability (memory stays on disk).
+/codemode status  — workspace, memory and index state.
 """
 
 from __future__ import annotations
@@ -17,7 +21,7 @@ from ..tools import PermissionMode
 from . import CommandContext, CommandResult, command, show_session_bar
 
 
-@command("codemode", "Workspace-aware Code Mode. Usage: /codemode [on|off|status]")
+@command("codemode", "Agent Mode workspace capability. Usage: /codemode [on|off|status]")
 def _codemode(ctx: CommandContext, arg: str) -> CommandResult:
     raw = arg.strip().lower()
     state = codemode_state()
@@ -32,9 +36,9 @@ def _codemode(ctx: CommandContext, arg: str) -> CommandResult:
                 table.add_row(key.strip(), value.strip())
             else:
                 table.add_row("", line)
-        ctx.ui.panel(table, title="Code Mode")
+        ctx.ui.panel(table, title="Project Workspace")
         if not state.enabled:
-            ctx.ui.dim("Enable with: /codemode on")
+            ctx.ui.dim("Enable with: /codemode on (or /agent on)")
         return CommandResult()
 
     if raw == "on":
@@ -57,14 +61,14 @@ def _enable_codemode(ctx: CommandContext) -> None:
     state = codemode_state()
     workspace = state.workspace  # already set? keep it (re-enable same project)
 
-    # Agent Mode is the engine Code Mode sharpens; turn it on when off.
+    # Agent Mode is the unified engine this capability belongs to; turn it on
+    # when it is off so the workspace is never active without an agent.
     if not config.agent_mode:
         from .assist import enable_assist
 
         enable_assist(ctx.ui, config)
-    # Agent Mode prefers the desktop level when the engine exists; Code Mode is
-    # a *coding* workflow, so keep the editing level (workspace) unless the user
-    # had already chosen something stronger.
+    # Workspace coding prefers the editing level (workspace) unless the user
+    # had already chosen something stronger than desktop.
     if PermissionMode.parse(config.permission_mode) == PermissionMode.DESKTOP:
         config.permission_mode = PermissionMode.WORKSPACE.value_str
         save_config(config)
@@ -72,7 +76,7 @@ def _enable_codemode(ctx: CommandContext) -> None:
     from .. import codemode_state as cms
 
     result = cms.enable(workspace or _detect_workspace())
-    ctx.ui.success("Code Mode ON")
+    ctx.ui.success("Workspace ON — Agent Mode is now workspace-aware")
     for line in result.status_lines()[1:]:
         ctx.ui.dim(f"  {line}")
     indexed = result.last_index.get("indexed", 0)
@@ -80,20 +84,13 @@ def _enable_codemode(ctx: CommandContext) -> None:
     if indexed or unchanged:
         ctx.ui.dim(f"  Index: {indexed} indexed, {unchanged} unchanged (incremental)")
     ctx.ui.dim("  The agent now consults .seedcode memory + index before touching files.")
-    # v7.1.0: the compact Code Mode header replaces the old tall banner — one
-    # row while idle, showing the live state and the plan progress.
-    console = getattr(ctx.ui, "console", None)
-    if console is not None:
-        from ..ui.codemode_header import render_code_mode_header
-
-        render_code_mode_header(console)
 
 
 def _disable_codemode(ctx: CommandContext) -> None:
     from .. import codemode_state as cms
 
     cms.disable()
-    ctx.ui.success("Code Mode OFF — .seedcode memory kept for next session")
+    ctx.ui.success("Workspace OFF — .seedcode memory kept for next session")
 
 
 def _detect_workspace():
@@ -102,11 +99,11 @@ def _detect_workspace():
     return Path.cwd()
 
 
-@command("workspace", "Show the active Code Mode workspace")
+@command("workspace", "Show the active Agent Mode workspace")
 def _workspace(ctx: CommandContext, arg: str) -> CommandResult:
     state = codemode_state()
     if state.enabled and state.workspace is not None:
         ctx.ui.info(f"Workspace: {state.workspace}")
     else:
-        ctx.ui.dim("Code Mode is off — enable with /codemode on")
+        ctx.ui.dim("Workspace capability is off — enable with /codemode on")
     return CommandResult()

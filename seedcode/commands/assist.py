@@ -1,14 +1,15 @@
-"""Agent Mode: unified AI + tool/computer execution (v8.1.0).
+"""Agent Mode: the unified autonomous workspace/coding agent (v8.2.5).
 
 /agent on   — selects Agent Mode: the full capability set (AI, filesystem,
               terminal, git, browser, keyboard, mouse, windows, vision, OCR,
-              desktop automation).
+              desktop automation) plus the workspace coding capability
+              (``.seedcode`` project memory + index, plan → execute → verify).
 /agent off  — back to plain Chat Mode.
 
 Agent Mode is the single general-purpose execution mode. The retired Assist
-Mode is this mode under its old name: ``/assist`` and ``/desktop`` still work
-and route here, but they never create a fourth mode. Code Mode is the
-workspace-aware coding agent (see :mod:`seedcode.commands.codemode`).
+Mode and Code Mode are this mode under their old names: ``/assist``,
+``/desktop`` and ``/codemode`` still work and route here, but they never
+create a third mode.
 """
 
 from __future__ import annotations
@@ -93,7 +94,12 @@ def _ocr_available() -> bool:
 
 
 def enable_assist(ui, config) -> None:
-    """Select Agent Mode: the full capability set in one switch."""
+    """Select Agent Mode: the full capability set in one switch.
+
+    Agent Mode is the unified workspace/coding agent: turning it on also
+    activates the workspace capability (``.seedcode`` memory + index) so the
+    former Code Mode behaviour is available automatically inside Agent Mode.
+    """
     config.mode = "agent"
 
     # Desktop capabilities require the Computer Engine. When available, Agent
@@ -107,11 +113,17 @@ def enable_assist(ui, config) -> None:
     )
     save_config(config)
 
+    # The workspace coding capability (former Code Mode) is native to Agent
+    # Mode: activate it for the current directory automatically.
+    workspace_ready = _ensure_workspace()
+
     ui.success("Agent Mode ON")
     ui.blank()
     ui.panel(capability_table(desktop_ok), title="Agent Mode")
     if not desktop_ok:
         ui.dim(f"Desktop capabilities unavailable: {desktop_reason}")
+    if workspace_ready:
+        ui.dim("Project workspace ready — .seedcode memory + index active.")
     ui.blank()
 
     level_label = "desktop" if desktop_ok else "workspace"
@@ -122,6 +134,25 @@ def enable_assist(ui, config) -> None:
     if desktop_ok:
         request_session_permissions(ui)
     ui.dim("The AI picks the right tools for each task automatically.")
+
+
+def _ensure_workspace() -> bool:
+    """Activate the ``.seedcode`` workspace capability for the CWD.
+
+    Best-effort: a filesystem problem here must never stop Agent Mode from
+    being selected. Returns whether the workspace is now active.
+    """
+    try:
+        from pathlib import Path
+
+        from .. import codemode_state as cms
+
+        if cms.codemode_state().enabled:
+            return True
+        cms.enable(Path.cwd())
+        return True
+    except Exception:
+        return False
 
 
 def request_session_permissions(ui) -> bool:
@@ -169,13 +200,25 @@ def request_session_permissions(ui) -> bool:
 
 
 def disable_assist(ui, config) -> None:
-    """Leave Agent Mode: back to plain Chat."""
+    """Leave Agent Mode: back to plain Chat.
+
+    The workspace capability is deactivated too, but the ``.seedcode`` memory
+    stays on disk for the next Agent Mode session.
+    """
     from ..computer.permissions import session_permissions
 
     config.mode = "chat"
     # Drop back to the safe editing level (removes desktop capability).
     config.permission_mode = PermissionMode.WORKSPACE.value_str
     save_config(config)
+    # The workspace coding capability (former Code Mode) belongs to Agent Mode.
+    try:
+        from .. import codemode_state as cms
+
+        if cms.codemode_state().enabled:
+            cms.disable()
+    except Exception:
+        pass
     # Forget the session-wide desktop grant: turning Agent Mode back on asks again.
     session_permissions().reset()
     ui.success("Agent Mode OFF — back to plain chat")

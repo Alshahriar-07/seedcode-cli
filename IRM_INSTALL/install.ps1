@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Seed Code CLI v8.1.0 - official Windows remote installer.
+    Seed Code CLI v8.2.5 - official Windows remote installer.
 
 .DESCRIPTION
     Installs Seed Code CLI for the CURRENT USER. No administrator rights, no
@@ -13,7 +13,7 @@
 
       1. The release's SHA256SUMS.txt is the authoritative expected value.
       2. The installer also carries pinned digests, verified against the
-         actual published v8.1.0 artifacts at release time.
+         actual published v8.2.5 artifacts at release time.
       3. If the release file and the pinned digest both exist but disagree,
          the install aborts (possible tampering/partial publish).
       4. If SHA256SUMS.txt cannot be fetched at all, the pinned digest is
@@ -25,10 +25,10 @@
 
     Or, to pass options, download-then-run:
 
-        & ([scriptblock]::Create((irm https://seedcode-cli.vercel.app/install.ps1))) -Version 8.1.0
+        & ([scriptblock]::Create((irm https://seedcode-cli.vercel.app/install.ps1))) -Version 8.2.5
 
 .PARAMETER Version
-    Release version to install. Defaults to 8.1.0 (the current stable release).
+    Release version to install. Defaults to 8.2.5 (the current stable release).
 
 .PARAMETER InstallDir
     Install directory. Defaults to %LOCALAPPDATA%\Programs\SeedCode.
@@ -53,7 +53,7 @@
 #>
 [CmdletBinding()]
 param(
-    [string] $Version = "8.1.0",
+    [string] $Version = "8.2.5",
     [string] $InstallDir = "",
     [switch] $NoPathUpdate,
     [switch] $Force,
@@ -70,13 +70,15 @@ $SumsUrl     = "$ReleaseBase/SHA256SUMS.txt"
 $ExeName     = "seedcode.exe"
 $UserAgent   = "seedcode-cli-installer/$Version"
 
-# Pinned SHA256 digests for the official v8.1.0 release artifacts. Each value
+# Pinned SHA256 digests for the official v8.2.5 release artifacts. Each value
 # is COMPUTED from the real published artifact (never invented): the release
 # pipeline fills this map in after the artifacts are built. It is a cross-check
 # against, and a fallback for, SHA256SUMS.txt - never a substitute that bypasses
 # verification. When the release checksum file is unreachable AND nothing is
 # pinned here, the install refuses rather than accepting an unverified binary.
-$PinnedChecksums = @{}
+$PinnedChecksums = @{
+    "SeedCode-CLI-8.2.5-windows-x64.exe" = "8ae8b70282d96d81f55441bee5792c1614273a5fb9895582544f0871c10d95bc"
+}
 
 # --- terminal capabilities (ANSI / Unicode with graceful fallback) ------------
 $UiRedirected = $true

@@ -288,10 +288,12 @@ def test_flow_frame_never_overflows_narrow_terminals() -> None:
             assert len(line) <= width, (width, line)
 
 
-def test_assist_mode_flow_keeps_the_step_rows_and_activity_line() -> None:
+def test_agent_mode_flow_uses_the_compact_header_and_activity_line() -> None:
     console = _console()
     flow = TaskFlow(console, mode_label="Agent Mode", task="Fix the bug")
-    assert flow.header is None  # no Code Mode header outside Code Mode
+    # Agent Mode is the unified workspace agent: it gets the compact header too.
+    assert flow.header is not None
+    assert "AGENT MODE" in flow.header.title()
     flow.begin()
     flow.observe_tool_start("edit_file", {"path": "a.py"})
     frame = flow._renderable()
@@ -331,8 +333,12 @@ def test_cancelled_and_failed_flows_show_their_state() -> None:
         assert ("Task cancelled" if outcome == "cancelled" else "Task failed") in out
 
 
-def test_enabling_code_mode_prints_the_compact_idle_header(monkeypatch, tmp_path) -> None:
-    """`/codemode on` shows the one-row header instead of a tall banner."""
+def test_enabling_workspace_does_not_print_a_duplicate_mode_banner(monkeypatch, tmp_path) -> None:
+    """`/codemode on` activates the Agent Mode workspace capability only.
+
+    The separate tall Code Mode banner is gone: the unified header already
+    carries the mode, and no element may be rendered twice.
+    """
     from seedcode import codemode_state as cms
     from seedcode.commands import CommandContext, dispatch
     from seedcode.commands import assist as assist_cmd
@@ -348,12 +354,16 @@ def test_enabling_code_mode_prints_the_compact_idle_header(monkeypatch, tmp_path
     try:
         ui = UI(plain=True)
         ui.console = _console()
-        dispatch(CommandContext(ui=ui, config=AppConfig(), engine=None), "/codemode on")
+        config = AppConfig()
+        dispatch(CommandContext(ui=ui, config=config, engine=None), "/codemode on")
         out = ui.console.export_text()
-        assert "CODE MODE" in out
-        assert f"SEEDCODE {__version__}" in out
-        assert "READY" in out
-        assert len([ln for ln in out.splitlines() if "SEEDCODE" in ln]) == 1
+        assert "Agent Mode ON" in out
+        assert "Workspace ON" in out
+        # No separate Code Mode mode/banner is drawn anywhere.
+        assert "CODE MODE" not in out
+        assert "Code Mode" not in out
+        assert config.agent_mode
+        assert cms.codemode_state().enabled
     finally:
         cms.reset()
 

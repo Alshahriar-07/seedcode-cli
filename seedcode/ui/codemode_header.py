@@ -3,12 +3,12 @@
 The old Code Mode screen was a tall banner. This is the replacement — two rows
 while working, one row while idle, no decorative art::
 
-    ┌─ SEEDCODE 8.1.0 • CODE MODE ────────────────────────┐
+    ┌─ SEEDCODE 8.2.5 • CODE MODE ────────────────────────┐
     │ ● RUNNING   Task 3/8   Build authentication          │
     │   ████████████░░░░  72%   • 4m 32s • 6 calls        │
     └──────────────────────────────────────────────────────┘
 
-    ┌─ SEEDCODE 8.1.0 • CODE MODE ────────────────────────┐
+    ┌─ SEEDCODE 8.2.5 • CODE MODE ────────────────────────┐
     │ ● READY     0/0 tasks                                │
     └──────────────────────────────────────────────────────┘
 
@@ -209,6 +209,7 @@ class CodeModeHeader:
         elapsed_s: float = 0.0,
         calls: int = 0,
         activity: str = "",
+        mode_label: str = "Code Mode",
     ) -> None:
         # Kept as given: the width decides between the compact panel and the
         # one-line form (see ``render``), and a narrow terminal must never be
@@ -223,6 +224,9 @@ class CodeModeHeader:
         self.elapsed_s = float(elapsed_s)
         self.calls = int(calls)
         self.activity = activity
+        # The mode this compact block reports. Agent Mode is the unified
+        # mode now, but the same block is reused for a legacy Code Mode view.
+        self.mode_label = mode_label or "Code Mode"
 
     # --- mutation ------------------------------------------------------------
     def update(self, **fields) -> "CodeModeHeader":
@@ -290,7 +294,10 @@ class CodeModeHeader:
 
     def title(self) -> str:
         separator = " * " if self.legacy else " • "
-        return _clip(f"SEEDCODE {__version__}{separator}CODE MODE", max(self.width - 10, 12))
+        name = _clip(self.mode_label, 24).upper()
+        return _clip(
+            f"SEEDCODE {__version__}{separator}{name}", max(self.width - 10, 12)
+        )
 
     def renderable(self) -> RenderableType:
         inner = max(self.width - 4, 16)

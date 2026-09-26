@@ -1,8 +1,8 @@
 """/chat — explicit Chat Mode (plain conversation, no tools).
 
 /chat      — show the current mode.
-/chat on   — leave Code/Agent Mode and return to plain Chat: the AI answers
-             with text only and never touches the filesystem or terminal.
+/chat on   — leave Agent Mode and return to plain Chat: the AI answers with
+             text only and never touches the filesystem or terminal.
 
 Chat Mode is the default runtime mode; this command exists so a user can
 always get back to it directly, without hunting through menus.
@@ -19,7 +19,7 @@ def _chat(ctx: CommandContext, arg: str) -> CommandResult:
     raw = arg.strip().lower()
     if raw in ("", "status"):
         ctx.ui.info(f"Mode: {mode_label(ctx.config)}")
-        ctx.ui.dim("Switch with: /chat on · /agent on · /codemode on (or /mode chat|code|agent)")
+        ctx.ui.dim("Switch with: /chat on · /agent on (or /mode chat|agent)")
         return CommandResult()
 
     if raw != "on":
@@ -34,13 +34,16 @@ def _chat(ctx: CommandContext, arg: str) -> CommandResult:
 
 def _enter_chat(ctx: CommandContext) -> None:
     """Return the session to plain Chat Mode (idempotent)."""
-    from .. import codemode_state as cms
     from .assist import disable_assist
 
-    if cms.codemode_state().enabled:
-        cms.disable()
-        ctx.ui.dim("Code Mode OFF — .seedcode memory kept for next session")
-
+    # disable_assist also deactivates the workspace capability, so a chat
+    # session never keeps an active project workspace.
     if ctx.config.agent_mode:
         disable_assist(ctx.ui, ctx.config)
+    else:
+        # Agent Mode was already off, but a workspace could still be active.
+        from .. import codemode_state as cms
+
+        if cms.codemode_state().enabled:
+            cms.disable()
     ctx.ui.success("Chat Mode ON — plain conversation, no tools")

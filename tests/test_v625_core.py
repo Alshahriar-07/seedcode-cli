@@ -60,7 +60,7 @@ def _ctx(config: AppConfig | None = None) -> tuple[_StubUI, CommandContext]:
 
 def test_version_is_current_release() -> None:
     # v7.1.0: the canonical version lives only in seedcode/__init__.py.
-    assert __version__ == "8.1.0"
+    assert __version__ == "8.2.5"
 
 
 # --- authoritative defaults --------------------------------------------------
@@ -273,7 +273,7 @@ def test_codemode_on_actually_enables_code_mode(monkeypatch, tmp_path: Path) -> 
 
 # --- UI reflects real runtime state ------------------------------------------
 
-def test_dashboard_shows_code_mode_when_active(monkeypatch, tmp_path: Path) -> None:
+def test_dashboard_shows_agent_mode_for_the_workspace_capability(monkeypatch, tmp_path: Path) -> None:
     from rich.console import Console
 
     from seedcode import codemode_state as cms
@@ -294,7 +294,9 @@ def test_dashboard_shows_code_mode_when_active(monkeypatch, tmp_path: Path) -> N
             theme=SEED_THEME, width=100, force_terminal=True, record=True
         )
         render_dashboard(console, ctx.config)
-        assert "Code Mode" in console.export_text()
+        # The workspace capability is part of Agent Mode: the mode row names
+        # Agent Mode, never a separate Code Mode.
+        assert "Agent Mode" in console.export_text()
     finally:
         cms.reset()
 

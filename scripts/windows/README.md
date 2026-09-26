@@ -76,7 +76,7 @@ Python runtime and every dependency inside it.
 publishes a verified copy to the repository root as the stable
 **`seedcode-cli-setup.exe`**, and stages the versioned copy for release as
 **`SeedCode-CLI-Setup-<version>.exe`** — the name attached to the GitHub
-release for that version (currently **8.1.0**), alongside the standalone
+release for that version (currently **8.2.5**), alongside the standalone
 `SeedCode-CLI-<version>-windows-x64.exe` and `SHA256SUMS.txt` (which is what
 the remote installers verify against).
 

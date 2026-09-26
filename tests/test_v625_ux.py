@@ -132,7 +132,9 @@ def test_mode_chat_switches_to_chat(monkeypatch, tmp_path) -> None:
     assert any("Chat Mode ON" in m for m in ui.messages)
 
 
-def test_mode_code_enables_code_mode(monkeypatch, tmp_path) -> None:
+def test_mode_code_routes_into_unified_agent_mode(monkeypatch, tmp_path) -> None:
+    """Code Mode is no longer a separate mode: /mode code selects Agent Mode,
+    which also activates the workspace coding capability."""
     from seedcode import codemode_state as cms
     from seedcode.commands import assist as assist_cmd
     from seedcode.commands import codemode as codemode_cmd
@@ -145,8 +147,10 @@ def test_mode_code_enables_code_mode(monkeypatch, tmp_path) -> None:
     try:
         ui, ctx = _ctx()
         dispatch(ctx, "/mode code")
+        assert ctx.config.agent_mode
         assert cms.codemode_state().enabled
-        assert any("Code Mode ON" in m for m in ui.messages)
+        assert any("Agent Mode ON" in m for m in ui.messages)
+        assert any("Code Mode is part of Agent Mode now" in m for m in ui.messages)
     finally:
         cms.reset()
 
@@ -166,7 +170,7 @@ def test_mode_rejects_unknown_mode() -> None:
     ui, ctx = _ctx()
     dispatch(ctx, "/mode banana")
     assert any("[Command Error]" in m for m in ui.messages)
-    assert any("chat|code|agent" in m for m in ui.messages)
+    assert any("chat|agent" in m for m in ui.messages)
 
 
 def test_status_and_mode_agree_on_the_mode_label() -> None:
@@ -384,4 +388,4 @@ def test_version_flag_prints_machine_readable_version(monkeypatch, capsys) -> No
     cli.main()
     out = capsys.readouterr().out.strip()
     assert out == f"Seed Code CLI {__import__('seedcode').__version__}"
-    assert out.startswith("Seed Code CLI 8.1.0")
+    assert out.startswith("Seed Code CLI 8.2.5")

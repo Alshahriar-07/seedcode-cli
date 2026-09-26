@@ -1,13 +1,13 @@
-"""Startup dashboard tests (v8.1.0 logo branding).
+"""Startup dashboard tests (v8.2.5 logo branding).
 
 The startup screen is now the Seed Code ANSI wordmark logo followed by a
 compact, information-rich block with the live session state::
 
-    ╭─ Seed Code CLI v8.1.0 ──────────────────────────────────────────────╮
+    ╭─ Seed Code CLI v8.2.5 ──────────────────────────────────────────────╮
     │   ▄█████ ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄    ▄█████  ▄▄▄  ▄▄▄▄  ▄▄▄▄▄   ▄█████ ██ ...│
     │   ...                                                                │
     │                                                                      │
-    │   Seed Code CLI v8.1.0                                               │
+    │   Seed Code CLI v8.2.5                                               │
     │   Plant ideas. Grow code.                                            │
     │   Provider   OpenRouter                                              │
     │   Model      gpt-5.1-codex                                           │
@@ -179,7 +179,7 @@ class _StubUI:
         return "n"
 
 
-def test_code_mode_and_agent_mode_are_named(monkeypatch, tmp_path) -> None:
+def test_agent_mode_is_named_and_code_mode_is_not_a_mode(monkeypatch, tmp_path) -> None:
     cfg = _byok()
     cfg.agent_mode = True
     assert "Agent Mode" in _render(cfg)
@@ -195,8 +195,11 @@ def test_code_mode_and_agent_mode_are_named(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(assist_cmd, "save_config", lambda config: None)
     monkeypatch.setattr(assist_cmd, "is_available", lambda: (False, "test"))
     try:
+        # The workspace capability (former Code Mode) is part of Agent Mode,
+        # so it is named Agent Mode, never a second user-facing mode.
         dispatch(CommandContext(ui=_StubUI(), config=cfg, engine=None), "/codemode on")
-        assert "Code Mode" in _render(cfg)
+        assert "Agent Mode" in _render(cfg)
+        assert "Code Mode" not in _render(cfg)
     finally:
         cms.reset()
 

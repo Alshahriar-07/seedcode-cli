@@ -1,10 +1,10 @@
-"""Agent Mode commands: /agent and /permission (v8.1.0).
+"""Agent Mode commands: /agent and /permission (v8.2.5).
 
-/agent is the primary route into Agent Mode — the single general-purpose
-execution mode that the retired Assist Mode folded into. /assist and
-/desktop remain accepted aliases so an existing habit keeps working.
-/permission keeps its dedicated interactive picker; /index and /tools stay
-as inspection commands.
+/agent is the primary route into Agent Mode — the unified autonomous
+workspace/coding agent that the retired Code Mode and Assist Mode folded
+into. /assist, /desktop and /codemode remain accepted aliases so an existing
+habit keeps working. /permission keeps its dedicated interactive picker;
+/index and /tools stay as inspection commands.
 """
 
 from __future__ import annotations

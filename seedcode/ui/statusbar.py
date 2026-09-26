@@ -17,10 +17,14 @@ from .badges import badge_for_status, badge_text
 
 
 def mode_label(config: AppConfig) -> str:
-    """The user-facing mode: Chat Mode / Code Mode / Agent Mode (v8.1.0)."""
-    from ..core.modes import mode_title
+    """The user-facing mode: Chat Mode / Agent Mode (v8.2.5).
 
-    return mode_title(getattr(config, "mode", "chat"))
+    Delegates to the single mode resolver so this surface can never disagree
+    with the dashboard, the header, ``/mode`` or ``/status``.
+    """
+    from ..core.modes import mode_label as _label
+
+    return _label(config)
 
 
 def session_statusbar(console: Console, config: AppConfig) -> None:

@@ -4,6 +4,133 @@ All notable changes to Seed Code CLI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [8.2.5] — 2026-09-25
+
+A terminal-workspace release. Seed Code CLI runs as a **persistent terminal
+application** — a fixed header carrying the Seed Code ASCII logo, a scrolling
+conversation region and a fixed message composer — instead of a sequence of
+printed banners. All existing functionality (providers, models, modes, tools,
+permissions, commands, shortcuts, Code Mode, project memory) is preserved; the
+interface around it is the product.
+
+### Added
+
+- **Persistent three-region TUI** (`seedcode/ui/tui.py`): a full-screen
+  prompt_toolkit application with a fixed header, a scrolling middle region and
+  a fixed composer. Running `seedcode` on an interactive console opens it
+  immediately; `SEEDCODE_NO_TUI=1`, `SEEDCODE_PLAIN`, and non-TTY hosts keep the
+  sequential console.
+- **Centralized reactive state** (`seedcode/ui/state.py`): one `AppState` object
+  holds provider, model, mode, status, workspace, masked key, context budget,
+  messages, activities and connection state. Components subscribe and only the
+  changed regions repaint — no clear-and-redraw, no flicker.
+- **Live header that keeps the Seed Code ASCII logo** (`seedcode/ui/header.py`):
+  the fixed top region is a bordered dashboard carrying the exact Seed Code
+  block logo and tagline over Provider/Model, Mode/Status, Workspace/Context and
+  the masked API key. The branding is never replaced by a plain-text wordmark on
+  a console that can draw it, and every value is read from live state and
+  truncated so no line can overflow. Below 76 columns — where the 70-column art
+  genuinely cannot be drawn un-clipped — the *metadata* re-flows into a compact
+  panel and then plain lines: the logo is omitted whole rather than truncated,
+  and legacy consoles get the wordmark form.
+- **Professional message composer** (`You >`): the fixed bottom region is a
+  bordered, multiline editor that can never scroll away with the history,
+  carrying the `You >` prompt with continuation lines aligned under it. Cursor
+  movement, Home/End, Backspace/Delete, arrow keys, history, paste, long
+  prompts, Unicode, terminal resize and clear-editing-state all work, and input
+  stays responsive however long the prompt gets. The prompt is display only:
+  the submitted message never contains it.
+- **Animated thinking indicator**: sending a message immediately shows
+  `AI > ◌ Thinking…` in the conversation region and animates it
+  (`.` → `..` → `...`) while the provider is being called. It is a UI state
+  only — it runs on its own daemon thread, is replaced the instant real output
+  streams, and never delays the model call or the agent.
+- **`AI >` attribution**: streamed answers and every live activity line are
+  attributed to the assistant (`AI > ⚙ Reading package.json`,
+  `AI > ✓ Tests passed`), so the interface reads as a dialogue instead of raw
+  terminal logs.
+- **Unseen-output hint**: scrolling up while a turn produces output shows
+  `↓ n new` in the composer instead of yanking the viewport back to the bottom.
+- **Streaming that keeps its place**: assistant tokens update a live block at a
+  throttled refresh rate while the header and composer stay fixed — the whole
+  screen is never redrawn for a token, so there is no flicker.
+- **Live agent activity stream**: tool/command events appear as they actually
+  happen (`AI > ⚙ Reading package.json`, `AI > ✓ Tests passed`), and the header
+  status moves through the real phases — `● Ready`, `◌ Thinking`, `◌ Working`,
+  `● Running`, `✓ Completed`, `⚠ Error`, `■ Cancelled` — from real events. A
+  finished Code Mode or Agent Mode task ends on `✓ Completed`.
+- **Inline permission prompt**: Allow Once / Always Allow / Deny is answered in
+  the composer while the running turn waits, so the permission model is
+  unchanged and no turn is blocked by a nested dialog.
+- **Cooperative Ctrl+C**: cancelling during a turn stops the turn (the engine's
+  callbacks raise), returns the header to a ready state, and leaves the session
+  usable — Ctrl+D exits.
+
+### Changed
+
+- The composer is a real editor rather than a `You >` prompt line: `Enter`
+  sends, `Shift+Enter` (or `Ctrl+J` / `Alt+Enter`) inserts a newline, `↑`/`↓`
+  walk the input history, `Esc` clears the line (and denies a pending
+  permission prompt), and `Ctrl+C` cancels. `Ctrl+K` palette, `Ctrl+P` files,
+  `Ctrl+R` history, `Ctrl+/​` shortcuts, `Ctrl+L` clear, `PageUp`/`PageDown`
+  (and `Ctrl+Home`/`Ctrl+End`) scroll the conversation, and the mouse wheel
+  scrolls without stealing the follow-the-bottom behaviour.
+- The header is never reprinted: it is one permanent component whose values
+  update in place, so switching provider, model or mode is visible immediately.
+- `/clear` empties the conversation region instead of emitting a terminal clear.
+
+### Removed
+
+- The visible Agent/Chat **to-do checklist** (`☐ Inspect project` style step
+  rows) is gone from the TUI. Agent Mode decides its own execution sequence and
+  shows a live activity stream; the retired checklist is no longer rendered.
+- **Code Mode is no longer a separate user-facing mode.** Its workspace coding
+  capabilities (`.seedcode` project memory + index, the persistent
+  plan → execute → verify session loop) are now native capabilities of Agent
+  Mode, available automatically when Agent Mode is on. The mode system exposes
+  exactly two modes, **Chat Mode** and **Agent Mode**; `code`, `codemode`,
+  `assist` and `desktop` remain accepted input aliases that resolve to Agent
+  Mode, and `/codemode` still toggles the workspace capability. No capability
+  was deleted — it was moved, not duplicated.
+
+### Fixed
+
+- **Mode switching no longer tears down and rebuilds the terminal
+  application.** The prompt_toolkit ``Application``, ``Layout`` and every
+  region are built once and re-entered; mode switches (`/agent on`, `/agent
+  off`, `/mode`, `/chat`, `/codemode`) run *inside* the live application as a
+  state transition instead of exiting the event loop and reconstructing the
+  screen — the root cause of the old freeze/flicker on switch. A single
+  background worker runs the turn, and cancellation/exit stop the thinking
+  animation and release the application cleanly.
+- **The permission prompt is a bounded TUI component.** Allow/Deny runs as a
+  bordered panel inside the same application (`Enter` allows, `A` allows for
+  the session, `D` denies, `Esc` cancels). Only the agent turn waits — the
+  event loop, the header and the composer stay live.
+
+### Packaging
+
+- Rebuilt the release artifacts from the final source: the standalone Windows
+  executable (`dist\seedcode.exe`, PyInstaller, Seed Code icon + 8.2.5 version
+  resource), the Inno Setup installer (`Release\SeedCode-CLI-Setup-8.2.5.exe`,
+  published to the repo root as `seedcode-cli-setup.exe`), the Python wheel and
+  sdist, and the npm launcher tarball.
+- Re-staged `dist/release/8.2.5/` with a fresh `SHA256SUMS.txt` computed from
+  the final files (4 artifacts + npm tarball), and removed the obsolete 8.1.0
+  artifacts from `dist/`, `dist/release/` and `Release/`.
+- Pinned the freshly built Windows x64 digest in `IRM_INSTALL/install.ps1`'s
+  `$PinnedChecksums` (a cross-check/fallback for `SHA256SUMS.txt`; verification
+  is never bypassed).
+
+### Version
+
+- **Version synchronized to 8.2.5** across the package
+  (`seedcode.__version__`), the CLI `--version`, the Windows installer metadata,
+  the npm wrapper, the remote installers, `RELEASE_INFO.txt` and the docs.
+  `seedcode --version` reports `Seed Code CLI 8.2.5`.
+
+---
+
 ## [8.1.0] — 2026-09-24
 
 A modes, task-lifecycle and release-packaging release. Seed Code now exposes

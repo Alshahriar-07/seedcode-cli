@@ -35,8 +35,8 @@ PROVIDER_IDS = tuple(PROVIDERS)
 KEYLESS = ("default", "ollama")
 BYOK = tuple(pid for pid in PROVIDER_IDS if pid not in KEYLESS)
 
-MODES = ("chat", "agent", "code")
-_MODE_LABEL = {"chat": "Chat Mode", "agent": "Agent Mode", "code": "Code Mode"}
+MODES = ("chat", "agent")
+_MODE_LABEL = {"chat": "Chat Mode", "agent": "Agent Mode"}
 
 
 @pytest.fixture(autouse=True)
@@ -131,13 +131,14 @@ def test_every_provider_works_in_every_mode(monkeypatch, provider_id: str, mode:
     from seedcode.ui.theme import SEED_THEME
 
     # Patch BOTH bindings: status.py imported the accessor by name, while the
-    # dashboard resolves it lazily from the module.
-    stub = types.SimpleNamespace(enabled=(mode == "code"), workspace=None, store=None)
+    # dashboard resolves it lazily from the module. The workspace capability
+    # (former Code Mode) is part of Agent Mode, so it reports Agent Mode.
+    stub = types.SimpleNamespace(enabled=False, workspace=None, store=None)
     monkeypatch.setattr(cms, "codemode_state", lambda: stub)
     monkeypatch.setattr(status_cmd, "codemode_state", lambda: stub)
 
     cfg = AppConfig(provider=provider_id, model="test-model")
-    cfg.agent_mode = mode in ("agent", "code")
+    cfg.agent_mode = mode == "agent"
 
     assert mode_label(cfg) == _MODE_LABEL[mode]
 
@@ -147,6 +148,22 @@ def test_every_provider_works_in_every_mode(monkeypatch, provider_id: str, mode:
     assert provider_label(provider_id) in text or "Not configured" in text
     # The API-key row follows the provider's real requirement, in every mode.
     assert ("API Key" in text) is provider_requires_key(provider_id)
+
+
+def test_workspace_capability_reports_agent_mode(monkeypatch) -> None:
+    """The former Code Mode workspace is a capability of Agent Mode."""
+    import types
+
+    from seedcode import codemode_state as cms
+    from seedcode.commands import status as status_cmd
+    from seedcode.commands.status import mode_label
+
+    stub = types.SimpleNamespace(enabled=True, workspace=None, store=None)
+    monkeypatch.setattr(cms, "codemode_state", lambda: stub)
+    monkeypatch.setattr(status_cmd, "codemode_state", lambda: stub)
+
+    cfg = AppConfig(provider="default", model="test-model")
+    assert mode_label(cfg) == "Agent Mode"
 
 
 def test_switching_provider_does_not_leak_key_or_model() -> None:

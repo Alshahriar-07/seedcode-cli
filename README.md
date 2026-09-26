@@ -6,20 +6,20 @@
 > *Plant ideas. Grow code.*
 
 Seed Code is a premium terminal-based AI coding assistant and task runner.
-v8.1.0 exposes exactly **three modes** — **Chat Mode**, **Code Mode** and
-**Agent Mode** — over a multi-provider, multi-model engine, with project-aware
-Code Mode and a real Agent Mode execution loop, behind the Seed Code startup
-logo and a compact block of live session state.
+v8.2.5 exposes exactly **two modes** — **Chat Mode** and **Agent Mode** — over a
+multi-provider, multi-model engine, behind the Seed Code startup logo and a
+compact block of live session state.
 
 | Mode | What it does |
 | --- | --- |
 | **Chat Mode** | Conversation: questions, explanations, brainstorming. Never acts on your project. |
-| **Code Mode** | A real coding agent for the current workspace: inspect, plan, edit, run, verify, and keep working until the task is verified. |
-| **Agent Mode** | General-purpose multi-step execution using the available tools, verified before it is reported complete. |
+| **Agent Mode** | The unified autonomous workspace/coding agent: inspect, plan, edit, run, verify and keep working until the task is verified, using every available tool. |
 
-The retired **Assist Mode** is no longer a separate mode; its capabilities now
-belong to Agent Mode. `/assist` and `/desktop` remain accepted aliases, but
-nothing in the UI presents a fourth mode.
+The retired **Code Mode** and **Assist Mode** are no longer separate modes;
+their capabilities now belong to Agent Mode. Agent Mode automatically activates
+the workspace coding capability (`.seedcode` project memory + index, the
+plan → execute → verify session loop). `/codemode`, `/assist` and `/desktop`
+remain accepted aliases, but nothing in the UI presents a third mode.
 
 - **Providers:** choose **OpenRouter**, **Ollama** (started automatically when
   you select it), or any number of your own **Custom** OpenAI-compatible
@@ -28,14 +28,25 @@ nothing in the UI presents a fourth mode.
 - **Reliable by design:** provider health is tracked, a failing request fails
   over to the next healthy provider without restarting the task, and a lost
   connection pauses the session instead of failing it.
-- **Professional startup screen:** the Seed Code ANSI logo with the live
-  provider, model, mode and status beneath it, behind a responsive bordered
-  panel, with an ASCII fallback for consoles that cannot draw the block art.
-- **Step-by-step tasks:** Code Mode shows the real plan as a live checklist,
-  and Agent Mode shows an event-driven step flow — both reflect what the agent
-  really did, and hand the prompt back when the task ends. Completing a task
-  never closes the application.
-- **Version:** 8.1.0 (`seedcode --version`)
+- **Seed Code ASCII logo, preserved:** the fixed header leads with the exact
+  Seed Code block logo and tagline, followed by the live Provider / Model /
+  Mode / Status / Workspace / Context / key state. The header is never
+  reprinted — every value updates in place the moment it changes — and the
+  branding is never replaced by plain text or clipped to fit.
+- **Professional message composer:** the fixed bottom region carries the
+  `You >` prompt, which is display only and never part of the message itself.
+  Multiline input keeps its continuations aligned under the prompt, `Enter`
+  sends, `Shift+Enter` inserts a newline, and history, paste, long prompts,
+  Unicode and terminal resize all work.
+- **`AI > ◌ Thinking…` before every answer:** a lightweight animated indicator
+  appears the instant you send a message and is replaced by streaming output.
+  It is a UI state only — it never blocks or delays the agent.
+- **Live activity, no checklist:** Agent Mode decides its own execution
+  sequence and shows an activity stream (`AI > ⚙ Running pytest`,
+  `AI > ✓ Tests passed`) whose lines appear only when the underlying operation
+  really starts. There is no manual to-do list to create or manage, and
+  completing a task never closes the application.
+- **Version:** 8.2.5 (`seedcode --version`)
 
 ## Installation
 
@@ -94,8 +105,8 @@ Python required) and both run the same CLI:
 
 | Download | What it is |
 | --- | --- |
-| `SeedCode-CLI-Setup-8.1.0.exe` | **Setup installer (recommended).** A wizard that installs to Program Files, adds Seed Code to the system `PATH`, creates a Start Menu shortcut with an optional desktop shortcut, verifies the installation before reporting success, and ships a clean uninstaller that never deletes your project data silently. |
-| `SeedCode-CLI-8.1.0-windows-x64.exe` | **Standalone executable.** A single portable `seedcode.exe` — no installation and no admin rights. The Windows IRM installer above downloads exactly this file. Run it directly from wherever you put it. |
+| `SeedCode-CLI-Setup-8.2.5.exe` | **Setup installer (recommended).** A wizard that installs to Program Files, adds Seed Code to the system `PATH`, creates a Start Menu shortcut with an optional desktop shortcut, verifies the installation before reporting success, and ships a clean uninstaller that never deletes your project data silently. |
+| `SeedCode-CLI-8.2.5-windows-x64.exe` | **Standalone executable.** A single portable `seedcode.exe` — no installation and no admin rights. The Windows IRM installer above downloads exactly this file. Run it directly from wherever you put it. |
 
 Both are published on the
 [Releases page](https://github.com/Alshahriar-07/seedcode-cli/releases) with
@@ -104,7 +115,7 @@ their SHA256 in `SHA256SUMS.txt`.
 After installing by any route:
 
 ```bash
-seedcode --version    # -> Seed Code CLI 8.1.0
+seedcode --version    # -> Seed Code CLI 8.2.5
 ```
 
 > **`seedcode` not recognized?** Open a *new* terminal. `PATH` changes only
@@ -127,31 +138,85 @@ seedcode
 seedcode
 ```
 
-You land on the Seed Code dashboard — the structured startup panel: branding
-on the left, a divider, and the live session state on the right. The ASCII
-logo is permanently gone (the brand is plain text); the layout, sections and
-status indicators stay:
+You land in the persistent Seed Code workspace: a fixed header carrying the
+Seed Code ASCII logo, a scrolling conversation region and a fixed message
+composer. The header is a live dashboard — it never scrolls away, and its
+values (provider, model, mode, status, workspace, context budget and the masked
+API key) update in place the moment they change.
 
 ```text
-╭─ Seed Code CLI v8.1.0 ───────────────────────────────────────────────────────────────────────╮
+╭─ Seed Code CLI v8.2.5 ───────────────────────────────────────────────────────────────────────╮
+│    ▄█████ ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄    ▄█████  ▄▄▄  ▄▄▄▄  ▄▄▄▄▄   ▄█████ ██     ██                    │
+│    ▀▀▀▄▄▄ ██▄▄  ██▄▄  ██▀██   ██     ██▀██ ██▀██ ██▄▄    ██     ██     ██                    │
+│    █████▀ ██▄▄▄ ██▄▄▄ ████▀   ▀█████ ▀███▀ ████▀ ██▄▄▄   ▀█████ ██████ ██                    │
+│    Plant ideas. Grow code.                                                                   │
+│ OpenRouter · cohere/north-mini-code:free · Agent Mode                             ◌ Thinking │
+│ Workspace D:\my-project                         Context   16,384                             │
+│ API Key   sk-or-v1...e031                                                                    │
+╰──────────────────────────────────────────────────────────────────────────────────────────────╯
+──────────────────────────────────── Conversation ────────────────────────────────────────────
+You > Build the authentication system.
+
+AI > ◌ Thinking...
+
+AI > I found the issue in the authentication middleware.
+
+┌─────────────────────────────────────────| Message |──────────────────────────────────────────┐
+│ › Build a login system using the existing authentication architecture.                       │
 │                                                                                              │
-│   Seed Code                                │ Seed Code  |  Eagox Studio                      │
-│   AI CODING AGENT                          │ Plant ideas. Grow code.                         │
-│                                            │ Provider   Default                              │
-│                                            │ Model      cohere/north-mini-code:free          │
-│                                            │ Mode       Chat  •  ● Ready                     │
+└──────────────────────────────────────────────────────────────────────────────────────────────┘
+  Enter ↵ send  ·  Shift+Enter newline
+```
+
+The header adapts to the terminal: wide terminals get the full panel with the
+logo; below 76 columns — where the 70-column block art cannot be drawn without
+clipping — the *metadata* re-flows into a compact panel and then into plain
+lines. The logo is omitted whole rather than truncated, and no line is ever
+wider than the screen. A console that cannot encode the block glyphs gets the
+wordmark form of the same layout.
+
+The composer is a real, bounded multiline text editor: prompt_toolkit draws its
+`┌─ Message ─┐` frame around the text buffer, so typed text can never escape the
+border. Long lines wrap inside it and taller content scrolls internally. It has
+**no** prompt prefix of its own — the message you type is exactly the message
+that is sent (the `You >` in the conversation is only the history label).
+`Enter` sends, `Shift+Enter` inserts a newline, and `↑`/`↓` move the cursor
+inside a multiline message (walking the input history only at the edges). The
+conversation follows the bottom until you scroll up — at which point the footer
+shows `↓ n new` instead of pulling you back down.
+
+Provider, model, mode and status are shown exactly once, in the header
+dashboard itself — there is no second toolbar repeating them. Switch provider,
+model or mode with `/provider`, `/model`, `/mode` or the `Ctrl+K` command
+palette.
+
+Below is the rendering used when the persistent interface is not available — a
+piped host, `SEEDCODE_NO_TUI=1`, or a console that cannot draw it:
+
+```text
+╭─ Seed Code CLI v8.2.5 ───────────────────────────────────────────────────────────────────────╮
+│    ▄█████ ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄    ▄█████  ▄▄▄  ▄▄▄▄  ▄▄▄▄▄   ▄█████ ██     ██                    │
+│    ▀▀▀▄▄▄ ██▄▄  ██▄▄  ██▀██   ██     ██▀██ ██▀██ ██▄▄    ██     ██     ██                    │
+│    █████▀ ██▄▄▄ ██▄▄▄ ████▀   ▀█████ ▀███▀ ████▀ ██▄▄▄   ▀█████ ██████ ██                    │
+│                                                                                              │
+│ Seed Code CLI v8.2.5                                                                         │
+│ Plant ideas. Grow code.                                                                      │
+│ Provider   OpenRouter                                                                        │
+│ Model      cohere/north-mini-code:free                                                       │
+│ Mode       Chat                                                                              │
+│ Status     ● Ready                                                                           │
+│ API Key    **********                                                                        │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────╯
 Commands  /help  /status  /codemode  /agent  /provider  /model
 You >
 ```
 
 The panel is 96 columns wide on a wide terminal — wide enough that the whole
-`cohere/north-mini-code:free` model name fits without clipping — and kept
-deliberately short (one blank row under the title, then the live rows; no
-padding rows to scroll past). Narrower terminals slide the info section left
-so the whole model name still fits (80 columns shows it in full), then fall
-back to a compact one-row panel, then to plain lines. Consoles that cannot
-draw (or encode) the glyphs get the same layout in ASCII.
+`cohere/north-mini-code:free` model name fits without clipping. Below 78
+columns the block logo cannot be drawn un-clipped, so the dashboard switches
+to the text wordmark; below 64 columns it becomes a compact one-row panel, and
+below 40 columns plain lines. Consoles that cannot draw (or encode) the glyphs
+get the same layout in ASCII.
 
 The `API Key` row appears **only** for providers that actually require a key,
 so Default and Ollama never show one. `cohere/north-mini-code:free` is the
@@ -231,25 +296,26 @@ Permission modes (view/set with `/permission`):
 | `desktop` | Add desktop automation capability after confirmation |
 | `full_system` | Allow broader computer and filesystem actions after confirmation |
 
-## Code Mode
+## Workspace coding (part of Agent Mode)
 
-Code Mode is a real coding agent for the current project. Your working
+Agent Mode is a real coding agent for the current project. Your working
 directory becomes the **workspace**:
 
 ```text
-/codemode on        # treat the CWD as the workspace, enable .seedcode memory
-/codemode off       # back to the previous mode (memory stays on disk)
+/agent on           # enable Agent Mode; the workspace capability is automatic
+/codemode on        # explicitly (re)activate the workspace capability
+/codemode off       # deactivate it (memory stays on disk)
 /codemode status    # workspace, memory, and index state
 ```
 
-In Code Mode the agent consults the project index, finds relevant files with
+In Agent Mode the agent consults the project index, finds relevant files with
 targeted searches, reads only what it needs, plans, edits, runs a relevant
 command or test, and reports what changed. File operations stay inside the
 workspace root.
 
 ### Persistent task execution
 
-Code Mode is a **long-running agent**, not one model call. A request becomes a
+Agent Mode is a **long-running agent**, not one model call. A request becomes a
 plan (a task graph with dependencies and acceptance criteria), and the session
 runs task after task until each one is *verified*:
 
@@ -314,7 +380,7 @@ nothing reads `no tool activity recorded`, never a success.
 
 ### `.seedcode` project memory
 
-Enabling Code Mode creates a `.seedcode/` directory in the project root:
+Enabling the workspace capability (`/agent on` or `/codemode on`) creates a `.seedcode/` directory in the project root:
 
 ```text
 my-project/
@@ -323,7 +389,7 @@ my-project/
 │   ├── index/        per-file summaries + a file map (incremental, hashed)
 │   ├── context/      reusable project context (conventions, snippets)
 │   ├── sessions/     compact per-session summaries (never raw transcripts)
-│   ├── checkpoints/  resumable Code Mode session state
+│   ├── checkpoints/  resumable agent session state
 │   ├── plan.json     the current task graph
 │   └── config.json   safe project configuration
 ├── src/
@@ -337,15 +403,16 @@ my-project/
 - **Not source code** — `.seedcode/` is excluded from workspace search,
   indexing, and the agent's project view.
 
-## Task flow (Code Mode / Agent Mode)
+## Task flow (Agent Mode)
 
-Every task in Code Mode or Agent Mode is shown as a compact live flow, and
-each step changes state only when the work behind it really happened. Code
-Mode shows the protocol header, the plan as a checklist, and a single live
-action line:
+Every Agent Mode task is shown as a live flow, and each line appears only when
+the work behind it really happened. In the persistent interface the header
+carries the status and the conversation carries the activity stream; in the
+sequential console Agent Mode additionally shows the plan as a checklist. Both
+reflect what the agent really did:
 
 ```text
-╭─ SEEDCODE 8.1.0 • CODE MODE ────────────────╮
+╭─ SEEDCODE 8.2.5 • AGENT MODE ───────────────╮
 │ ● RUNNING   Task 3/8   Build authentication │
 │   ████████████░░░░  72% • 4m 32s • 18 calls │
 │ → Running: pytest tests/auth                │
@@ -367,7 +434,7 @@ screen — it degrades to a single status line when the space runs out.
 Agent Mode keeps the event-driven step flow:
 
 ```text
-Task  ·  Code Mode
+Task  ·  Agent Mode
 Fix authentication persistence
 ✓ Analyze project  request understood
 ✓ Inspect files  read_file seedcode/config.py
@@ -391,7 +458,7 @@ count:
 Ready for next task.
 ```
 
-A whole Code Mode project closes with the evidence that verified it, not a
+A whole agent project closes with the evidence that verified it, not a
 restatement of the model's replies:
 
 ```text
@@ -442,15 +509,15 @@ The agent runs commands through the tool engine's `run_command` tool:
 | `/provider` | Switch the active AI provider |
 | `/apikey` | Add, replace, remove, or validate a provider key |
 | `/model` | Browse and select the provider's model catalogue |
-| `/mode` | Show or switch the mode: `chat` / `code` / `agent` |
+| `/mode` | Show or switch the mode: `chat` / `agent` (`code` is an alias for Agent) |
 | `/chat` | Switch to plain Chat Mode (`/chat on`) |
 | `/agent` | Select Agent Mode (`on` / `off`; aliases `/assist`, `/desktop`) |
-| `/codemode` | Workspace-aware Code Mode (`on` / `off` / `status`) |
-| `/workspace` | Show the active Code Mode workspace |
-| `/session` | Inspect the Code Mode session: state, evidence, per-task records |
-| `/pause` | Pause the running Code Mode session (state is kept) |
+| `/codemode` | Agent Mode workspace capability (`on` / `off` / `status`) |
+| `/workspace` | Show the active Agent Mode workspace |
+| `/session` | Inspect the agent session: state, evidence, per-task records |
+| `/pause` | Pause the running agent session (state is kept) |
 | `/resume` | Resume a paused session from its checkpoint |
-| `/stop` | Safely stop the running Code Mode session |
+| `/stop` | Safely stop the running agent session |
 | `/permission` | View or set the Agent Mode permission level (alias `/permissions`) |
 | `/computer` | Show Computer Engine status and permissions |
 | `/screenshot` | Capture a screenshot |
@@ -467,9 +534,36 @@ The agent runs commands through the tool engine's `run_command` tool:
 | `/version` | Show the Seed Code version |
 | `/exit` | Leave the current chat (opens the main menu) |
 
-Keyboard shortcuts: `Ctrl+K` command palette, `Ctrl+P` project file search,
-`Ctrl+R` history, `Ctrl+,` settings, `Ctrl+/` shortcut reference,
-`Ctrl+L` clear.
+### Persistent interface (TUI)
+
+Running `seedcode` on an interactive console opens the persistent workspace.
+The three regions are fixed: the header never scrolls away, only the
+conversation scrolls, and the composer stays at the bottom.
+
+| Key | Action |
+| --- | --- |
+| `Enter` | Send the message |
+| `Shift+Enter` (or `Ctrl+J` / `Alt+Enter`) | Insert a newline without sending |
+| `↑` / `↓` | Walk the input history |
+| `Ctrl+C` | Cancel the running turn (or clear the composer when idle) |
+| `Esc` | Clear the composer / deny a pending permission prompt |
+| `Ctrl+K` | Command palette |
+| `Ctrl+P` | Project file search |
+| `Ctrl+R` | Saved session history |
+| `Ctrl+,` | Settings |
+| `Ctrl+/` | Shortcut reference |
+| `Ctrl+L` | Clear the conversation |
+| `PageUp` / `PageDown`, `Ctrl+Home` / `Ctrl+End` | Scroll the conversation |
+| Mouse wheel | Scroll the conversation |
+| `Ctrl+D` | Exit |
+
+Only the conversation scrolls, and output is repainted incrementally: there is
+no clear-screen-and-redraw loop, so the header and composer stay stable while a
+model streams, the thinking indicator animates, commands run, tool events
+appear, or the terminal is resized.
+
+Set `SEEDCODE_NO_TUI=1` to use the sequential console instead (as the
+`SEEDCODE_PLAIN` mode and piped hosts do automatically).
 
 All exit paths are clean: `/exit` → menu, menu → Exit, `Ctrl+C` (cancels a
 response or the current line), and `Ctrl+D`/EOF. No traceback appears on
@@ -527,7 +621,7 @@ health.
 
 - **Windows:** full experience — desktop control, one-click installer,
   standalone EXE. Primary platform.
-- **Linux / macOS:** terminal chat, providers, project tools, Code Mode.
+- **Linux / macOS:** terminal chat, providers, project tools, Agent Mode workspace.
   Install with the `install.sh` command above — it installs the official
   Python wheel, so **Python 3.10+ (with pip)** is required. No prebuilt
   Linux/macOS binary is published in this release.
@@ -559,21 +653,21 @@ stage fails loudly on a version mismatch, so a stale binary can never ship.
 
 Details: [`scripts/windows/README.md`](scripts/windows/README.md).
 
-### Release artifacts (v8.1.0)
+### Release artifacts (v8.2.5)
 
-Release: [v8.1.0](https://github.com/Alshahriar-07/seedcode-cli/releases/tag/v8.1.0)
+Release: [v8.2.5](https://github.com/Alshahriar-07/seedcode-cli/releases/tag/v8.2.5)
 
 | Artifact | Purpose |
 | --- | --- |
-| `SeedCode-CLI-Setup-8.1.0.exe` | Windows installer (Inno Setup) |
-| `SeedCode-CLI-8.1.0-windows-x64.exe` | Standalone Windows EXE — downloaded by the Windows IRM installer |
-| `seedcode_cli-8.1.0-py3-none-any.whl` | Python wheel — downloaded by the Linux IRM installer |
-| `seedcode_cli-8.1.0.tar.gz` | Python source distribution |
+| `SeedCode-CLI-Setup-8.2.5.exe` | Windows installer (Inno Setup) |
+| `SeedCode-CLI-8.2.5-windows-x64.exe` | Standalone Windows EXE — downloaded by the Windows IRM installer |
+| `seedcode_cli-8.2.5-py3-none-any.whl` | Python wheel — downloaded by the Linux IRM installer |
+| `seedcode_cli-8.2.5.tar.gz` | Python source distribution |
 | `SHA256SUMS.txt` | SHA256 checksums; verified by both installers |
 
-Built artifacts are collected in `dist/release/8.1.0/` during a release
+Built artifacts are collected in `dist/release/8.2.5/` during a release
 build. Publishing (GitHub Release) is a separate step; the remote installers
-read the release named `v8.1.0`.
+read the release named `v8.2.5`.
 
 ### The remote installers
 

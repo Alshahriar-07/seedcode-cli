@@ -32,6 +32,10 @@ __all__ = ["UI", "StreamRenderer", "SEED_THEME"]
 class UI:
     """Thin wrapper around a Rich console with Seed Code styling helpers."""
 
+    #: True only for the persistent-TUI adapter (:class:`seedcode.ui.tui.TuiUI`),
+    #: which owns the screen and replaces the Rich live displays.
+    is_tui = False
+
     def __init__(self, plain: bool = False) -> None:
         # ``plain`` is the safe fallback for hosts that mangle ANSI (or when
         # the user sets SEEDCODE_PLAIN): no colour, no cursor tricks — Rich is

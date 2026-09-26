@@ -243,11 +243,13 @@ class AppConfig(BaseModel):
     # Completion-token budget for chat requests. Users may override in
     # config.json; the value is clamped before every request.
     max_tokens: int = DEFAULT_MAX_TOKENS
-    # The runtime mode (v8.1.0): exactly chat | code | agent. Chat only
-    # converses; Code is the workspace coding agent; Agent is general-purpose
-    # execution. There is no fourth mode — the old Assist Mode is Agent Mode
-    # (see seedcode.core.modes). ``agent_mode`` stays available as a derived
-    # compatibility property rather than a second stored field.
+    # The runtime mode (v8.2.5): exactly chat | agent. Chat only converses;
+    # Agent is the unified autonomous workspace/coding agent. The former Code
+    # Mode and Assist Mode are capabilities/aliases of Agent Mode (see
+    # seedcode.core.modes); a stored legacy "code"/"assist" value is normalised
+    # to "agent" by the validator below, and the literal keeps accepting it so
+    # an old config never fails to load. ``agent_mode`` stays available as a
+    # derived compatibility property rather than a second stored field.
     mode: Literal["chat", "code", "agent"] = "chat"
     # Single hierarchical permission level (see seedcode.tools.permissions):
     # read_only < workspace < desktop < full_system. Desktop automation is a

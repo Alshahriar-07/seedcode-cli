@@ -16,12 +16,13 @@ to source control.
 
 The artwork itself lives in ``seedcode/branding.py`` (the 16x16 pixel-art
 "sprouting seed" grid and its Seed Green palette). It is a packaging/desktop
-asset only: the terminal UI renders no art at all (``seedcode.ui.logo`` no
-longer exists), so nothing here is shared with the CLI header. Everything is
-deterministic: same inputs, byte-identical outputs.
+asset only: the terminal UI's branding is the Seed Code ANSI wordmark
+(``seedcode.ui.dashboard.LOGO_LINES``, rendered by the persistent header), so
+nothing here is shared with the CLI and no terminal surface imports this
+module. Everything is deterministic: same inputs, byte-identical outputs.
 
 Usage:
-    python build_assets.py --version 8.1.0
+    python build_assets.py --version 8.2.5
     python build_assets.py --verify-exe ..\\..\\dist\\seedcode.exe
 """
 

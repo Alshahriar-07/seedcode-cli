@@ -1,13 +1,13 @@
 Seed Code CLI
 =============
 
-Version: 8.1.0
+Version: 8.2.5
 License: PolyForm Noncommercial License 1.0.0
          (https://polyformproject.org/licenses/noncommercial/1.0.0/)
 
 WHAT'S IN THIS RELEASE
 ----------------------
-The v8.1.0 release artifacts:
+The v8.2.5 release artifacts:
   - Windows portable executable (x64)
   - Windows Setup installer (x64)
   - Python wheel (any OS)
@@ -17,21 +17,54 @@ The v8.1.0 release artifacts:
 Primary command after any install method:  seedcode
 Developer fallback:                        python -m seedcode
 
-v8.1.0 IS A MODE + TASK-LIFECYCLE RELEASE
------------------------------------------
-Seed Code now exposes exactly three modes:
+v8.2.5 IS A TERMINAL-WORKSPACE RELEASE
+--------------------------------------
+Seed Code now runs as a persistent terminal application with exactly three
+fixed regions:
+
+  * a fixed header carrying the Seed Code ASCII logo and tagline over the live
+    provider / model / mode / status / workspace / context / key state;
+  * a scrolling conversation region showing user messages ("You >"), streamed
+    answers and real agent activity ("AI >"), including an animated
+    "AI > (o) Thinking..." indicator before the first token;
+  * a fixed composer: a real, Frame-bounded multiline textbox with NO prompt
+    prefix of its own. Enter sends, Shift+Enter inserts a newline, and Up/Down
+    move the cursor inside a multiline message. Long lines wrap inside the
+    border and the submitted message is exactly what you typed ("You >" is
+    only the conversation-history label).
+
+A permission request opens a bounded panel inside the interface: Enter allows,
+A allows for the session, D denies and Esc cancels. Only the agent turn waits;
+the interface stays live.
+
+The header and composer never scroll away, only the conversation does, and
+output is repainted incrementally (no clear-screen-and-redraw loop). Mode
+switches run as a state transition inside the same application; the application
+is never destroyed and rebuilt. Wide terminals show the full header with the
+logo; below 76 columns the metadata re-flows into a compact form and the logo is
+omitted whole rather than clipped. There is no visible to-do checklist: Agent
+Mode decides its own execution sequence.
+
+Seed Code exposes exactly two modes:
 
   * Chat Mode  - conversation only; never acts on the project.
-  * Code Mode  - a real coding agent for the current workspace: inspect, plan,
-                 edit, run, verify, and keep working until the task is done.
-  * Agent Mode - general-purpose multi-step execution using the available
-                 tools, verified before it is reported as complete.
+  * Agent Mode - the unified autonomous workspace/coding agent: inspect, plan,
+                 edit, run, verify and keep working until the task is verified,
+                 using every available tool (filesystem, terminal, git,
+                 browser, keyboard, mouse, windows, vision/OCR, desktop
+                 automation).
 
-The old Assist Mode is no longer a separate mode: its capabilities belong to
-Agent Mode. `/assist` and `/desktop` remain accepted as aliases so an existing
-habit keeps working, but nothing in the UI presents a fourth mode. Completing a
-task never closes the application: the session returns to a ready prompt and
-accepts the next request.
+The former Code Mode and Assist Mode are no longer separate modes: their
+capabilities belong to Agent Mode, which automatically activates the workspace
+coding capability (`.seedcode` project memory + index and the persistent
+plan -> execute -> verify session loop). `/codemode`, `/assist` and `/desktop`
+remain accepted as aliases so an existing habit keeps working, but nothing in
+the UI presents a third mode. Completing a task never closes the application:
+the session returns to a ready prompt and accepts the next request.
+
+Set SEEDCODE_NO_TUI=1 for the sequential console instead of the persistent
+interface (automatic on piped hosts, SEEDCODE_PLAIN, and consoles that cannot
+draw it).
 
 INSTALLATION METHODS
 --------------------
@@ -40,16 +73,16 @@ INSTALLATION METHODS
 
      irm https://seedcode-cli.vercel.app/install.ps1 | iex
 
-   Downloads the official SeedCode-CLI-8.1.0-windows-x64.exe from GitHub
+   Downloads the official SeedCode-CLI-8.2.5-windows-x64.exe from GitHub
    Releases and verifies its SHA-256 against the release's SHA256SUMS.txt. A
    mismatch aborts; verification is never bypassed. It installs per-user to
    %LOCALAPPDATA%\Programs\SeedCode, adds that directory to the user PATH, and
-   verifies the installed binary reports version 8.1.0. PowerShell 5.1 and 7+
+   verifies the installed binary reports version 8.2.5. PowerShell 5.1 and 7+
    compatible; ANSI UI with graceful fallback; Ctrl+C safe.
 
 2) Windows - Setup installer
 
-   Download SeedCode-CLI-Setup-8.1.0.exe from
+   Download SeedCode-CLI-Setup-8.2.5.exe from
    https://github.com/Alshahriar-07/seedcode-cli/releases and run it.
    Installs per-user with a Start Menu shortcut and adds the install
    directory to the user PATH so `seedcode` works in new terminals.
@@ -58,21 +91,21 @@ INSTALLATION METHODS
 
 3) Windows - portable executable
 
-   Download SeedCode-CLI-8.1.0-windows-x64.exe from the releases page and
+   Download SeedCode-CLI-8.2.5-windows-x64.exe from the releases page and
    run it directly. No installation, no PATH changes; `seedcode --version`
-   reports 8.1.0. For a persistent `seedcode` command, use method 1 or 2.
+   reports 8.2.5. For a persistent `seedcode` command, use method 1 or 2.
 
 4) Linux / macOS - remote shell installer
 
      curl -fsSL https://seedcode-cli.vercel.app/install.sh | bash
 
-   Downloads the official SeedCode-CLI-8.1.0-<os>-<arch> standalone binary
+   Downloads the official SeedCode-CLI-8.2.5-<os>-<arch> standalone binary
    from GitHub Releases when the release publishes one for this platform, and
-   otherwise downloads the official seedcode_cli-8.1.0-py3-none-any.whl. Either
+   otherwise downloads the official seedcode_cli-8.2.5-py3-none-any.whl. Either
    way the downloaded file's SHA-256 is verified against the release's
    SHA256SUMS.txt before anything is installed (a mismatch aborts, and an
    unreachable checksum file aborts too - verification is never bypassed).
-   Installs to ~/.local/bin and verifies the installed binary reports 8.1.0.
+   Installs to ~/.local/bin and verifies the installed binary reports 8.2.5.
    pipx is used for the wheel when available (otherwise pip --user, with
    PEP 668 handling). Clean ANSI UI with ASCII fallback; Ctrl+C safe.
 
@@ -100,7 +133,7 @@ CHECKSUMS
 ---------
 Every release artifact has a SHA-256 entry in SHA256SUMS.txt:
 
-  cd dist/release/8.1.0
+  cd dist/release/8.2.5
   sha256sum -c SHA256SUMS.txt            # Linux/macOS
   Get-FileHash <file> -Algorithm SHA256  # Windows
 

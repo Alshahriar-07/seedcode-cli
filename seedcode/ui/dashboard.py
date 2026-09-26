@@ -1,18 +1,18 @@
-"""The Seed Code startup dashboard (v8.1.0).
+"""The Seed Code startup dashboard (v8.2.5).
 
 The primary startup branding is the Seed Code ANSI wordmark logo, followed by
 a compact, information-dense block with the live session state::
 
-    ╭─ Seed Code CLI v8.1.0 ───────────────────────────────────────────────────────╮
+    ╭─ Seed Code CLI v8.2.5 ───────────────────────────────────────────────────────╮
     │   ▄█████ ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄    ▄█████  ▄▄▄  ▄▄▄▄  ▄▄▄▄▄   ▄█████ ██     ██     │
     │   ▀▀▀▄▄▄ ██▄▄  ██▄▄  ██▀██   ██     ██▀██ ██▀██ ██▄▄    ██     ██     ██     │
     │   █████▀ ██▄▄▄ ██▄▄▄ ████▀   ▀█████ ▀███▀ ████▀ ██▄▄▄   ▀█████ ██████ ██     │
     │                                                                              │
-    │   Seed Code CLI v8.1.0                                                       │
+    │   Seed Code CLI v8.2.5                                                       │
     │   Plant ideas. Grow code.                                                    │
     │   Provider   OpenRouter                                                      │
     │   Model      gpt-5.1-codex                                                   │
-    │   Mode       Code Mode                                                       │
+    │   Mode       Agent Mode                                                      │
     │   Status     ● Ready                                                         │
     ╰──────────────────────────────────────────────────────────────────────────────╯
 
@@ -21,7 +21,7 @@ Every value under it comes from live application state — nothing is hardcoded
 and "Ready" is never faked for an unconfigured session. The ``API Key`` row is
 rendered **only** for providers that actually require a key.
 
-Terminal compatibility (v8.1.0):
+Terminal compatibility (v8.2.5):
 
 * Block glyphs need a Unicode-aware console. A raster-font ``cmd.exe`` or a
   redirected stream that cannot encode them gets the same panel with a text
@@ -103,11 +103,11 @@ def _model_value(config: AppConfig) -> str:
 
 
 def _mode_value(config: AppConfig) -> str:
-    """The user-facing mode, read from real session state (v8.1.0).
+    """The user-facing mode, read from real session state (v8.2.5).
 
     Chat is shown without the " Mode" suffix so the compact dashboard keeps
     exactly one ``Mode`` row label (see the design invariant asserted in
-    ``tests/test_dashboard.py``); the agentic modes keep their full name so the
+    ``tests/test_dashboard.py``); Agent Mode keeps its full name so the
     session's capability is unambiguous at a glance.
     """
     from ..core.modes import Mode, active_mode, mode_title

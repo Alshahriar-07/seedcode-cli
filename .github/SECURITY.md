@@ -76,8 +76,9 @@ Areas of particular interest, and of particular risk:
   configuration, history and logs.
 - **Command execution** — the terminal tool that runs commands for Chat-adjacent
   agent workflows.
-- **Agent Mode** — tool use and permission gating during multi-step execution.
-- **Code Mode** — file edits within the workspace boundary and project indexing.
+- **Agent Mode** — tool use and permission gating during multi-step execution,
+  including the workspace coding capability (file edits within the workspace
+  boundary and project indexing).
 - **Installer and release artifacts** — download, checksum verification, install
   paths, and any embedded credential.
 - **The `.env` build step** — the release build reads a local `.env`; that file
@@ -91,9 +92,9 @@ Areas of particular interest, and of particular risk:
 - **Do not commit secrets.** Keep `.env` files and any generated credential
   modules out of version control; the repository's `.gitignore` already
   excludes the generated default-key module.
-- **Review agent actions.** Agent Mode and Code Mode can change files and run
-  commands within the permission level you grant. Start with the least
-  permission that does the job, and review what was changed.
+- **Review agent actions.** Agent Mode can change files and run commands within
+  the permission level you grant. Start with the least permission that does the
+  job, and review what was changed.
 - **Keep Seed Code updated.** Install from the official channels (the remote
   installers, `pip`, or GitHub Releases) so you receive the checksum-verified
   current build.

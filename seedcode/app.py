@@ -45,7 +45,8 @@ from .ui import UI
 from .ui.badges import badge_for_status
 from .ui.menu import MenuItem, run_menu
 from .ui.reference import CONTROLS_HINT, INPUT_HINT
-from .ui.tasks import TaskFlow, TaskState
+from .ui.state import AppState, Status
+from .ui.tasks import TaskFlow, TaskState, activity_for
 from .ui.textbox import prompt_label
 from .ui.theme import pt_style, set_active_theme
 from .utils.logger import get_logger
@@ -149,13 +150,12 @@ def _key_status(config: AppConfig) -> str:
     return config.masked_key()
 
 
-def _mode_status(config: AppConfig) -> str:
-    """Menu status for the Code Mode item (ON only when really active).
+def _workspace_status(config: AppConfig) -> str:
+    """Menu status for the workspace capability (ON only when really active).
 
-    Code Mode has its own workspace session, so its status must reflect that
-    session alone. Reading ``agent_mode`` here made the item read ON whenever
-    Agent Mode was on, even though no Code Mode workspace was active — a live
-    status that did not match the live state.
+    The workspace (`.seedcode` project memory + index) is a capability of Agent
+    Mode, not a separate mode, so its status reflects that session alone rather
+    than the mode name.
     """
     try:
         from .codemode_state import codemode_state
@@ -168,20 +168,25 @@ def _mode_status(config: AppConfig) -> str:
 def _main_menu(config: AppConfig):
     """The interactive main menu; returns an action id or None (exit).
 
-    v6.2.5 reference layout: the mode/setup actions carry Ctrl+1..Ctrl+5
-    shortcuts that execute the real handlers (no decorative items), followed
-    by the chat/setup actions kept from earlier releases. There are exactly
-    three modes; Assist Mode no longer exists as a menu entry.
+    v8.2.5 layout: the mode/setup actions carry Ctrl+1..Ctrl+4 shortcuts that
+    execute the real handlers (no decorative items), followed by the
+    chat/setup actions kept from earlier releases. There are exactly two
+    modes — Chat and Agent — and Code Mode's workspace capability lives inside
+    Agent Mode.
     """
     provider = PROVIDERS.get(config.provider)
     badge = badge_for_status(provider.status if provider is not None else "")
     return run_menu(
         [
-            MenuItem("Code Mode", "codemode", status=_mode_status(config), shortcut="1"),
-            MenuItem("Agent Mode", "agent", shortcut="2"),
-            MenuItem("Project Memory", "memory", shortcut="3"),
-            MenuItem("Settings", "settings", shortcut="4"),
-            MenuItem("Exit", "exit", shortcut="5"),
+            MenuItem("Agent Mode", "agent", shortcut="1"),
+            MenuItem(
+                "Project Workspace",
+                "memory",
+                status=_workspace_status(config),
+                shortcut="2",
+            ),
+            MenuItem("Settings", "settings", shortcut="3"),
+            MenuItem("Exit", "exit", shortcut="4"),
             MenuItem("Start Chat", "chat", status=_model_status(config), badge=badge),
             MenuItem("Provider", "provider", status=_provider_status(config)),
             MenuItem("API Key", "apikey", status=_key_status(config)),
@@ -294,6 +299,20 @@ class _TaskPresenter:
         self._echo_lines = 0
         self._echo_elided = False
 
+    # --- live status (persistent TUI only) ----------------------------------
+    def _set_status(self, status: Status, operation: str | None = None) -> None:
+        """Reflect a real phase on the live header; a no-op on the plain UI.
+
+        Only the TUI exposes ``state``, so the sequential console is untouched.
+        """
+        state = getattr(self.ui, "state", None)
+        if state is None:
+            return
+        try:
+            state.set_status(status, operation)
+        except Exception:
+            pass  # a cosmetic status must never break a task
+
     # --- one command's live output ------------------------------------------
     def reset_echo(self) -> None:
         self._echo_lines = 0
@@ -301,6 +320,8 @@ class _TaskPresenter:
 
     def on_output(self, line: str) -> None:
         """Compact live echo: the first few lines, then a single elision note."""
+        if self._echo_lines == 0:
+            self._set_status(Status.EXECUTING, "running a command")
         if self._echo_lines < self.MAX_ECHO_LINES:
             self.ui.dim(f"  │ {line[:200]}")
         elif not self._echo_elided:
@@ -319,6 +340,7 @@ class _TaskPresenter:
             return
         if kind == "error":
             self.ui.dim(f"  ✖ {detail.splitlines()[0][:120]}")
+            self._set_status(Status.ERROR, "an operation failed")
         elif kind == "switching_provider":
             # A provider request failed and a healthy fallback took over; the
             # task continues rather than restarting (v7.2.5).
@@ -333,6 +355,7 @@ class _TaskPresenter:
             # With a task view on screen the step list already shows the tool
             # work; without one, narrate it (the plain/legacy experience).
             self.ui.dim(f"  ⚒ {detail}")
+            self._set_status(Status.EXECUTING, detail)
 
     # --- structured activity -> step states ---------------------------------
     def on_step(self, payload: dict) -> None:
@@ -345,6 +368,7 @@ class _TaskPresenter:
         if phase == "tool_start":
             self.reset_echo()
             flow.observe_tool_start(name, args)
+            self._set_status(Status.EXECUTING, activity_for(name, args))
         elif phase == "tool_done":
             flow.observe_tool_done(
                 name,
@@ -352,6 +376,7 @@ class _TaskPresenter:
                 str(payload.get("output") or ""),
                 args,
             )
+            self._set_status(Status.WORKING, "continuing")
         elif phase == "say":
             flow.observe_text(str(payload.get("text") or ""))
 
@@ -368,6 +393,21 @@ class _TaskPresenter:
 
         flow = self.flow
         session = session_mod.current_session()
+        # Reflect the real session phase on the live header (TUI only).
+        phase = {
+            "plan": (Status.THINKING, "planning the work"),
+            "plan_ready": (Status.WORKING, "plan ready"),
+            "task_start": (Status.WORKING, detail),
+            "verify": (Status.WORKING, "verifying acceptance criteria"),
+            "recovery": (Status.WORKING, "diagnosing and repairing"),
+            "reconnect": (Status.THINKING, "reconnecting to the provider"),
+            "network_lost": (Status.ERROR, detail),
+            "final_verify": (Status.EXECUTING, "final verification"),
+            "task_blocked": (Status.ERROR, detail),
+            "task_failed": (Status.ERROR, detail),
+        }.get(kind)
+        if phase is not None:
+            self._set_status(*phase)
         if kind == "plan":
             self.ui.dim("  planning the work…")
             return
@@ -501,14 +541,7 @@ def agent_presenter(agent: AgentEngine) -> _TaskPresenter | None:
 
 
 def _task_mode_label(config: AppConfig) -> str:
-    """The mode named in a task header (Chat / Code Mode / Agent Mode)."""
-    try:
-        from .codemode_state import codemode_state
-
-        if codemode_state().enabled:
-            return "Code Mode"
-    except Exception:
-        pass
+    """The mode named in a task header (Chat Mode / Agent Mode only)."""
     from .core.modes import active_mode, mode_title
 
     return mode_title(active_mode(config))
@@ -566,7 +599,9 @@ def _handle_codemode(
 
     lc = lifecycle()
     workspace, store = _codemode_workspace()
-    flow = TaskFlow.for_ui(ui, mode_label="Code Mode", task=text)
+    config = getattr(agent, "config", None)
+    label = _task_mode_label(config) if config is not None else "Agent Mode"
+    flow = TaskFlow.for_ui(ui, mode_label=label, task=text)
     if presenter is not None:
         presenter.flow = flow
     if flow is not None:
@@ -1041,6 +1076,286 @@ def _build_chat_session(ui: UI) -> PromptSession:
     return PromptSession(key_bindings=kb)
 
 
+# ---------------------------------------------------------------------------
+# Persistent TUI session (v8.2.5)
+# ---------------------------------------------------------------------------
+
+
+def _terminal_size() -> tuple[int, int]:
+    """The real terminal size (80x24 when unknown, e.g. tests/CI)."""
+    import os
+
+    try:
+        size = os.get_terminal_size()
+        return max(20, int(size.columns)), max(6, int(size.lines))
+    except Exception:
+        return 80, 24
+
+
+class _TuiController:
+    """Drives the persistent session.
+
+    A message runs its turn on a worker thread while the prompt_toolkit
+    application keeps the screen, so the header stays fixed and output streams
+    into the middle region. Commands return control for one dispatch (a selector
+    or menu needs the terminal to itself), then the session resumes.
+    """
+
+    def __init__(self, ui, tui, config: AppConfig) -> None:
+        self.ui = ui
+        self.tui = tui
+        self.config = config
+        self.engine = ChatEngine(config, on_event=self._on_provider_event)
+        self.history = HistoryStore(provider_id=config.provider)
+        self.presenter = _TaskPresenter(ui)
+        self.ctx = CommandContext(ui=ui, config=config, engine=self.engine)
+        self.agent: AgentEngine | None = None
+        self.agent_perm = config.permission_mode
+        self.agent_codemode = _codemode_enabled()
+        self._backend = config.provider
+        tui.on_submit = self.submit
+        # Mode switches run in place: no application exit, no rebuild.
+        tui.on_command = self._inplace_command
+
+    # --- provider/backend --------------------------------------------------
+    def _on_provider_event(self, kind: str, detail: str) -> None:
+        if kind == "switching_provider":
+            self.ui.warning(f"Switching provider: {detail}")
+        elif kind == "retry":
+            self.ui.dim(f"  {detail}")
+
+    def _rebuild_backend(self) -> None:
+        """Rebuild the chat backend/history after a provider change."""
+        self.engine = ChatEngine(self.config, on_event=self._on_provider_event)
+        self.history = HistoryStore(provider_id=self.config.provider)
+        self.ctx = CommandContext(ui=self.ui, config=self.config, engine=self.engine)
+        self.agent = None
+        self._backend = self.config.provider
+
+    # --- one turn (worker thread) ------------------------------------------
+    def submit(self, text: str) -> None:
+        """Run one user turn to completion (never raises into the TUI)."""
+        from .core.modes import active_mode, agentic
+
+        with lifecycle().task_span():
+            if agentic(active_mode(self.config)):
+                self._ensure_agent()
+                _handle_agent(self.ui, self.agent, self.history, text, self.presenter)
+            else:
+                _handle_chat(self.ui, self.engine, self.history, text)
+        try:
+            self.tui.sync_from_config(self.config)
+        except Exception:
+            pass
+
+    def _inplace_command(self, text: str) -> None:
+        """Dispatch a mode-switch command without leaving the TUI.
+
+        The engine/agent are rebuilt only when the mode actually changed, and
+        the header is refreshed from live config — a pure state transition.
+        """
+        backend_before = self.config.provider
+        mode_before = self.config.mode
+        try:
+            dispatch(self.ctx, text)
+        except (KeyboardInterrupt, EOFError):
+            self.ui.dim("Cancelled.")
+        except Exception as exc:  # a broken command must not kill the session
+            _report_command_error(self.ui, exc)
+        if self.config.provider != backend_before:
+            self._rebuild_backend()
+        elif self.config.mode != mode_before:
+            # A mode change invalidates the agent built for the old mode.
+            self.agent = None
+        self.tui.sync_from_config(self.config)
+
+    def _ensure_agent(self) -> None:
+        codemode_now = _codemode_enabled()
+        if (
+            self.agent is None
+            or self.agent_perm != self.config.permission_mode
+            or self.agent_codemode != codemode_now
+        ):
+            self.agent = _make_agent(self.ui, self.config, self.presenter)
+            self.agent_perm = self.config.permission_mode
+            self.agent_codemode = codemode_now
+
+    # --- the session loop --------------------------------------------------
+    def run(self) -> None:
+        while True:
+            kind, payload = self.tui.run_once()
+            if kind == "exit":
+                self.tui.shutdown()
+                _exit_application(self.ui, "tui exit")
+                return
+            if kind == "key":
+                _run_key_action(
+                    self.ui, self.ctx, self.config, _KEY_ACTIONS.get(payload or "", "")
+                )
+                self.tui.sync_from_config(self.config)
+                continue
+            if kind == "toolbar":
+                # A header control was activated: run the real application
+                # action (the selector owns the terminal for one step).
+                self._toolbar_action(payload or "")
+                self.tui.sync_from_config(self.config)
+                continue
+            if kind != "command" or not payload:
+                continue
+            backend_before = self.config.provider
+            try:
+                result = dispatch(self.ctx, payload)
+            except (KeyboardInterrupt, EOFError):
+                self.ui.dim("Cancelled.")
+                continue
+            except Exception as exc:  # a broken command must not kill the session
+                parts = payload.split()
+                _log.exception("command failed: %s", parts[0] if parts else payload)
+                _report_command_error(self.ui, exc)
+                continue
+            if result.should_exit:
+                if self._menu():
+                    self.tui.shutdown()
+                    _exit_application(self.ui, "menu exit")
+                    return
+                continue
+            if self.config.provider != backend_before:
+                self._rebuild_backend()
+            self.tui.sync_from_config(self.config)
+
+    def _toolbar_action(self, action: str) -> None:
+        """Run a real action behind a header control (provider/model/mode).
+
+        The control is real UI, so the action is the same one the equivalent
+        slash command performs: provider/model open their selectors and mode
+        opens the three-way mode picker. A provider change rebuilds the chat
+        backend exactly as a mid-chat switch does.
+        """
+        try:
+            if action == "provider":
+                select_provider(self.ui, self.config)
+            elif action == "model":
+                select_model(self.ui, self.config)
+            elif action == "mode":
+                self._mode_menu()
+        except (KeyboardInterrupt, EOFError):
+            self.ui.dim("Cancelled.")
+        except Exception as exc:  # a control must never crash the session
+            _log.exception("toolbar action failed: %s", action)
+            _report_command_error(self.ui, exc)
+        if self.config.provider != self._backend:
+            self._rebuild_backend()
+
+    def _mode_menu(self) -> None:
+        """Mode picker for the header's Mode control (a real mode switch)."""
+        from .core.modes import Mode, active_mode
+
+        current = active_mode(self.config)
+        choice = run_menu(
+            [
+                MenuItem(
+                    "Chat", "chat", status="current" if current is Mode.CHAT else ""
+                ),
+                MenuItem(
+                    "Agent", "agent", status="current" if current is Mode.AGENT else ""
+                ),
+            ],
+            title="Mode",
+            hint="\u2191\u2193 move   Enter select   Esc cancel",
+        )
+        if choice:
+            self._command(f"/mode {choice}")
+
+    def _menu(self) -> bool:
+        """The interactive main menu; returns True when the user quits."""
+        while True:
+            if self.config.provider != self._backend:
+                self._rebuild_backend()
+            try:
+                choice = _main_menu(self.config)
+            except (KeyboardInterrupt, EOFError):
+                return True
+            if choice == "chat":
+                return False
+            try:
+                if choice == "provider":
+                    select_provider(self.ui, self.config)
+                elif choice == "apikey":
+                    apikey_menu(self.ui, self.config)
+                elif choice == "model":
+                    select_model(self.ui, self.config)
+                elif choice == "agent":
+                    self._command("/agent on")
+                elif choice == "memory":
+                    self._command("/codemode status")
+                elif choice == "settings":
+                    settings_menu(self.ui, self.config)
+                elif choice == "theme":
+                    pick_theme(self.ui, self.config)
+                elif choice == "about":
+                    show_about(self.ui, self.config)
+                elif choice in ("exit", None):
+                    return True
+            except (KeyboardInterrupt, EOFError):
+                self.ui.dim("Cancelled.")
+            except Exception as exc:  # menu actions must never crash the app
+                _log.exception("menu action failed: %s", choice)
+                _report_command_error(self.ui, exc)
+            self.tui.sync_from_config(self.config)
+
+    def _command(self, text: str) -> None:
+        try:
+            dispatch(self.ctx, text)
+        except Exception:
+            _log.exception("menu command failed: %s", text)
+
+
+def run_persistent(*, input_device=None, output_device=None) -> None:
+    """Start the persistent three-region TUI (interactive consoles only).
+
+    Guided setup runs *before* the TUI owns the screen, because its selectors
+    need the terminal to themselves and its output must be visible.
+    """
+    from .ui.tui import ChatTUI, TuiUI
+    from .utils.terminal_env import workspace_root
+
+    config = load_config()
+    sync_custom_providers(config)
+    set_active_theme(config.theme)
+
+    if not config.is_configured():
+        setup_ui = UI()
+        setup_ui.apply_theme(config.theme)
+        if not _guided_setup(setup_ui, config):
+            setup_ui.dim("Setup incomplete — a provider and a model are required.")
+            return
+
+    workspace = str(workspace_root())
+    columns, _rows = _terminal_size()
+    state = AppState.from_config(config, workspace=workspace)
+    tui = ChatTUI(
+        state,
+        workspace=workspace,
+        width=columns,
+        input_device=input_device,
+        output_device=output_device,
+    )
+    ui = TuiUI(tui)
+    ui.apply_theme(config.theme)
+    tui.banner_text()
+
+    # Best-effort teardown for the one legitimate shutdown path.
+    lifecycle().on_shutdown(_release_desktop_resources)
+
+    _log.info(
+        "persistent TUI started: provider=%s model=%s mode=%s",
+        config.provider,
+        config.model or "(none)",
+        getattr(config, "mode", "chat"),
+    )
+    _TuiController(ui, tui, config).run()
+
+
 def run(ui: UI) -> None:
     """Show the startup dashboard, drop straight into chat, then the menu.
 
@@ -1122,8 +1437,6 @@ def run(ui: UI) -> None:
                 apikey_menu(ui, config)
             elif choice == "model":
                 select_model(ui, config)
-            elif choice == "codemode":
-                _dispatch_command(ui, config, engine, "/codemode on")
             elif choice == "agent":
                 _dispatch_command(ui, config, engine, "/agent on")
             elif choice == "memory":

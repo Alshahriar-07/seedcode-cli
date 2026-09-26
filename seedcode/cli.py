@@ -9,7 +9,28 @@ traceback. Heavy imports are deferred into :func:`main` so ``--version``
 
 from __future__ import annotations
 
+import os
 import sys
+
+
+def _interactive() -> bool:
+    """True when a real console is attached (the TUI needs one to draw)."""
+    try:
+        return sys.stdin.isatty() and sys.stdout.isatty()
+    except (AttributeError, ValueError):
+        return False
+
+
+def _use_persistent_tui(plain: bool) -> bool:
+    """Whether to start the persistent TUI instead of the sequential console.
+
+    The TUI owns the whole screen, so it is only used on a real interactive
+    console, never when the host mangles ANSI (``SEEDCODE_PLAIN``) or the user
+    opts out with ``SEEDCODE_NO_TUI``.
+    """
+    if plain or os.environ.get("SEEDCODE_NO_TUI"):
+        return False
+    return _interactive()
 
 
 def _prepare_console() -> None:
@@ -86,7 +107,14 @@ def main() -> None:
 
     ui = UI(plain=terminal.plain)
     try:
-        run(ui)
+        if _use_persistent_tui(terminal.plain):
+            # v8.2.5: a real console gets the persistent three-region TUI;
+            # every other host keeps the sequential console experience.
+            from .app import run_persistent
+
+            run_persistent()
+        else:
+            run(ui)
         log.info("Clean exit.")
     except KeyboardInterrupt:
         ui.blank()

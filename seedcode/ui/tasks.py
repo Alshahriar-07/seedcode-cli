@@ -1,4 +1,4 @@
-"""Live, step-by-step task progress for Code Mode / Agent Mode (v8.1.0).
+"""Live, step-by-step task progress for Agent Mode (v8.2.5).
 
 This is a *truthful* progress view, not a decoration. Every step state is
 driven by an event the engine actually produced:
@@ -250,12 +250,19 @@ class TaskFlow:
         self._changes = 0
         self._finished = False
         # --- v7.1.0 compact Code Mode view --------------------------------
-        self._code_mode = (
-            "code mode" in mode_label.lower() if code_mode is None else code_mode
-        )
+        # Agent Mode is the unified workspace agent; the legacy "Code Mode"
+        # label still selects the same compact block (see the compatibility
+        # path), so both get the professional header.
+        if code_mode is None:
+            label = mode_label.lower()
+            self._code_mode = "code mode" in label or "agent mode" in label
+        else:
+            self._code_mode = code_mode
         width = console.size.width if isinstance(console, Console) else HEADER_WIDTH
         self.header = (
-            CodeModeHeader(width=fit_width(width), legacy=legacy)
+            CodeModeHeader(
+                width=fit_width(width), legacy=legacy, mode_label=mode_label
+            )
             if self._code_mode
             else None
         )
@@ -275,6 +282,10 @@ class TaskFlow:
         Test doubles and embedders that only implement the messaging methods
         simply get no task view — the turn is otherwise unaffected.
         """
+        # The persistent TUI owns the screen: it renders the live activity
+        # stream directly, so there is no transient step view to draw here.
+        if getattr(ui, "is_tui", False):
+            return None
         console = getattr(ui, "console", None)
         if not isinstance(console, Console):
             return None

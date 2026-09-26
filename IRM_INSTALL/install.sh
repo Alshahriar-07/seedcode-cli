@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Seed Code CLI v8.1.0 - official remote installer (Linux / macOS / WSL).
+# Seed Code CLI v8.2.5 - official remote installer (Linux / macOS / WSL).
 #
 # Installs Seed Code CLI for the CURRENT USER. No administrator rights and no
 # cloned repository are required: the official release artifact is downloaded
@@ -18,11 +18,11 @@
 #
 # Or, to pass options, download-then-run:
 #
-#   bash install.sh --version 8.1.0
+#   bash install.sh --version 8.2.5
 #   bash install.sh --bin-dir ~/.local/bin
 #
 # Options:
-#   --version V   Release version to install   (default: 8.1.0)
+#   --version V   Release version to install   (default: 8.2.5)
 #   --bin-dir D   Where the seedcode binary should live (default: ~/.local/bin)
 #   --force       Reinstall even if this version is already present
 #   --plain       Disable the ANSI/Unicode UI
@@ -39,7 +39,7 @@ umask 022
 
 # --- constants ---------------------------------------------------------------
 REPO="Alshahriar-07/seedcode-cli"
-DEFAULT_VERSION="8.1.0"
+DEFAULT_VERSION="8.2.5"
 USER_AGENT="seedcode-cli-installer/${DEFAULT_VERSION}"
 
 # The release artifact names are the release contract shared with

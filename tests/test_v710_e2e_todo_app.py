@@ -447,8 +447,8 @@ def test_pipeline_through_the_cli_renders_compact_progress(tmp_path: Path, monke
 
     out = ui.console.export_text()
     # The compact header, the plan checklist, and real per-task progress.
-    assert "SEEDCODE 8.1.0" in out
-    assert "CODE MODE" in out
+    assert "SEEDCODE 8.2.5" in out
+    assert "AGENT MODE" in out
     assert "Task 3/3" in out
     assert "✓" in out
     assert "completed" in out.lower()

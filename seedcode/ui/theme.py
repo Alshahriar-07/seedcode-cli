@@ -174,6 +174,10 @@ def pt_style(name: str | None = None) -> Style:
     return Style.from_dict(
         {
             "prompt": f"bold {p.primary}",
+            # The composer is bounded by prompt_toolkit's Frame, whose border and
+            # title label use these two classes.
+            "frame.border": p.dim,
+            "frame.label": f"bold {p.primary}",
             "sel.title": f"bold {p.primary}",
             "sel.breadcrumb": p.dim,
             "sel.breadcrumb.here": f"bold {p.accent}",
