@@ -12,7 +12,7 @@ from __future__ import annotations
 from rich.table import Table
 
 from ..computer import INSTALL_HINT, is_available, missing_packages
-from . import CommandContext, CommandResult, command, show_session_bar
+from . import CommandContext, CommandResult, command, context_cancel, show_session_bar
 from .assist import disable_assist, enable_assist
 
 
@@ -30,7 +30,7 @@ def _desktop(ctx: CommandContext, arg: str) -> CommandResult:
     # Desktop Mode was merged into Agent Mode — route there transparently.
     ctx.ui.dim("(/desktop is now Agent Mode)")
     if enable:
-        enable_assist(ctx.ui, ctx.config)
+        enable_assist(ctx.ui, ctx.config, cancel=context_cancel(ctx))
     else:
         disable_assist(ctx.ui, ctx.config)
     show_session_bar(ctx.ui, ctx.config)

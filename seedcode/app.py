@@ -15,12 +15,14 @@ Ctrl+L clear screen.
 from __future__ import annotations
 
 import sys
+import threading
+import time
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.key_binding import KeyBindings
 
 from . import __version__
-from .commands import CommandContext, dispatch, is_command
+from .commands import CommandContext, CommandResult, dispatch, is_command
 from .commands.about import show_about
 from .commands.help import show_shortcuts
 from .commands.history import browse_history, settings_menu
@@ -44,6 +46,7 @@ from .tools import PermissionManager, PermissionMode
 from .ui import UI
 from .ui.badges import badge_for_status
 from .ui.menu import MenuItem, run_menu
+from .ui.mode_switch import ModeSwitcher
 from .ui.reference import CONTROLS_HINT, INPUT_HINT
 from .ui.state import AppState, Status
 from .ui.tasks import TaskFlow, TaskState, activity_for
@@ -485,6 +488,24 @@ def _advance(lc, method: str) -> None:
         getattr(lc, method)()
     except LifecycleError:
         _log.debug("lifecycle transition %s skipped", method)
+
+
+#: How long an Agent Mode turn waits for a background mode initialization that
+#: is still running before it gets on with building its own engine. The wait
+#: happens on the turn's worker thread, so nothing on screen is ever held up.
+_AGENT_INIT_WAIT_S = 20.0
+
+
+def _is_mode_command(text: str) -> bool:
+    """Whether ``text`` is an in-place mode transition (single source: the TUI).
+
+    Imported lazily so the controller can route a mode command to the
+    background worker without pulling prompt_toolkit into every entry point
+    that merely imports this module.
+    """
+    from .ui.tui import _is_mode_command as _is
+
+    return _is(text)
 
 
 def _codemode_enabled() -> bool:
@@ -1113,9 +1134,20 @@ class _TuiController:
         self.agent_perm = config.permission_mode
         self.agent_codemode = _codemode_enabled()
         self._backend = config.provider
+        #: Guards the agent engine pointer against a mode switch rebuilding it
+        #: while a turn is reading it (both run on worker threads).
+        self._agent_lock = threading.RLock()
+        #: The single owner of every background mode transition. A switch is a
+        #: state change plus a worker; it is never a bare thread started from a
+        #: UI callback (which is how a switch could freeze the terminal).
+        self.switcher = ModeSwitcher(
+            on_finished=self._switch_finished,
+            on_failed=self._switch_failed,
+        )
         tui.on_submit = self.submit
         # Mode switches run in place: no application exit, no rebuild.
-        tui.on_command = self._inplace_command
+        tui.on_command = self._mode_command
+        tui.on_cancel_init = self._cancel_initialization
 
     # --- provider/backend --------------------------------------------------
     def _on_provider_event(self, kind: str, detail: str) -> None:
@@ -1129,7 +1161,9 @@ class _TuiController:
         self.engine = ChatEngine(self.config, on_event=self._on_provider_event)
         self.history = HistoryStore(provider_id=self.config.provider)
         self.ctx = CommandContext(ui=self.ui, config=self.config, engine=self.engine)
-        self.agent = None
+        with self._agent_lock:
+            # A new backend means a new engine; drop the old one.
+            self.agent = None
         self._backend = self.config.provider
 
     # --- one turn (worker thread) ------------------------------------------
@@ -1148,14 +1182,162 @@ class _TuiController:
         except Exception:
             pass
 
-    def _inplace_command(self, text: str) -> None:
-        """Dispatch a mode-switch command without leaving the TUI.
+    # --- mode transitions ---------------------------------------------------
+    def _mode_command(self, text: str) -> None:
+        """Handle a mode-switch command from the composer — *never* inline.
 
-        The engine/agent are rebuilt only when the mode actually changed, and
-        the header is refreshed from live config — a pure state transition.
+        Entering Agent Mode does real work (the ``.seedcode`` workspace scan,
+        the desktop capability probe, and a permission prompt that waits for the
+        user). The permission prompt is answered by the prompt_toolkit event
+        loop, so running any of it on the event-loop thread would wait forever
+        for a key press that thread had already made impossible — the freeze.
+        Every transition therefore runs on the switcher's owned worker.
+        """
+        self._mode_transition(text)
+
+    def _mode_transition(self, text: str) -> int:
+        """Start a mode transition; return immediately, never blocking the loop."""
+        if not self._enters_agent_mode(text):
+            # Leaving Agent Mode — and reporting mode state — is cheap and has
+            # no permission prompt, so it applies here and now, and it cancels
+            # any preparation still in flight. Nothing in this path can wait
+            # for the event loop, so running it on the loop thread is safe.
+            self.switcher.cancel()
+            self.tui.end_initialization()
+            self._inplace_command(text)
+            return self.switcher.generation
+        # Entering Agent Mode: the immediate, cheap half now; everything that
+        # scans, probes or prompts happens on the switcher's owned worker.
+        self._activate_agent_mode_now()
+        return self.switcher.run(
+            "agent", lambda cancel: self._run_mode_command(text, cancel)
+        )
+
+    def _enters_agent_mode(self, text: str) -> bool:
+        """Whether a mode command is turning Agent Mode **on**.
+
+        Mirrors the command layer's own aliases (``/agent``, ``/assist``,
+        ``/desktop``, ``/mode``, ``/codemode``) so the immediate UI state and
+        the background preparation agree. A bare form toggles, which is why the
+        live config is consulted. Getting this wrong is not fatal — the command
+        layer still performs the real switch — it only decides whether the
+        user sees "Initializing..." instantly.
+        """
+        parts = text.strip().lstrip("/").split(maxsplit=1)
+        if not parts:
+            return False
+        head = parts[0].lower()
+        arg = parts[1].strip().lower() if len(parts) > 1 else ""
+        if head in ("agent", "assist", "desktop"):
+            if arg == "on":
+                return True
+            if arg == "off":
+                return False
+            return not self.config.agent_mode  # the bare form toggles
+        if head == "mode":
+            if not arg:
+                return False
+            from .core.modes import Mode, parse_mode
+
+            return parse_mode(arg, default=Mode.CHAT) is Mode.AGENT
+        if head == "codemode":
+            return arg == "on"
+        return False  # /chat, /status and the rest never enter Agent Mode
+
+    def _activate_agent_mode_now(self) -> None:
+        """Apply the cheap half of ``/agent on`` immediately.
+
+        Only the mode change itself (plus its config write): no workspace scan,
+        no capability probe, no permission prompt. Those are what
+        :func:`~seedcode.commands.assist.prepare_agent_mode` does on the worker.
+        """
+        from .commands.assist import activate_agent_mode
+
+        try:
+            activate_agent_mode(self.config)
+        except Exception:
+            _log.exception("could not switch to Agent Mode")
+        with self._agent_lock:
+            # The engine built for Chat Mode must not serve an agent turn.
+            self.agent = None
+        self.tui.begin_initialization("Agent Mode")
+        self.tui.sync_from_config(self.config)
+
+    def _run_mode_command(self, text: str, cancel) -> CommandResult:
+        """The worker body of an Agent Mode entry (runs off the event loop).
+
+        ``cancel`` is the switcher's probe for this transition: it is handed to
+        the command through the context so the workspace scan and the permission
+        prompt stop as soon as this transition is superseded, and everything
+        this worker might report is suppressed once it is stale.
+        """
+        ctx = CommandContext(
+            ui=self.ui,
+            config=self.config,
+            engine=self.engine,
+            cancel=cancel,
+        )
+        backend_before = self.config.provider
+        try:
+            result = dispatch(ctx, text)
+        except (KeyboardInterrupt, EOFError):
+            if not cancel():
+                self.ui.dim("Cancelled.")
+            result = CommandResult()
+        except Exception as exc:  # a broken command must not kill the session
+            if not cancel():
+                _log.exception("mode command failed: %s", text)
+                _report_command_error(self.ui, exc)
+            result = CommandResult()
+        if cancel():
+            return result  # superseded: a newer transition owns the screen
+        if self.config.provider != backend_before:
+            self._rebuild_backend()
+        self.tui.sync_from_config(self.config)
+        return result
+
+    def _cancel_initialization(self) -> None:
+        """Cancel a background Agent Mode preparation (Ctrl+C, Esc, shutdown)."""
+        self.switcher.cancel()
+        self.tui.end_initialization()
+        self.tui.state.set_status(Status.READY, "")
+        self.ui.dim(
+            "(initialization cancelled — still in Agent Mode, preparing when "
+            "needed; /chat on returns to Chat Mode)"
+        )
+
+    def _switch_finished(self, _generation: int, _key: str, _result) -> None:
+        """The background preparation completed (called on the worker)."""
+        with self._agent_lock:
+            self.agent = None  # rebuilt lazily from the now-final config
+        self.tui.end_initialization()
+        try:
+            self.tui.sync_from_config(self.config)
+        except Exception:
+            pass
+
+    def _switch_failed(self, _generation: int, _key: str, error: str) -> None:
+        """A failed preparation is *reported*, never turned into a freeze.
+
+        The terminal keeps running, the header keeps working, and Chat Mode is
+        one command away — exactly the contract for a failure in a mode switch.
+        """
+        with self._agent_lock:
+            self.agent = None
+        self.tui.end_initialization()
+        self.tui.state.set_status(Status.ERROR, "initialization failed")
+        self.ui.error(f"[Agent Mode] Initialization failed: {error}")
+        self.ui.dim("Chat Mode is unaffected — /chat on returns to it.")
+        self.tui.sync_from_config(self.config)
+
+    def _inplace_command(self, text: str) -> None:
+        """Dispatch a command that does not change the mode, in place.
+
+        The engine/agent are rebuilt only when the provider actually changed,
+        and the header is refreshed from live config — a pure state transition
+        with no application exit and no rebuild.
         """
         backend_before = self.config.provider
-        mode_before = self.config.mode
         try:
             dispatch(self.ctx, text)
         except (KeyboardInterrupt, EOFError):
@@ -1164,28 +1346,43 @@ class _TuiController:
             _report_command_error(self.ui, exc)
         if self.config.provider != backend_before:
             self._rebuild_backend()
-        elif self.config.mode != mode_before:
-            # A mode change invalidates the agent built for the old mode.
-            self.agent = None
         self.tui.sync_from_config(self.config)
 
     def _ensure_agent(self) -> None:
+        """Build the Agent engine for the live config (on the turn worker).
+
+        If a mode switch is still preparing Agent Mode, wait for it here: this
+        runs on the turn's own worker thread, so waiting costs the interface
+        nothing, and it keeps one engine from being built underneath another.
+        The wait is bounded, and Ctrl+C still aborts it.
+        """
+        deadline = time.monotonic() + _AGENT_INIT_WAIT_S
+        while self.tui.state.agent_initializing and time.monotonic() < deadline:
+            self.tui.check_cancel()  # Ctrl+C still aborts the waiting turn
+            if self.switcher.wait(timeout=0.1):
+                break
         codemode_now = _codemode_enabled()
-        if (
-            self.agent is None
-            or self.agent_perm != self.config.permission_mode
-            or self.agent_codemode != codemode_now
-        ):
-            self.agent = _make_agent(self.ui, self.config, self.presenter)
-            self.agent_perm = self.config.permission_mode
-            self.agent_codemode = codemode_now
+        with self._agent_lock:
+            if (
+                self.agent is None
+                or self.agent_perm != self.config.permission_mode
+                or self.agent_codemode != codemode_now
+            ):
+                self.agent = _make_agent(self.ui, self.config, self.presenter)
+                self.agent_perm = self.config.permission_mode
+                self.agent_codemode = codemode_now
 
     # --- the session loop --------------------------------------------------
     def run(self) -> None:
         while True:
             kind, payload = self.tui.run_once()
+            # A mode command that somehow reached the main loop (an unexpected
+            # result) still must not be dispatched on the event-loop thread.
+            if kind == "command" and payload and _is_mode_command(payload):
+                self._mode_transition(payload)
+                continue
             if kind == "exit":
-                self.tui.shutdown()
+                self._shutdown()
                 _exit_application(self.ui, "tui exit")
                 return
             if kind == "key":
@@ -1215,13 +1412,25 @@ class _TuiController:
                 continue
             if result.should_exit:
                 if self._menu():
-                    self.tui.shutdown()
+                    self._shutdown()
                     _exit_application(self.ui, "menu exit")
                     return
                 continue
             if self.config.provider != backend_before:
                 self._rebuild_backend()
             self.tui.sync_from_config(self.config)
+
+    def _shutdown(self) -> None:
+        """Release the session: stop background work, then the application.
+
+        A background mode initialization is cancelled and given a moment to
+        finish, so no worker outlives the interface it belongs to.
+        """
+        try:
+            self.switcher.cancel(wait=1.0)
+        except Exception:
+            pass  # a teardown hiccup must never stop the session from ending
+        self.tui.shutdown()
 
     def _toolbar_action(self, action: str) -> None:
         """Run a real action behind a header control (provider/model/mode).
@@ -1264,7 +1473,9 @@ class _TuiController:
             hint="\u2191\u2193 move   Enter select   Esc cancel",
         )
         if choice:
-            self._command(f"/mode {choice}")
+            # A real mode switch — routed to the background worker, never
+            # dispatched on the event-loop thread.
+            self._mode_transition(f"/mode {choice}")
 
     def _menu(self) -> bool:
         """The interactive main menu; returns True when the user quits."""
@@ -1285,7 +1496,10 @@ class _TuiController:
                 elif choice == "model":
                     select_model(self.ui, self.config)
                 elif choice == "agent":
-                    self._command("/agent on")
+                    # Agent Mode preparation is background work: it must not run
+                    # on the menu's (main) thread, which would deadlock on the
+                    # permission prompt it raises.
+                    self._mode_transition("/agent on")
                 elif choice == "memory":
                     self._command("/codemode status")
                 elif choice == "settings":
@@ -1331,12 +1545,13 @@ def run_persistent(*, input_device=None, output_device=None) -> None:
             return
 
     workspace = str(workspace_root())
-    columns, _rows = _terminal_size()
+    columns, rows = _terminal_size()
     state = AppState.from_config(config, workspace=workspace)
     tui = ChatTUI(
         state,
         workspace=workspace,
         width=columns,
+        height=rows,
         input_device=input_device,
         output_device=output_device,
     )

@@ -423,9 +423,12 @@ def test_header_and_composer_are_the_fixed_regions() -> None:
         assert tui._header_window is not None
         assert tui._content_window is not None
         assert tui._input_window is not None
-        # The content window is the flexible one; the others are exact.
+        # The content window is the flexible one; the others take a *dynamic*
+        # exact height from the live terminal, so a resize re-fits them without
+        # replacing a single window object.
         lines = header_lines(tui.state, 80)
-        assert tui._header_window.height.preferred == len(lines)
+        assert tui._header_dimension().preferred == len(lines)
+        assert tui._header_dimension().min == len(lines)
 
 
 def test_enter_sends_a_message_without_leaving_the_application() -> None:

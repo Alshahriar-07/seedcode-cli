@@ -228,13 +228,24 @@ class UI:
         )
 
     # --- action confirmation ------------------------------------------------
-    def _confirm(self, title: str, category_label: str, description: str) -> str:
+    def _confirm(
+        self,
+        title: str,
+        category_label: str,
+        description: str,
+        *,
+        cancel=None,
+    ) -> str:
         """Ask the user to approve an action; returns 'y', 'a', or 'n'.
 
         Shows the action details in a warning panel, then an interactive
         Allow Once / Always Allow / Deny dialog. Pauses any live spinner so
         the dialog renders cleanly, then resumes it. Cancelling (Esc or
         Ctrl+C) counts as deny — never approve by accident.
+
+        ``cancel`` is accepted for interface parity with the persistent TUI
+        (where a superseded permission ask must be abandoned); this console
+        prompt reads the terminal directly, so there is nothing to poll.
         """
         from .dialog import permission_dialog
 
@@ -259,10 +270,14 @@ class UI:
             if live is not None:
                 live.start()
 
-    def confirm_desktop(self, category_label: str, description: str) -> str:
+    def confirm_desktop(
+        self, category_label: str, description: str, *, cancel=None
+    ) -> str:
         """Approve a desktop action; returns 'y', 'a', or 'n'."""
-        return self._confirm("Desktop Control", category_label, description)
+        return self._confirm("Desktop Control", category_label, description, cancel=cancel)
 
-    def confirm_tool_action(self, category_label: str, description: str) -> str:
+    def confirm_tool_action(
+        self, category_label: str, description: str, *, cancel=None
+    ) -> str:
         """Approve a dangerous agent tool action; returns 'y', 'a', or 'n'."""
-        return self._confirm("Agent Action", category_label, description)
+        return self._confirm("Agent Action", category_label, description, cancel=cancel)

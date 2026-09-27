@@ -54,7 +54,12 @@ from prompt_toolkit.application import Application
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout import HSplit, Layout, VSplit, Window
-from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl, UIControl
+from prompt_toolkit.layout.controls import (
+    BufferControl,
+    FormattedTextControl,
+    UIContent,
+    UIControl,
+)
 from prompt_toolkit.layout.dimension import Dimension
 from prompt_toolkit.mouse_events import MouseEventType
 from prompt_toolkit.styles import DynamicStyle
@@ -77,6 +82,16 @@ _MIN_INPUT_LINES = 2
 _MAX_INPUT_LINES = 6
 #: Rows of the bounded permission panel (shown only while a request waits).
 _PERMISSION_HEIGHT = 7
+#: Rows the composer's ``Frame`` adds around the editor (its top and bottom
+#: border) and the single hint row underneath it.
+_COMPOSER_FRAME_ROWS = 2
+_HINT_ROWS = 1
+#: The conversation is never allowed to vanish: this many rows are reserved for
+#: it (and therefore taken from the header) before anything else gives way.
+_MIN_CONVERSATION_ROWS = 1
+#: A terminal this short cannot show the three regions at all; the layout still
+#: renders (an empty conversation and the composer rather than a blank screen).
+_MIN_TERMINAL_ROWS = 3
 
 #: The composer's in-box prompt: a chevron with a leading and trailing cell so a
 #: wrapped continuation line stays indented under the first one. Its length is
@@ -155,6 +170,30 @@ class _TuiConsole(Console):
         super().clear(home)
 
 
+class _NullStream:
+    """A file-like sink that discards everything written to it.
+
+    The streamed-markdown recorder has to *record* a rendered answer, never
+    print it. Its console therefore writes here instead of to ``sys.stdout``:
+    the TUI's own console is the only thing allowed to touch the screen. Before
+    this, every streamed flush also wrote the raw ANSI rendering to stdout —
+    straight underneath the prompt_toolkit full-screen interface, which is
+    exactly the whole-interface flicker (and the duplicated answer) users saw.
+    """
+
+    encoding = "utf-8"
+    errors = "replace"
+
+    def write(self, text: str) -> int:
+        return len(text) if text else 0
+
+    def flush(self) -> None:
+        pass
+
+    def isatty(self) -> bool:
+        return False
+
+
 class _ContentControl(UIControl):
     """A non-focusable control that renders the buffer's visible slice."""
 
@@ -178,16 +217,22 @@ class _ContentControl(UIControl):
         return NotImplemented
 
     def create_content(self, width: int, height: int):
+        """Render the visible slice as a :class:`UIContent` directly.
+
+        Deliberately *not* by building a ``FormattedTextControl`` per frame: a
+        streaming answer repaints fifteen times a second, and allocating a new
+        control (with its own fragment processing) on every frame was needless
+        churn in the one region that already updates continuously.
+        """
         try:
             lines = self._provider(width, height)
         except Exception:
             lines = [[("", "(display error)")]]
-        flat: list[tuple[str, str]] = []
-        for index, line in enumerate(lines):
-            if index:
-                flat.append(("", "\n"))
-            flat.extend(line)
-        return FormattedTextControl(flat, show_cursor=False).create_content(width, height)
+        return UIContent(
+            get_line=lambda index: lines[index],
+            line_count=len(lines),
+            show_cursor=False,
+        )
 
 
 class TuiStreamRenderer:
@@ -208,6 +253,15 @@ class TuiStreamRenderer:
     def flush(self) -> None:
         self._tui.set_stream(self._buffer, force=True)
 
+    def reflow(self) -> None:
+        """Re-render the buffered answer at the current terminal width.
+
+        Called when the terminal is resized mid-stream so the visible answer
+        re-wraps to the new size instead of keeping the old wrapping.
+        """
+        if self._buffer:
+            self._tui.set_stream(self._buffer, force=True)
+
     @property
     def text(self) -> str:
         return self._buffer
@@ -222,6 +276,7 @@ class ChatTUI:
         *,
         workspace: str = "",
         width: int = 80,
+        height: int = 24,
         input_device: Any = None,
         output_device: Any = None,
     ) -> None:
@@ -229,6 +284,23 @@ class ChatTUI:
         self._input_device = input_device
         self._output_device = output_device
         self._width = max(20, int(width))
+        #: The live terminal *height*, tracked so every region can be sized from
+        #: the real screen on each frame instead of from a fixed assumption.
+        self._rows = max(_MIN_TERMINAL_ROWS, int(height))
+        #: The row allocation for the live size, recomputed (never re-built) on
+        #: each frame by :meth:`_reallocate_rows`.
+        self._header_rows = 0
+        self._input_rows = _MIN_INPUT_LINES
+        self._permission_rows = 0
+        self._hint_rows = _HINT_ROWS
+        #: The thread running the prompt_toolkit event loop. A permission ask
+        #: arriving on this thread could never be answered (the event loop is
+        #: what delivers the answer), so it is refused instead of deadlocking.
+        self._ui_thread: int | None = None
+        #: The live stream block, so a resize can re-wrap the answer in place.
+        self._stream: "TuiStreamRenderer | None" = None
+        #: Cancel a mode's background initialization (wired by the controller).
+        self.on_cancel_init: Callable[[], None] | None = None
         self.on_submit: Callable[[str], None] | None = None
         #: Dispatch a mode-switch command in place (no terminal takeover, no
         #: application restart). Set by the controller; falls back to leaving
@@ -250,6 +322,7 @@ class ChatTUI:
         self._header_window: Window | None = None
         self._input_window: Window | None = None
         self._content_window: Window | None = None
+        self._hint_window: Window | None = None
         self._scroll = 0
         self._follow = True
         #: Lines below the viewport while the user is scrolled up (a hint only).
@@ -273,6 +346,7 @@ class ChatTUI:
         self._think_label = "Thinking"
         self._think_index = 0
         self._thinking_active = False
+        self._reallocate_rows()  # a sane first frame before the real size lands
         state.subscribe(lambda _state: self._invalidate())
 
     def _clear_screen(self) -> None:
@@ -437,6 +511,32 @@ class ChatTUI:
         self.state.sync_from_config(config)
         self._invalidate()
 
+    # --- background initialization (a non-blocking UI state) ----------------
+    def begin_initialization(self, label: str = "Agent Mode") -> None:
+        """Show ``<mode> / Initializing…`` while a switch prepares in the
+        background. Called from the worker thread; it only touches state and
+        asks for a repaint, so the interface stays live.
+
+        Idempotent: the controller shows it the instant the mode is requested,
+        and the worker announces it again when the command really starts, so
+        only the first call may append a line.
+        """
+        if self.state.agent_initializing:
+            return
+        self.state.update(agent_initializing=True)
+        self.state.set_status(Status.INITIALIZING, "initializing")
+        self.append_activity("note", f"{label} / Initializing...")
+        self._invalidate()
+
+    def end_initialization(self) -> None:
+        """Leave the initializing state (a no-op when it is not showing)."""
+        if not self.state.agent_initializing:
+            return
+        self.state.update(agent_initializing=False)
+        if self.state.status is Status.INITIALIZING:
+            self.state.set_status(Status.READY, "")
+        self._invalidate()
+
     # --- scrolling ----------------------------------------------------------
     def scroll_by(self, delta: int) -> None:
         self._follow = False
@@ -467,6 +567,75 @@ class ChatTUI:
     def _input_height(self) -> int:
         lines = self._input.text.count("\n") + 1
         return max(_MIN_INPUT_LINES, min(lines, _MAX_INPUT_LINES))
+
+    # --- responsive row allocation ------------------------------------------
+    def _on_ui_thread(self) -> bool:
+        """Whether the caller is the thread running the prompt_toolkit loop."""
+        return self._ui_thread is not None and threading.get_ident() == self._ui_thread
+
+    def _header_row_count(self) -> int:
+        return len(header_lines(self.state, self._width))
+
+    def _reallocate_rows(self) -> None:
+        """Fit every region into the live terminal height, in priority order.
+
+        This is what makes the interface genuinely responsive: instead of a
+        fixed stack whose minimum heights add up to more than a short terminal
+        (which makes prompt_toolkit's ``HSplit`` give up and render nothing at
+        all — the blank screen), each region is given rows out of a budget for
+        the current size. The composer is served first (it must always be
+        usable), then the header, then the permission panel; the conversation
+        window is the flexible one and absorbs whatever is left.
+
+        The result is only ever *numbers*: the windows themselves are built
+        once and never re-created, so a resize is a re-fit and a repaint rather
+        than a rebuild.
+        """
+        rows = max(1, self._rows)
+        budget = rows
+
+        budget -= 1 if budget > _MIN_CONVERSATION_ROWS else 0  # conversation
+        hint = _HINT_ROWS if budget - _HINT_ROWS >= 1 else 0
+        budget -= hint
+        input_rows = max(
+            0, min(self._input_height(), budget - _COMPOSER_FRAME_ROWS)
+        )
+        budget -= input_rows + _COMPOSER_FRAME_ROWS
+        header = min(self._header_row_count(), max(0, budget))
+        budget -= header
+        permission = min(self._permission_height(), max(0, budget))
+
+        self._hint_rows = hint
+        self._input_rows = input_rows
+        self._header_rows = header
+        self._permission_rows = permission
+
+    def min_layout_rows(self) -> int:
+        """Rows the fixed regions need at the current size.
+
+        prompt_toolkit renders *nothing* when the minimum heights of a vertical
+        layout exceed the terminal height, so this is the invariant that keeps
+        a short terminal usable (a compressed interface) instead of blank.
+        """
+        return (
+            self._header_rows
+            + self._permission_rows
+            + self._input_rows
+            + _COMPOSER_FRAME_ROWS
+            + self._hint_rows
+        )
+
+    def _header_dimension(self) -> Dimension:
+        return Dimension.exact(self._header_rows)
+
+    def _input_dimension(self) -> Dimension:
+        return Dimension.exact(self._input_rows)
+
+    def _permission_dimension(self) -> Dimension:
+        return Dimension.exact(self._permission_rows)
+
+    def _hint_dimension(self) -> Dimension:
+        return Dimension.exact(self._hint_rows)
 
     # --- composer prompt ----------------------------------------------------
     def _prompt_fragments(self) -> list[tuple[str, str]]:
@@ -541,14 +710,39 @@ class ChatTUI:
         return True
 
     # --- confirmation (permissions) -----------------------------------------
-    def confirm(self, title: str, question: str, description: str) -> str:
+    def confirm(
+        self,
+        title: str,
+        question: str,
+        description: str,
+        *,
+        cancel: Callable[[], bool] | None = None,
+    ) -> str:
         """Ask from the worker thread; answer on the main thread. Deny on timeout.
 
         The request is rendered as a bounded, keyboard-driven panel inside the
         existing application (never a nested prompt, never a blocking
         ``input()``): only the agent turn waits, and ``Enter`` allows, ``A``
         allows for the session, ``D`` denies and ``Esc`` cancels.
+
+        **The one rule this method enforces on itself:** it may never be called
+        from the thread that runs the event loop. The answer to the panel is
+        delivered by that event loop, so a caller inside it would wait forever
+        for a key press it has already made impossible — the deadlock that froze
+        the terminal during an Agent Mode switch. Such a call is refused (denied,
+        with an explanation on screen) instead of hanging.
         """
+        if self._on_ui_thread():
+            self.append_activity(
+                "error",
+                "Permission request could not be shown: it arrived on the "
+                "interface thread, which is the only one that can answer it. "
+                "The action was denied. Nothing is frozen — switch modes or "
+                "carry on.",
+            )
+            self.state.set_status(Status.ERROR, "permission request refused")
+            self._invalidate()
+            return "n"
         event = threading.Event()
         with self._confirm_lock:
             self._confirm_event = event
@@ -569,6 +763,11 @@ class ChatTUI:
                     answered = True
                     break
                 if self._cancel.is_set() or time.monotonic() >= deadline:
+                    break
+                if cancel is not None and cancel():
+                    # Superseded: a newer mode switch owns the screen, so this
+                    # ask is abandoned instead of holding a worker (and the
+                    # composer's Enter key) hostage.
                     break
         finally:
             with self._confirm_lock:
@@ -732,22 +931,30 @@ class ChatTUI:
             pass
 
     def _before_render(self, app: Application) -> None:
-        """Re-fit every region to the live terminal size before each frame."""
+        """Re-fit the regions to the live terminal size before each frame.
+
+        Deliberately minimal: it records the new width/height, re-runs the row
+        budget and asks for one repaint when the width actually changed (which
+        re-wraps the streamed answer in place). It never touches a window, a
+        container or the layout tree, because a resize must not rebuild the
+        interface — only re-fit and redraw it.
+        """
         try:
             size = app.output.get_size()
         except Exception:
             return
-        width = max(20, size.columns)
+        width = max(20, int(size.columns or 80))
+        rows = max(_MIN_TERMINAL_ROWS, int(size.rows or 24))
+        resized = width != self._width or rows != self._rows
         self._width = width
+        self._rows = rows
         if getattr(self.console, "_width", None) != width:
             self.console._width = width  # type: ignore[attr-defined]
-        lines = header_lines(self.state, width)
-        if self._header_window is not None:
-            self._header_window.height = Dimension.exact(len(lines))
-        if self._input_window is not None:
-            self._input_window.height = Dimension.exact(self._input_height())
-        if self._permission_window is not None:
-            self._permission_window.height = Dimension.exact(self._permission_height())
+        self._reallocate_rows()
+        if resized and self._stream is not None:
+            # A streamed answer re-flows to the new width instead of keeping
+            # the wrapping it was rendered with at the old one.
+            self._stream.reflow()
 
     # --- fragments ----------------------------------------------------------
     def _header_fragments(self) -> list[tuple[str, str]]:
@@ -781,6 +988,10 @@ class ChatTUI:
             hint = "  Enter allow  \u00b7  a allow session  \u00b7  d deny  \u00b7  Esc cancel"
         elif self._busy:
             hint = "  Ctrl+C cancel"
+        elif self.state.agent_initializing:
+            # Background initialization: the interface stays fully usable, so
+            # say so instead of showing an idle prompt.
+            hint = "  Initializing in the background \u2014 keep typing, Ctrl+C cancels"
         else:
             hint = "  Enter \u21b5 send  \u00b7  Shift+Enter newline"
         parts: list[tuple[str, str]] = []
@@ -876,6 +1087,10 @@ class ChatTUI:
                 return
             if self._busy:
                 self.request_cancel()
+            elif self.state.agent_initializing and self.on_cancel_init is not None:
+                # The event loop is never blocked by initialization, so this
+                # reaches the worker immediately.
+                self.on_cancel_init()
             else:
                 self._input.text = ""
                 self._invalidate()
@@ -890,6 +1105,9 @@ class ChatTUI:
                 return
             if self._busy:
                 self.request_cancel()
+            elif self.state.agent_initializing and not self._input.text:
+                if self.on_cancel_init is not None:
+                    self.on_cancel_init()
             elif self._input.text:
                 self._input.text = ""
 
@@ -904,14 +1122,17 @@ class ChatTUI:
             height=Dimension(weight=1),
             wrap_lines=False,
         )
+        # Every fixed region takes its height from a *dynamic* dimension: the
+        # callable is re-read by prompt_toolkit on each layout pass, so the
+        # window objects stay exactly as built while a resize re-fits them.
         self._header_window = Window(
             FormattedTextControl(self._header_fragments, focusable=False),
-            height=Dimension.exact(len(header_lines(self.state, self._width))),
+            height=self._header_dimension,
             dont_extend_height=True,
         )
         self._input_window = Window(
             BufferControl(buffer=self._input),
-            height=Dimension.exact(self._input_height()),
+            height=self._input_dimension,
             dont_extend_height=True,
             wrap_lines=True,
         )
@@ -919,9 +1140,14 @@ class ChatTUI:
         # request is pending), never a nested application or a blocking read.
         self._permission_window = Window(
             FormattedTextControl(self._permission_fragments, focusable=False),
-            height=Dimension.exact(self._permission_height()),
+            height=self._permission_dimension,
             dont_extend_height=True,
             wrap_lines=False,
+        )
+        self._hint_window = Window(
+            FormattedTextControl(self._composer_bottom, focusable=False),
+            height=self._hint_dimension,
+            dont_extend_height=True,
         )
         # A real bounded editor: Frame draws the ╭─ Message ─╮ box around the
         # BufferControl, so the border *is* the visual boundary. The chevron
@@ -949,11 +1175,7 @@ class ChatTUI:
                 self._content_window,
                 self._permission_window,
                 composer,
-                Window(
-                    FormattedTextControl(self._composer_bottom, focusable=False),
-                    height=Dimension.exact(1),
-                    dont_extend_height=True,
-                ),
+                self._hint_window,
             ]
         )
         return Application(
@@ -987,12 +1209,17 @@ class ChatTUI:
         """
         if self._app is None:
             self._app = self._build_app()
+        # Remember which thread owns the event loop: a permission ask arriving
+        # here could never be answered (see :meth:`confirm`).
+        self._ui_thread = threading.get_ident()
         try:
             result = self._app.run()
         except (KeyboardInterrupt, EOFError):
             result = ("exit", None)
         except Exception:
             result = ("exit", None)
+        finally:
+            self._ui_thread = None
         if not isinstance(result, tuple) or len(result) != 2:
             return ("exit", None)
         kind, payload = result
@@ -1059,6 +1286,7 @@ def _markdown_lines(text: str, width: int) -> list[StyledLine]:
     from .content import parse_ansi, trim_line
 
     recorder = Console(
+        file=_NullStream(),  # record only: never print to the real terminal
         force_terminal=True,
         color_system="truecolor",
         legacy_windows=False,
@@ -1189,6 +1417,8 @@ class TuiUI:
         # Real output supersedes the thinking indicator immediately.
         self.tui.stop_thinking()
         renderer = TuiStreamRenderer(self.tui)
+        # Registered so a mid-stream resize re-wraps the answer in place.
+        self.tui._stream = renderer
         self.tui.state.set_status(Status.WORKING, "writing a reply")
         self.tui._invalidate()
         try:
@@ -1200,13 +1430,43 @@ class TuiUI:
         else:
             renderer.flush()
             self.tui.finish_stream()
+        finally:
+            self.tui._stream = None
+
+    # --- background mode initialization (a non-blocking UI state) ------------
+    def begin_initialization(self, label: str = "Agent Mode") -> None:
+        """Show ``<mode> / Initializing…`` (called from the switch worker)."""
+        self.tui.begin_initialization(label)
+
+    def end_initialization(self) -> None:
+        """Leave the initializing state (a safe no-op when it is not set)."""
+        self.tui.end_initialization()
 
     # --- confirmations ------------------------------------------------------
-    def _confirm(self, title: str, category_label: str, description: str) -> str:
-        return self.tui.confirm(title, category_label, description)
+    def _confirm(
+        self,
+        title: str,
+        category_label: str,
+        description: str,
+        *,
+        cancel: Callable[[], bool] | None = None,
+    ) -> str:
+        return self.tui.confirm(title, category_label, description, cancel=cancel)
 
-    def confirm_desktop(self, category_label: str, description: str) -> str:
-        return self._confirm("Desktop Control", category_label, description)
+    def confirm_desktop(
+        self,
+        category_label: str,
+        description: str,
+        *,
+        cancel: Callable[[], bool] | None = None,
+    ) -> str:
+        return self._confirm("Desktop Control", category_label, description, cancel=cancel)
 
-    def confirm_tool_action(self, category_label: str, description: str) -> str:
-        return self._confirm("Agent Action", category_label, description)
+    def confirm_tool_action(
+        self,
+        category_label: str,
+        description: str,
+        *,
+        cancel: Callable[[], bool] | None = None,
+    ) -> str:
+        return self._confirm("Agent Action", category_label, description, cancel=cancel)

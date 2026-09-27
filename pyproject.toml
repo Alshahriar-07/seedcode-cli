@@ -93,10 +93,21 @@ path = "seedcode/__init__.py"
 path = "scripts/pyproject_build_hook.py"
 require-runtime-dependencies = false
 
+# Pin Core Metadata 2.4 rather than letting hatchling emit its 2.5 default.
+# Everything this project publishes is expressible in 2.4 (PEP 639's
+# License-Expression / License-File landed in 2.4; only PEP 794's Import-Name /
+# Import-Namespace need 2.5, and this distribution declares neither), while
+# twine 6.x still *hard-caps* the metadata versions it accepts at 2.4 - it
+# monkeypatches packaging._VALID_METADATA_VERSIONS to drop 2.5. The release
+# workflow runs `python -m twine check dist/*` as a publish gate, so a 2.5
+# wheel would fail its own release. 2.4 is the newest version the whole
+# toolchain round-trips.
 [tool.hatch.build.targets.wheel]
 packages = ["seedcode"]
+core-metadata-version = "2.4"
 
 [tool.hatch.build.targets.sdist]
 # The build hook ships in the sdist: pip rebuilds the wheel from the
 # extracted sdist, and hatchling must be able to load the hook there.
 include = ["seedcode", "scripts/pyproject_build_hook.py", "README.md", "LICENSE"]
+core-metadata-version = "2.4"

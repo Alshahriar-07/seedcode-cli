@@ -375,6 +375,17 @@ echo [SUCCESS] pipeline complete >> "%LOG_FILE%"
 exit /b 0
 
 :try_python
+REM Compare the exit code explicitly. The py launcher reports "no matching
+REM interpreter" with a negative (sign-extended) code such as 0xA0000006,
+REM and `if not errorlevel 1` treats every negative value as success - so a
+REM broken launcher target used to be selected and the build died later with
+REM a misleading "run install.bat first" message. The candidate must also be
+REM able to import the package from the repository root, which is what the
+REM rest of this script actually needs.
 "%1" %2 -c "import sys; raise SystemExit(0 if sys.version_info[:2] >= (3, 10) else 1)" >nul 2>&1
-if not errorlevel 1 set "PY_CMD=%1 %2"
+if not "%ERRORLEVEL%"=="0" exit /b 0
+pushd "%REPO_ROOT%"
+"%1" %2 -c "import seedcode" >nul 2>&1
+if "%ERRORLEVEL%"=="0" set "PY_CMD=%1 %2"
+popd
 exit /b 0

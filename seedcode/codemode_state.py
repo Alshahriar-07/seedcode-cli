@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Callable
 
 from .codemode import SeedcodeStore
 
@@ -55,15 +56,22 @@ def codemode_state() -> CodeModeState:
     return _STATE
 
 
-def enable(workspace: Path) -> CodeModeState:
-    """Enable Code Mode for ``workspace``: ensure .seedcode + refresh index."""
+def enable(
+    workspace: Path, *, cancel: Callable[[], bool] | None = None
+) -> CodeModeState:
+    """Enable Code Mode for ``workspace``: ensure .seedcode + refresh index.
+
+    ``cancel`` is handed to the (pruned, streaming, cancellable) index refresh,
+    so a caller that has been superseded — a second mode switch, or the user
+    going straight back to Chat — stops the scan instead of finishing it.
+    """
     _STATE.workspace = workspace.resolve()
     _STATE.store = SeedcodeStore(_STATE.workspace)
     _STATE.store.ensure()
     try:
-        _STATE.last_index = _STATE.store.refresh_index()
+        _STATE.last_index = _STATE.store.refresh_index(cancel=cancel)
     except OSError:
-        _STATE.last_index = {"indexed": 0, "unchanged": 0}
+        _STATE.last_index = {"indexed": 0, "unchanged": 0, "partial": False}
     _STATE.enabled = True
     return _STATE
 

@@ -13,7 +13,7 @@ from ..config import save_config
 from ..tools import TOOL_REGISTRY, PermissionManager, PermissionMode
 from ..tools.filesystem import build_index
 from ..ui.selector import Option, select
-from . import CommandContext, CommandResult, command, show_session_bar
+from . import CommandContext, CommandResult, command, context_cancel, show_session_bar
 from .assist import disable_assist, enable_assist
 
 
@@ -30,7 +30,9 @@ def _agent(ctx: CommandContext, arg: str) -> CommandResult:
         return CommandResult()
 
     if enable:
-        enable_assist(ctx.ui, ctx.config)
+        # ``ctx.cancel`` lets a superseded switch stop the workspace scan
+        # instead of finishing work the user has already reversed.
+        enable_assist(ctx.ui, ctx.config, cancel=context_cancel(ctx))
     else:
         disable_assist(ctx.ui, ctx.config)
     show_session_bar(ctx.ui, ctx.config)

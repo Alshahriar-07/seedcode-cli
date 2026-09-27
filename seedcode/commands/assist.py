@@ -19,7 +19,7 @@ from rich.table import Table
 from ..computer import is_available
 from ..config import save_config
 from ..tools import TOOL_REGISTRY, PermissionMode
-from . import CommandContext, CommandResult, command, show_session_bar
+from . import CommandContext, CommandResult, command, context_cancel, show_session_bar
 
 # The Agent Mode capability set, in display order. Desktop-engine rows are
 # marked so they can be dimmed when the Computer Engine is unavailable.
@@ -53,7 +53,7 @@ def _assist(ctx: CommandContext, arg: str) -> CommandResult:
         return CommandResult()
 
     if enable:
-        enable_assist(ctx.ui, ctx.config)
+        enable_assist(ctx.ui, ctx.config, cancel=context_cancel(ctx))
     else:
         disable_assist(ctx.ui, ctx.config)
     show_session_bar(ctx.ui, ctx.config)
@@ -93,54 +93,150 @@ def _ocr_available() -> bool:
         return False
 
 
-def enable_assist(ui, config) -> None:
-    """Select Agent Mode: the full capability set in one switch.
+def _ui_hook(ui, name: str):
+    """A best-effort optional UI hook (``None`` when the UI has no such one).
 
-    Agent Mode is the unified workspace/coding agent: turning it on also
-    activates the workspace capability (``.seedcode`` memory + index) so the
-    former Code Mode behaviour is available automatically inside Agent Mode.
+    The persistent TUI exposes extra lifecycle hooks (initialization feedback)
+    that the sequential console has no use for; calling them is never allowed
+    to matter, so an absent or failing hook is simply skipped.
+    """
+    hook = getattr(ui, name, None)
+    return hook if callable(hook) else None
+
+
+def activate_agent_mode(config) -> None:
+    """Switch to Agent Mode — the *cheap* half of ``/agent on``.
+
+    Only the state that must change for the session to genuinely be in Agent
+    Mode: the mode itself, persisted. This is what a UI callback may run
+    synchronously; everything expensive is :func:`prepare_agent_mode`.
     """
     config.mode = "agent"
-
-    # Desktop capabilities require the Computer Engine. When available, Agent
-    # Mode runs at the ``desktop`` level so the AI can drive the computer;
-    # otherwise it stays at ``workspace`` (AI + filesystem + terminal + git
-    # still work).
-    desktop_ok, desktop_reason = is_available()
-    config.permission_mode = (
-        PermissionMode.DESKTOP.value_str if desktop_ok
-        else PermissionMode.WORKSPACE.value_str
-    )
     save_config(config)
 
-    # The workspace coding capability (former Code Mode) is native to Agent
-    # Mode: activate it for the current directory automatically.
-    workspace_ready = _ensure_workspace()
 
-    ui.success("Agent Mode ON")
-    ui.blank()
-    ui.panel(capability_table(desktop_ok), title="Agent Mode")
-    if not desktop_ok:
-        ui.dim(f"Desktop capabilities unavailable: {desktop_reason}")
-    if workspace_ready:
-        ui.dim("Project workspace ready — .seedcode memory + index active.")
-    ui.blank()
-
-    level_label = "desktop" if desktop_ok else "workspace"
-    ui.dim(f"Permission level: {level_label} — change in Settings › Advanced or /permission.")
-
-    # Ask for routine desktop control ONCE, here, instead of interrupting every
-    # action later. Sensitive actions still confirm individually.
-    if desktop_ok:
-        request_session_permissions(ui)
-    ui.dim("The AI picks the right tools for each task automatically.")
+def _superseded(cancel) -> bool:
+    """Whether ``cancel`` says this work has been replaced by a newer switch."""
+    return callable(cancel) and bool(cancel())
 
 
-def _ensure_workspace() -> bool:
+def prepare_agent_mode(
+    ui,
+    config,
+    *,
+    desktop_ok: bool | None = None,
+    cancel=None,
+) -> bool:
+    """The *expensive* half of Agent Mode activation.
+
+    Safe on a background worker thread (and meant to be): the workspace
+    capability walks the project, the capability panel probes the desktop
+    stack, and the session permission prompt waits for the user. Nothing here
+    may run inside a UI event callback — that is exactly what used to freeze
+    the terminal, because the permission prompt waits for an answer the very
+    event loop it was called from would have to deliver.
+
+    ``cancel`` is polled as the work proceeds: a switch the user has already
+    reversed stops here (and reports ``False``) instead of finishing and
+    overwriting the newer state. Returns whether Agent Mode finished preparing.
+
+    Agent Mode is the unified workspace/coding agent, so preparing it also
+    activates the workspace capability (``.seedcode`` memory + index) that the
+    former Code Mode provided.
+    """
+    cancelled = cancel if callable(cancel) else None
+    if _superseded(cancelled):
+        return False
+    begin = _ui_hook(ui, "begin_initialization")
+    if begin is not None:
+        try:
+            begin("Agent Mode")
+        except Exception:
+            pass
+    try:
+        # Desktop capabilities require the Computer Engine. When available,
+        # Agent Mode runs at the ``desktop`` level so the AI can drive the
+        # computer; otherwise it stays at ``workspace`` (AI + filesystem +
+        # terminal + git still work).
+        if desktop_ok is None:
+            desktop_ok, desktop_reason = is_available()
+        else:
+            desktop_reason = ""
+        if _superseded(cancelled):
+            # Do not write config for a switch that has already been replaced:
+            # a stale worker must never win the race with a newer one.
+            return False
+        config.permission_mode = (
+            PermissionMode.DESKTOP.value_str if desktop_ok
+            else PermissionMode.WORKSPACE.value_str
+        )
+        save_config(config)
+
+        # The workspace coding capability (former Code Mode) is native to Agent
+        # Mode: activate it for the current directory automatically.
+        workspace_ready = _ensure_workspace(cancel=cancelled)
+        if _superseded(cancelled):
+            return False  # superseded: the newer switch owns the messages
+
+        ui.success("Agent Mode ON")
+        ui.blank()
+        ui.panel(capability_table(desktop_ok), title="Agent Mode")
+        if not desktop_ok:
+            ui.dim(f"Desktop capabilities unavailable: {desktop_reason or 'unavailable'}")
+        if workspace_ready:
+            ui.dim("Project workspace ready — .seedcode memory + index active.")
+        ui.blank()
+
+        level_label = "desktop" if desktop_ok else "workspace"
+        ui.dim(
+            f"Permission level: {level_label} — change in Settings › Advanced "
+            "or /permission."
+        )
+
+        # Ask for routine desktop control ONCE, here, instead of interrupting
+        # every action later. Sensitive actions still confirm individually.
+        # ``cancel`` abandons the ask if the user has already switched away.
+        if desktop_ok and not _superseded(cancelled):
+            request_session_permissions(ui, cancel=cancelled)
+        if _superseded(cancelled):
+            return False
+        ui.dim("The AI picks the right tools for each task automatically.")
+        return True
+    finally:
+        # Only the transition that is still current may clear the initializing
+        # state; a superseded one must leave it to its successor (which either
+        # finishes the preparation or has already gone back to Chat Mode).
+        if not _superseded(cancelled):
+            end = _ui_hook(ui, "end_initialization")
+            if end is not None:
+                try:
+                    end()
+                except Exception:
+                    pass
+
+
+def enable_assist(ui, config, *, cancel=None) -> None:
+    """Select Agent Mode: the full capability set in one switch.
+
+    The sequential-console route: the caller's thread is not the one the
+    permission dialog needs, so the immediate and the expensive halves can run
+    back to back here. ``cancel`` is the probe the TUI's background worker
+    hands in; it is simply passed through. The persistent TUI never calls this
+    on its event-loop thread — it activates (and then prepares) Agent Mode on a
+    worker so the loop stays free.
+    """
+    if _superseded(cancel):
+        return  # a superseded switch must not write the mode at all
+    activate_agent_mode(config)
+    prepare_agent_mode(ui, config, cancel=cancel)
+
+
+def _ensure_workspace(cancel=None) -> bool:
     """Activate the ``.seedcode`` workspace capability for the CWD.
 
     Best-effort: a filesystem problem here must never stop Agent Mode from
-    being selected. Returns whether the workspace is now active.
+    being selected. ``cancel`` stops a superseded index scan early. Returns
+    whether the workspace is now active.
     """
     try:
         from pathlib import Path
@@ -149,19 +245,22 @@ def _ensure_workspace() -> bool:
 
         if cms.codemode_state().enabled:
             return True
-        cms.enable(Path.cwd())
+        cms.enable(Path.cwd(), cancel=cancel)
         return True
     except Exception:
         return False
 
 
-def request_session_permissions(ui) -> bool:
+def request_session_permissions(ui, *, cancel=None) -> bool:
     """Request every routine desktop permission for the session, in one prompt.
 
     Returns whether the session-wide grant was given. Declining is safe: the
     engine simply falls back to confirming each action as it comes, which is
     the old behaviour. Sensitive actions (registry writes, secrets, system
     power, deletions, purchases) are never granted here — they always ask.
+
+    ``cancel`` abandons the prompt when the mode switch that raised it has been
+    superseded (the user switched again, or went back to Chat).
     """
     from ..computer.permissions import (
         CATEGORY_LABELS,
@@ -184,7 +283,15 @@ def request_session_permissions(ui) -> bool:
     )
 
     try:
-        answer = ui.confirm_desktop("Agent Mode session permissions", description)
+        answer = ui.confirm_desktop(
+            "Agent Mode session permissions", description, cancel=cancel
+        )
+    except TypeError:
+        # A UI double without the ``cancel`` kwarg (older/plain adapters).
+        try:
+            answer = ui.confirm_desktop("Agent Mode session permissions", description)
+        except Exception:
+            return False
     except Exception:
         # No interactive prompt available (headless/non-TTY): leave the
         # per-action flow in place rather than silently granting anything.
@@ -199,14 +306,18 @@ def request_session_permissions(ui) -> bool:
     return allowed
 
 
-def disable_assist(ui, config) -> None:
+def disable_assist(ui, config, *, cancel=None) -> None:
     """Leave Agent Mode: back to plain Chat.
 
     The workspace capability is deactivated too, but the ``.seedcode`` memory
-    stays on disk for the next Agent Mode session.
+    stays on disk for the next Agent Mode session. Always cheap — this is what
+    lets the TUI leave Agent Mode immediately, even with an initialization
+    still in flight.
     """
     from ..computer.permissions import session_permissions
 
+    if _superseded(cancel):
+        return
     config.mode = "chat"
     # Drop back to the safe editing level (removes desktop capability).
     config.permission_mode = PermissionMode.WORKSPACE.value_str

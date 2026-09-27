@@ -15,7 +15,7 @@ this command is the single entry point that understands all of them.
 from __future__ import annotations
 
 from ..core.modes import MODE_DESCRIPTIONS, Mode, active_mode, mode_title, parse_mode
-from . import CommandContext, CommandResult, command, show_session_bar
+from . import CommandContext, CommandResult, command, context_cancel, show_session_bar
 from .status import mode_label
 
 #: Input spellings that name a mode the user may type.
@@ -48,7 +48,7 @@ def _mode(ctx: CommandContext, arg: str) -> CommandResult:
     else:  # Mode.AGENT
         from .assist import enable_assist
 
-        enable_assist(ctx.ui, ctx.config)
+        enable_assist(ctx.ui, ctx.config, cancel=context_cancel(ctx))
 
     ctx.ui.dim(f"Mode: {mode_title(active_mode(ctx.config))} — {MODE_DESCRIPTIONS[mode]}")
     show_session_bar(ctx.ui, ctx.config)

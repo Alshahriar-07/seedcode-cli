@@ -52,6 +52,7 @@ class Status(str, enum.Enum):
     """
 
     READY = "ready"
+    INITIALIZING = "initializing"
     THINKING = "thinking"
     WORKING = "working"
     EXECUTING = "executing"
@@ -64,6 +65,9 @@ class Status(str, enum.Enum):
 #: The short label rendered next to the mark.
 STATUS_LABELS: dict[Status, str] = {
     Status.READY: "Ready",
+    #: A mode change is being prepared on a background worker. The UI stays
+    #: fully live while it runs; the mode itself has already switched.
+    Status.INITIALIZING: "Initializing",
     Status.THINKING: "Thinking",
     Status.WORKING: "Working",
     Status.EXECUTING: "Running",
@@ -76,6 +80,7 @@ STATUS_LABELS: dict[Status, str] = {
 #: The glyph for each status (Unicode; the header falls back to ASCII itself).
 STATUS_MARKS: dict[Status, str] = {
     Status.READY: "\u25cf",       # ●
+    Status.INITIALIZING: "\u25cc",  # ◌
     Status.THINKING: "\u25cc",    # ◌
     Status.WORKING: "\u25cc",     # ◌
     Status.EXECUTING: "\u25cf",   # ●
@@ -88,6 +93,7 @@ STATUS_MARKS: dict[Status, str] = {
 #: ASCII fallbacks for consoles that cannot draw the glyphs.
 STATUS_MARKS_ASCII: dict[Status, str] = {
     Status.READY: "*",
+    Status.INITIALIZING: "o",
     Status.THINKING: "o",
     Status.WORKING: "o",
     Status.EXECUTING: "*",
@@ -100,6 +106,7 @@ STATUS_MARKS_ASCII: dict[Status, str] = {
 #: Palette role used to colour each status.
 STATUS_ROLES: dict[Status, str] = {
     Status.READY: "success",
+    Status.INITIALIZING: "accent",
     Status.THINKING: "accent",
     Status.WORKING: "accent",
     Status.EXECUTING: "accent",
@@ -167,6 +174,9 @@ class AppState:
     connection: str = ""
     operation: str = ""
     agent_state: str = ""
+    #: True while a mode change is being prepared on a background worker. The
+    #: UI is never blocked by it — this only says the work is still going on.
+    agent_initializing: bool = False
     messages: list[dict[str, Any]] = field(default_factory=list)
     activities: list[Activity] = field(default_factory=list)
 

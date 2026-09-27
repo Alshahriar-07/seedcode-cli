@@ -20,6 +20,19 @@ class CommandContext:
     ui: "object"  # UI; typed loosely to avoid an import cycle.
     config: "object"  # AppConfig
     engine: "object"  # ChatEngine
+    #: Cancellation probe for work a command may start that takes real time
+    #: (the ``.seedcode`` workspace scan, the desktop capability probe). The
+    #: persistent TUI hands one in when it dispatches the command on its
+    #: background mode-transition worker, so a switch the user has already
+    #: reversed stops the work instead of finishing it. ``None`` means "run to
+    #: completion", which is what the sequential console always does.
+    cancel: "Callable[[], bool] | None" = None
+
+
+def context_cancel(ctx: CommandContext) -> "Callable[[], bool] | None":
+    """The cancellation probe a command should poll (``None`` when there is none)."""
+    cancel = getattr(ctx, "cancel", None)
+    return cancel if callable(cancel) else None
 
 
 @dataclass
@@ -94,6 +107,7 @@ __all__ = [
     "CommandContext",
     "CommandResult",
     "command",
+    "context_cancel",
     "dispatch",
     "is_command",
     "show_session_bar",

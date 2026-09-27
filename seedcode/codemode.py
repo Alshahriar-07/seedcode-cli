@@ -33,7 +33,7 @@ import json
 import re
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from .utils.text import safe_text
 
@@ -55,6 +55,15 @@ _CODE_SUFFIXES = {
 _MAX_INDEX_FILE_BYTES = 256 * 1024
 _MAX_SUMMARY_LINES = 40
 _MAX_INDEX_FILES = 2_000
+
+#: Ceiling on how long one refresh may walk the tree. The walk is incremental,
+#: pruned and cancellable, so this only bounds a pathological tree (a symlink
+#: loop, a cloud-sync folder of placeholder stubs) — it is not how a normal
+#: refresh ends, and a partial walk still saves what it found.
+_INDEX_SCAN_BUDGET_S = 30.0
+#: Ceiling on directory entries examined in one refresh (termination guarantee,
+#: independent of the clock).
+_MAX_INDEX_VISITS = 200_000
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "version": 1,
@@ -277,67 +286,126 @@ class SeedcodeStore:
             "symbols": symbols,
         }
 
-    def refresh_index(self, changed_limit: int = 200) -> dict[str, int]:
+    def refresh_index(
+        self,
+        changed_limit: int = 200,
+        *,
+        cancel: Callable[[], bool] | None = None,
+        budget_s: float = _INDEX_SCAN_BUDGET_S,
+    ) -> dict[str, int]:
         """Incremental index refresh over workspace text files.
 
-        Returns ``{"indexed": n, "unchanged": m}``. Only files whose content
-        hash differs from the stored map are re-read and re-summarised; a
-        fresh index walks the tree once, afterwards each refresh costs one
+        Returns ``{"indexed": n, "unchanged": m}`` (plus ``scanned`` and
+        ``partial`` for callers that want to report it). Only files whose
+        content hash differs from the stored map are re-read and re-summarised;
+        a fresh index walks the tree once, afterwards each refresh costs one
         ``stat`` per file until something changes.
+
+        The walk is **pruned**, **streaming** and **cancellable** — this is the
+        fix for the frozen Agent Mode switch. It used to materialise and sort
+        the *entire* tree (``sorted(self.workspace.rglob("*"))``) before it
+        could apply its 2000-file cap, so enabling the workspace capability
+        inside a large directory (a home directory, a cloud-synced folder of
+        placeholder stubs) never returned. Now:
+
+        * build directories (``.git``, ``node_modules``, ``dist``, ``.venv`` …)
+          are pruned before they are descended into;
+        * each directory is listed and sorted on its own and walked one at a
+          time, so nothing proportional to the whole tree is ever held;
+        * the file cap stops the walk the moment it is reached;
+        * ``cancel`` is polled between entries, so a switch the user has
+          already reversed stops the scan instead of finishing it;
+        * a wall-clock budget and a visit ceiling bound a pathological tree.
+
+        A cancelled or partial walk still saves the map it produced, so the
+        next refresh carries on incrementally.
         """
         self.ensure()
         old_map = self.load_file_map()
         new_map: dict[str, dict[str, Any]] = {}
-        indexed = unchanged = 0
-        try:
-            entries = sorted(self.workspace.rglob("*"))
-        except OSError:
-            entries = []
-        for path in entries:
-            if len(new_map) >= _MAX_INDEX_FILES:
+        indexed = unchanged = scanned = 0
+        partial = False
+        deadline = time.monotonic() + max(1.0, float(budget_s))
+        stack: list[Path] = [self.workspace]
+
+        def stopped() -> bool:
+            """Whether the walk must stop early (and report itself partial)."""
+            if cancel is not None and cancel():
+                return True
+            if len(new_map) >= _MAX_INDEX_FILES or scanned >= _MAX_INDEX_VISITS:
+                return True
+            return time.monotonic() > deadline
+
+        while stack:
+            if stopped():
+                partial = True
                 break
-            name = path.name
-            if not path.is_file():
-                continue
-            if (
-                SEEDCODE_DIRNAME in path.parts
-                or name.startswith(".")
-                or name in _INDEX_SKIP_NAMES
-                or _INDEX_SKIP_NAMES.intersection(path.parts)
-            ):
-                continue
-            if path.suffix.lower() not in _CODE_SUFFIXES:
-                continue
+            current = stack.pop()
             try:
-                size = path.stat().st_size
+                entries = sorted(current.iterdir(), key=lambda p: p.name)
             except OSError:
                 continue
-            if size > _MAX_INDEX_FILE_BYTES:
-                continue
-            rel = path.relative_to(self.workspace).as_posix()
-            new_map[rel] = {"size": size}
-            previous = old_map.get(rel)
-            if (
-                previous
-                and previous.get("size") == size
-                and (self.root / "index" / f"{_entry_hash(rel)}.json").exists()
-            ):
-                new_map[rel].update(previous)
-                unchanged += 1
-                continue
-            try:
-                text = path.read_text(encoding="utf-8", errors="replace")
-            except OSError:
-                continue
-            summary = self._summarize(text)
-            digest = self._hash_text(text)
-            entry = {**summary, "hash": digest, "size": size}
-            if indexed < changed_limit:
-                _write_json(self.root / "index" / f"{_entry_hash(rel)}.json", entry)
-            indexed += 1
-            new_map[rel].update(entry)
+            for path in entries:
+                scanned += 1
+                if stopped():
+                    partial = True
+                    break
+                try:
+                    if path.is_dir():
+                        # Prune before descending: a filter applied after the
+                        # walk still pays for every file underneath.
+                        if path.name in _INDEX_SKIP_NAMES or path.name == SEEDCODE_DIRNAME:
+                            continue
+                        stack.append(path)
+                        continue
+                except OSError:
+                    continue
+                name = path.name
+                if not path.is_file() or name.startswith("."):
+                    continue
+                if path.suffix.lower() not in _CODE_SUFFIXES:
+                    continue
+                try:
+                    size = path.stat().st_size
+                except OSError:
+                    continue
+                if size > _MAX_INDEX_FILE_BYTES:
+                    continue
+                try:
+                    rel = path.relative_to(self.workspace).as_posix()
+                except ValueError:
+                    continue
+                new_map[rel] = {"size": size}
+                previous = old_map.get(rel)
+                if (
+                    previous
+                    and previous.get("size") == size
+                    and (self.root / "index" / f"{_entry_hash(rel)}.json").exists()
+                ):
+                    new_map[rel].update(previous)
+                    unchanged += 1
+                    continue
+                try:
+                    text = path.read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    continue
+                summary = self._summarize(text)
+                digest = self._hash_text(text)
+                entry = {**summary, "hash": digest, "size": size}
+                if indexed < changed_limit:
+                    _write_json(self.root / "index" / f"{_entry_hash(rel)}.json", entry)
+                indexed += 1
+                new_map[rel].update(entry)
+            if partial:
+                break
+
         self._save_file_map(new_map)
-        return {"indexed": indexed, "unchanged": unchanged}
+        return {
+            "indexed": indexed,
+            "unchanged": unchanged,
+            "scanned": scanned,
+            "partial": partial,
+        }
 
     def query_index(self, needle: str, limit: int = 12) -> list[dict[str, Any]]:
         """Search the index map (paths, headers, symbols) without reading files."""

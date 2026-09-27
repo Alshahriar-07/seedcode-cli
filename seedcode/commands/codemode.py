@@ -18,7 +18,7 @@ from rich.table import Table
 from ..codemode_state import codemode_state
 from ..config import save_config
 from ..tools import PermissionMode
-from . import CommandContext, CommandResult, command, show_session_bar
+from . import CommandContext, CommandResult, command, context_cancel, show_session_bar
 
 
 @command("codemode", "Agent Mode workspace capability. Usage: /codemode [on|off|status]")
@@ -60,13 +60,21 @@ def _enable_codemode(ctx: CommandContext) -> None:
     config = ctx.config
     state = codemode_state()
     workspace = state.workspace  # already set? keep it (re-enable same project)
+    cancel = context_cancel(ctx)
 
+    def superseded() -> bool:
+        return callable(cancel) and bool(cancel())
+
+    if superseded():
+        return
     # Agent Mode is the unified engine this capability belongs to; turn it on
     # when it is off so the workspace is never active without an agent.
     if not config.agent_mode:
         from .assist import enable_assist
 
-        enable_assist(ctx.ui, config)
+        enable_assist(ctx.ui, config, cancel=cancel)
+    if superseded():
+        return
     # Workspace coding prefers the editing level (workspace) unless the user
     # had already chosen something stronger than desktop.
     if PermissionMode.parse(config.permission_mode) == PermissionMode.DESKTOP:
@@ -75,7 +83,9 @@ def _enable_codemode(ctx: CommandContext) -> None:
 
     from .. import codemode_state as cms
 
-    result = cms.enable(workspace or _detect_workspace())
+    # The index scan is cancellable: a switch the user has already reversed
+    # stops it rather than walking the whole tree first.
+    result = cms.enable(workspace or _detect_workspace(), cancel=cancel)
     ctx.ui.success("Workspace ON — Agent Mode is now workspace-aware")
     for line in result.status_lines()[1:]:
         ctx.ui.dim(f"  {line}")
