@@ -33,6 +33,7 @@ from .commands.theme import pick_theme
 from .config import load_config
 from .core.agent import AgentEngine, strip_tool_blocks
 from .core.chat import ChatEngine, ChatError
+from .core.intent import Intent, classify
 from .core.lifecycle import LifecycleError, lifecycle
 from .core.models import AppConfig
 from .core.providers import (
@@ -245,9 +246,52 @@ def _guided_setup(ui: UI, config: AppConfig) -> bool:
     return config.is_configured()
 
 
-def _handle_chat(ui: UI, engine: ChatEngine, history: HistoryStore, text: str) -> None:
-    """Send a user turn to the model and stream the reply to screen."""
-    engine.add_user(text)
+def _retrieve_context(ui: UI, intent: Intent, text: str) -> str:
+    """Fetch fresh external information for a research request (v9.1.1).
+
+    Returns a bounded context block, or '' when retrieval is disabled, fails,
+    or finds nothing. The caller shows a lightweight status and continues — a
+    failed lookup must never stop the answer. Nothing here is fatal.
+    """
+    try:
+        from .core import internet
+
+        if internet.internet_disabled():
+            return ""
+        ui.dim("[Accessing internet...]")
+        result = internet.research(intent.target or text)
+        if not result.ok:
+            ui.dim("[No online sources available]")
+            return ""
+        if result.excerpts:
+            ui.dim("[Reading relevant sources...]")
+        return internet.context_block(result)
+    except Exception:  # retrieval must never break a turn
+        _log.exception("internet retrieval failed")
+        return ""
+
+
+def _handle_chat(
+    ui: UI,
+    engine: ChatEngine,
+    history: HistoryStore,
+    text: str,
+    intent: Intent | None = None,
+) -> None:
+    """Send a user turn to the model and stream the reply to screen.
+
+    When the request needs current information, only a lightweight status is
+    shown (``[Accessing internet...]`` / ``[Reading relevant sources...]``)
+    and the retrieved sources are prepended to the turn; the browsing itself
+    is never exposed line by line.
+    """
+    resolved = intent or classify(text)
+    outgoing = text
+    if resolved.needs_internet:
+        block = _retrieve_context(ui, resolved, text)
+        if block:
+            outgoing = block + "\n\n" + text
+    engine.add_user(outgoing)
     renderer = None
     try:
         chunks = engine.stream_reply()
@@ -875,12 +919,24 @@ def _make_agent(
     return engine
 
 
-def _make_action_gate(ui: UI):
-    """Dangerous-action gate wired to the interactive permission dialog.
+# The process-wide dangerous-action gate (v9.1.1). It is created once, not
+# once per engine: the agent engine is rebuilt whenever the permission level or
+# workspace changes, and re-creating the gate there was resetting the user's
+# "Allow" / "Allow All" answers mid-task — the repeated-permission-prompt bug.
+# A grant now survives every tool call, every multi-step task and every engine
+# rebuild, exactly as the session-scope answer promises.
+_ACTION_GATE = None
+_ACTION_GATE_LOCK = threading.Lock()
 
-    Note: the Assist engine (and thus this gate) is rebuilt on permission-mode
-    changes, so session "Always" grants reset then — conservative on purpose.
+
+def _make_action_gate(ui: UI):
+    """The session-scoped dangerous-action gate (created once per process).
+
+    Answers stick for the rest of the session: ``Always Allow`` per category,
+    and ``Allow All`` across every category. Nothing is persisted to disk, so
+    a new process starts clean — the scope is deliberately session-only.
     """
+    global _ACTION_GATE
     from .tools.permissions import ACTION_LABELS, ActionGate, ActionGrant
 
     def confirm(category: str, description: str) -> ActionGrant:
@@ -889,9 +945,20 @@ def _make_action_gate(ui: UI):
         return {
             "y": ActionGrant.ONCE,
             "a": ActionGrant.ALWAYS,
+            "A": ActionGrant.ALL,
         }.get(answer, ActionGrant.DENY)
 
-    return ActionGate(confirm=confirm)
+    with _ACTION_GATE_LOCK:
+        if _ACTION_GATE is None:
+            _ACTION_GATE = ActionGate(confirm=confirm)
+        return _ACTION_GATE
+
+
+def reset_action_gate() -> None:
+    """Forget all session grants (test isolation; also an explicit reset)."""
+    global _ACTION_GATE
+    with _ACTION_GATE_LOCK:
+        _ACTION_GATE = None
 
 
 def _make_desktop_session(ui: UI):
@@ -1020,7 +1087,11 @@ def _chat_loop(
         # span's ``finally`` returns the state machine to IDLE and the REPL
         # prompts again. A task can never end the app.
         with lifecycle().task_span():
-            if config.agent_mode:
+            intent = classify(text)
+            if config.agent_mode or intent.executes:
+                # Build (or rebuild) the Agent engine for the live config. A
+                # temporary escalation builds exactly the same engine an
+                # explicit Agent Mode turn would, so behaviour cannot diverge.
                 try:
                     from . import codemode_state as _cms
 
@@ -1035,11 +1106,21 @@ def _chat_loop(
                     agent = _make_agent(ui, config, presenter)
                     agent_perm = config.permission_mode
                     agent_codemode = codemode_now
+                if not config.agent_mode:
+                    # Chat Mode escalation: one agent turn, then back to chat.
+                    # The persistent mode is untouched.
+                    ui.dim(f"[Agent assist - {intent.reason}]")
+                    try:
+                        agent.set_intent(intent)  # type: ignore[union-attr]
+                    except Exception:
+                        pass
                 # One task flow per turn: the engine reports real activity into
                 # it, and the REPL keeps prompting when the turn ends.
                 _handle_agent(ui, agent, history, text, presenter)
+                if not config.agent_mode:
+                    ui.dim("[Temporary agent task finished - back to Chat Mode]")
             else:
-                _handle_chat(ui, engine, history, text)
+                _handle_chat(ui, engine, history, text, intent)
 
 
 def _interactive() -> bool:
@@ -1200,11 +1281,42 @@ class _TuiController:
                 self._ensure_agent()
                 _handle_agent(self.ui, self.agent, self.history, text, self.presenter)
             else:
-                _handle_chat(self.ui, self.engine, self.history, text)
+                intent = classify(text)
+                if intent.executes:
+                    # Chat Mode detected a request needing real execution:
+                    # escalate to Agent for THIS turn only, then return to
+                    # Chat. The persistent mode is never changed.
+                    self._run_escalated_turn(text, intent)
+                else:
+                    _handle_chat(self.ui, self.engine, self.history, text, intent)
         try:
             self.tui.sync_from_config(self.config)
         except Exception:
             pass
+
+    def _run_escalated_turn(self, text: str, intent: Intent) -> None:
+        """Run one Agent turn from Chat Mode, then hand control back (v9.1.1).
+
+        This is the *temporary* escalation path: the user stays in Chat Mode,
+        one request is executed with the full agent loop, and the session
+        returns to conversation. Explicit Agent Mode is unaffected and stays
+        active until the user changes it.
+        """
+        self.ui.dim(f"[Agent assist - {intent.reason}]")
+        try:
+            self._ensure_agent()
+            agent = self.agent
+            if agent is None:
+                _handle_chat(self.ui, self.engine, self.history, text, intent)
+                return
+            agent.set_intent(intent)
+            _handle_agent(self.ui, agent, self.history, text, self.presenter)
+        except Exception:  # escalation must never break the session
+            _log.exception("temporary agent escalation failed")
+            self.ui.error("The agent step could not run; answering in Chat Mode.")
+            _handle_chat(self.ui, self.engine, self.history, text, intent)
+        finally:
+            self.ui.dim("[Temporary agent task finished - back to Chat Mode]")
 
     # --- mode transitions ---------------------------------------------------
     def _mode_command(self, text: str) -> None:

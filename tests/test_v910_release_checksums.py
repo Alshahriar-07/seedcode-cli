@@ -51,7 +51,7 @@ def _sha256(path: Path) -> str:
 
 def _stage(
     tmp_path: Path,
-    version: str = "9.1.0",
+    version: str = "9.1.1",
     *,
     exe_bytes: bytes = b"MZ fake standalone executable v1\n",
     setup_bytes: bytes = b"MZ fake inno setup installer v1\n",
@@ -85,7 +85,7 @@ def _stage(
 
 def test_generated_checksums_match_the_final_artifacts(tmp_path: Path) -> None:
     """EXE SHA256 == SHA256SUMS.txt SHA256 == the installer's expected SHA256."""
-    version = "9.1.0"
+    version = "9.1.1"
     release = _stage(tmp_path, version)
     exe = release / f"SeedCode-CLI-{version}-windows-x64.exe"
     setup = release / f"SeedCode-CLI-Setup-{version}.exe"
@@ -109,7 +109,7 @@ def test_generated_checksums_match_the_final_artifacts(tmp_path: Path) -> None:
 
 def test_rebuilding_an_artifact_regenerates_its_checksum(tmp_path: Path) -> None:
     """A changed binary must not keep an old digest (the reported bug)."""
-    version = "9.1.0"
+    version = "9.1.1"
     release = _stage(tmp_path, version)
     exe = release / f"SeedCode-CLI-{version}-windows-x64.exe"
     sums = release / "SHA256SUMS.txt"
@@ -134,7 +134,7 @@ def test_rebuilding_an_artifact_regenerates_its_checksum(tmp_path: Path) -> None
 
 def test_checksum_file_uses_lf_endings_and_two_space_separator(tmp_path: Path) -> None:
     """`sha256sum -c` and install.sh must both parse the same file."""
-    release = _stage(tmp_path, "9.1.0")
+    release = _stage(tmp_path, "9.1.1")
     raw = (release / "SHA256SUMS.txt").read_bytes()
     assert b"\r" not in raw
     assert all(

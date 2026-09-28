@@ -191,7 +191,7 @@ class TestRegistry:
         assert expected <= set(TOOL_REGISTRY)
 
     def test_manifest_mentions_every_tool(self):
-        manifest = tool_manifest(("core", "desktop"))
+        manifest = tool_manifest(("core", "desktop", "web"))
         for name in TOOL_REGISTRY:
             assert name in manifest
 

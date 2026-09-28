@@ -53,7 +53,7 @@ if TYPE_CHECKING:
 _NO_CREDENTIAL = (
     "Seed Code's built-in connection is not available in this build. "
     "Choose OpenRouter with /provider and add your own API key, or set "
-    "OPENROUTER_API_KEY in the environment."
+    "OPENROUTER_API_KEY (or SEEDCODE_DEFAULT_API_KEY) in the environment."
 )
 
 

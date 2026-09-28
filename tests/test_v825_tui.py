@@ -87,9 +87,9 @@ def _configured() -> AppConfig:
 
 # --- the version --------------------------------------------------------------
 def test_header_reports_the_release_version() -> None:
-    assert __version__ == "9.1.0"
+    assert __version__ == "9.1.1"
     out = header_text(AppState(provider="OpenRouter", model="m", mode="Chat"), 80)
-    assert "v9.1.0" in out
+    assert f"v{__version__}" in out
 
 
 # --- reactive state -----------------------------------------------------------
@@ -233,7 +233,7 @@ def test_narrow_headers_never_truncate_the_logo() -> None:
         for logo in LOGO_LINES:
             assert logo not in out, width
         # The essentials survive the fallback; the branding is never clipped.
-        assert "v9.1.0" in out
+        assert f"v{__version__}" in out
         if width >= 40:
             assert "OpenRouter" in out, width
 

@@ -3,7 +3,9 @@ REM ==========================================================================
 REM  Seed Code - complete Windows build pipeline
 REM    Stage 0: branding assets -> assets\windows\ (icon, wizard art, verinfo)
 REM    Stage 0b: embedded default key -> seedcode\_default_key.py (from .env;
-REM              git-ignored; skipped when .env has no OPENROUTER_API_KEY)
+REM              git-ignored; skipped when .env has neither of the two
+REM              recognised variable names, OPENROUTER_API_KEY or
+REM              SEEDCODE_DEFAULT_API_KEY)
 REM    Stage 1: PyInstaller     -> dist\seedcode.exe  (Seed Code icon embedded)
 REM    Stage 2: Inno Setup      -> Release\SeedCode-CLI-Setup-<ver>.exe
 REM    Stage 3: release staging -> dist\release\<ver>\ + SHA256SUMS.txt
@@ -80,14 +82,14 @@ REM ==========================================================================
 REM  STAGE 0b - embedded default API key (v7.1.0 out-of-the-box behavior)
 REM  Consumes the local .env (never printed) and generates the git-ignored
 REM  seedcode\_default_key.py that ships inside the frozen exe. A checkout
-REM  without OPENROUTER_API_KEY in .env builds a normal (setup-required)
-REM  artifact instead - the pipeline must not fail or leak in that case.
+REM  without one of the recognised credential variables in .env builds a normal
+REM  (setup-required) artifact instead - the pipeline must not fail or leak.
 REM ==========================================================================
 echo [STEP] Embedding the default API configuration from .env...
 %PY_CMD% "%~dp0embed_default_key.py" --env-file "%REPO_ROOT%\.env" >> "%LOG_FILE%" 2>&1
 if errorlevel 1 (
-    echo [WARN] No OPENROUTER_API_KEY in .env - building WITHOUT the embedded
-    echo        default key ^(end users will run guided setup on first launch^).
+    echo [WARN] No built-in credential variable in .env - building WITHOUT the
+    echo        embedded default key ^(end users run guided setup on first launch^).
     echo [WARN] default key not embedded ^(no .env entry^) >> "%LOG_FILE%"
 ) else (
     echo [OK] Default API configuration embedded into the build.

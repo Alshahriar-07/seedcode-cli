@@ -97,6 +97,16 @@ def _run_checks(config) -> list[tuple[str, str, str]]:
         return rows  # nothing else is checkable without a provider
 
     provider.prepare(config)  # bind checks to the configured sub-backend
+    if provider.id == "default":
+        # The built-in connection needs no user key, but it can still be
+        # missing, invalid, or unavailable in this build. Report which one, so
+        # a clean install is diagnosable instead of just "not configured".
+        from ..default_api import BUILTIN_AVAILABLE, builtin_status
+
+        code, reason = builtin_status()
+        rows.append(
+            (_OK if code == BUILTIN_AVAILABLE else _FAIL, "Built-in connection", reason)
+        )
     if provider.requires_key:
         key = config.get_api_key(provider.id).strip()
         if not key:

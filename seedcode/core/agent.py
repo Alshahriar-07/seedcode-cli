@@ -34,6 +34,7 @@ from typing import Any, Callable
 
 from .chat import ChatEngine, ChatError
 from .identity import build_system_prompt
+from .intent import Intent, IntentKind, classify
 from .models import AppConfig, Message, ToolCallRecord, clean_values
 from .project import detect_project
 from .providers import provider_label
@@ -77,6 +78,25 @@ _TOOL_BLOCK = re.compile(r"```tool\s*\n(.*?)```", re.DOTALL)
 _AGENT_PREAMBLE = (
     "\n\nYou are in AGENT MODE with access to the user's project at {workspace} "
     "(permission mode: {mode})."
+)
+
+# Injected for a conversational request so an Agent turn does not reach for
+# tools (or the workspace) simply because they are available.
+_CONVERSATION_PREAMBLE = (
+    "\n\nCONVERSATIONAL REQUEST: the user is asking a question, not posing a "
+    "task. Answer directly and concisely from your own knowledge. Do NOT read "
+    "the workspace, do NOT run commands, and do NOT call a tool unless the "
+    "request explicitly names something that must be read or changed. "
+    "Using a tool you do not need is a failure, not thoroughness."
+)
+
+# Injected for a browser/desktop request so the agent never conflates it with
+# a coding task (and never scans the project to fulfil it).
+_COMPUTER_PREAMBLE = (
+    "\n\nCOMPUTER TASK: this request is about acting on the user's computer or "
+    "browser, not about their project. Do NOT read, search or modify workspace "
+    "files, and do NOT run project commands for it. Use only the computer / "
+    "browser capability required, then report what actually happened."
 )
 
 _CODEMODE_PREAMBLE = (
@@ -315,6 +335,10 @@ class AgentEngine(ChatEngine):
         # Code Mode session verifies tasks against this, never against the
         # model's own claim of success.
         self.last_evidence = TurnEvidence()
+        # The resolved need behind the turn in flight (v9.1.1). ``None`` until
+        # a turn (or an explicit :meth:`set_intent`) sets it, in which case the
+        # engine keeps the pre-9.1.1 behaviour of carrying full context.
+        self._intent: Intent | None = None
         # Code Mode gets a generous per-turn budget (the session continues the
         # task afterwards); callers may override it explicitly.
         if max_steps is not None:
@@ -324,6 +348,7 @@ class AgentEngine(ChatEngine):
         self.messages[0] = Message(role="system", content=self._system_prompt())
 
     def _system_prompt(self) -> str:
+        intent = self._intent
         desktop_section = ""
         if self._desktop_active():
             desktop_section = _desktop_prompt_section(self.permissions.level)
@@ -337,7 +362,7 @@ class AgentEngine(ChatEngine):
             workspace=self.permissions.workspace,
             mode=self.permissions.mode.label,
         )
-        if self._codemode_active():
+        if self._workspace_allowed() and self._codemode_active():
             # The behavioural instruction that makes the model a coding agent
             # (not just a chat model with tools) — previously defined but
             # never injected, so Code Mode lost its workflow guidance.
@@ -345,7 +370,17 @@ class AgentEngine(ChatEngine):
                 workspace=self.permissions.workspace
             )
             preamble += self._codemode_context()
-        preamble += self._terminal_context()
+        # v9.1.1: an intent-aware preamble keeps a conversational question from
+        # turning into a workspace sweep, and a browser task from touching the
+        # project at all. The terminal hint is only useful when the task can
+        # actually run something.
+        if intent is not None:
+            if intent.is_conversation:
+                preamble += _CONVERSATION_PREAMBLE
+            elif intent.kind is IntentKind.COMPUTER:
+                preamble += _COMPUTER_PREAMBLE
+        if intent is None or intent.needs_terminal or intent.needs_workspace:
+            preamble += self._terminal_context()
         if self._native_active():
             # The API carries the tool schemas; no manifest needed.
             instructions = _NATIVE_INSTRUCTIONS
@@ -353,13 +388,42 @@ class AgentEngine(ChatEngine):
             instructions = _TEXT_PROTOCOL_INSTRUCTIONS.format(
                 manifest=tool_manifest(self._groups())
             )
-        return (
-            base_identity
-            + preamble
-            + instructions
-            + desktop_section
-            + self._project_context()
-        )
+        project = self._project_context() if self._workspace_allowed() else ""
+        return base_identity + preamble + instructions + desktop_section + project
+
+    # --- intent (v9.1.1) ------------------------------------------------------
+    def set_intent(self, intent: Intent | None) -> None:
+        """Set the resolved need for the next turn and re-render the prompt.
+
+        A caller that already classified the request (the app layer, so Chat
+        escalation and Agent execution agree) passes the result here; otherwise
+        :meth:`run_turn` classifies the user text itself.
+        """
+        self._intent = intent
+        self.refresh_system_prompt()
+
+    @property
+    def intent(self) -> Intent | None:
+        """The intent of the turn in flight (``None`` before the first turn)."""
+        return self._intent
+
+    def _workspace_allowed(self) -> bool:
+        """Whether this turn may read the project (the minimum-tool rule).
+
+        Unknown intent (no turn yet) preserves the previous behaviour, so a
+        caller that never classifies loses nothing. Once an intent is set, a
+        conversational or computer task is not allowed workspace context — the
+        request must not cause file access it does not need.
+        """
+        if self._intent is None:
+            return True
+        return self._intent.needs_workspace
+
+    def _desktop_allowed(self) -> bool:
+        """Whether this turn may be offered the Computer Engine."""
+        if self._intent is None:
+            return True
+        return self._intent.needs_desktop
 
     def _codemode_active(self) -> bool:
         """Code Mode is a session-level toggle read lazily (no import cycle)."""
@@ -446,10 +510,27 @@ class AgentEngine(ChatEngine):
             return ""
 
     def _groups(self) -> tuple[str, ...]:
-        return ("core", "desktop") if self._desktop_active() else ("core",)
+        """The tool groups this turn may use (minimum necessary, v9.1.1).
+
+        ``core`` is always available; ``desktop`` only when the Computer Engine
+        is usable *and* the task needs it; ``web`` only when the task needs
+        current external information. A coding turn therefore never advertises
+        browser/desktop/web tools, and a browser turn never advertises web
+        search.
+        """
+        groups: list[str] = ["core"]
+        if self._desktop_active():
+            groups.append("desktop")
+        extra = self._intent.tool_groups if self._intent is not None else ()
+        for group in extra:
+            if group not in groups and group != "desktop":
+                groups.append(group)
+        return tuple(groups)
 
     def _desktop_active(self) -> bool:
         """Desktop tools are advertised only when enabled AND runnable here."""
+        if not self._desktop_allowed():
+            return False
         desktop = self.permissions.desktop
         if desktop is None or not desktop.enabled:
             return False
@@ -484,6 +565,14 @@ class AgentEngine(ChatEngine):
         evidence ``incomplete`` instead of ending a Code Mode task.
         """
         self.last_evidence = TurnEvidence()
+        # v9.1.1: understand the request before choosing anything. The intent
+        # decides which context and which tools this turn may use, so the agent
+        # never scans the workspace for a song or a browser task. Classification
+        # is deterministic, so re-classifying here agrees with a caller (the app
+        # layer) that already classified for its own escalation decision.
+        resolved = classify(user_text)
+        if resolved != self._intent:
+            self.set_intent(resolved)
         self.add_user(user_text)
         failures = 0
 

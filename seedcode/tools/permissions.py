@@ -120,10 +120,17 @@ PermissionMode = PermissionLevel
 
 
 class ActionGrant(str, Enum):
-    """The user's answer to a dangerous-action prompt."""
+    """The user's answer to a dangerous-action prompt (v9.1.1 scope model).
+
+    ``ONCE`` approves this one action only; ``ALWAYS`` approves this category
+    for the rest of the session; ``ALL`` approves *every* dangerous category
+    for the rest of the session ("Allow All"); ``DENY`` refuses -- this time
+    only, unless the gate remembers it per category.
+    """
 
     ONCE = "once"
     ALWAYS = "always"
+    ALL = "all"
     DENY = "deny"
 
 
@@ -159,8 +166,13 @@ class ActionGate:
 
     confirm: ConfirmAction
     grants: dict[str, "ActionGrant"] = field(default_factory=dict)
+    #: Set by an "Allow All" answer: every category is approved for the rest
+    #: of the session, so the user is never asked again (v9.1.1).
+    allow_all: bool = False
 
     def check(self, category: str, description: str) -> None:
+        if self.allow_all:
+            return
         granted = self.grants.get(category)
         if granted is ActionGrant.ALWAYS:
             return
@@ -170,6 +182,9 @@ class ActionGate:
                 f"Blocked: the user denied '{label}' for this session."
             )
         choice = self.confirm(category, description)
+        if choice is ActionGrant.ALL:
+            self.allow_all = True
+            return
         if choice in (ActionGrant.ALWAYS, ActionGrant.DENY):
             self.grants[category] = choice
         if choice is ActionGrant.DENY:
@@ -178,8 +193,9 @@ class ActionGate:
             )
 
     def reset(self) -> None:
-        """Forget all session grants."""
+        """Forget all session grants (including a blanket Allow All)."""
         self.grants.clear()
+        self.allow_all = False
 
 
 class PermissionManager:

@@ -6,7 +6,7 @@ Plant ideas. Grow code.
 # Single source of truth for the application version. Every consumer reads it:
 # the PyPI build (via [tool.hatch.version]), the CLI --version flag, the
 # Windows installer metadata, the GitHub release tag, and the WinGet manifest.
-__version__ = "9.1.0"
+__version__ = "9.1.1"
 __author__ = "Al Shahriar Sowan"
 __publisher__ = "Eagox Studio"
 # Current author/company links, surfaced by /about and the README credits.

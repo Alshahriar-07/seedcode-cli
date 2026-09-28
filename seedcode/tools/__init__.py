@@ -19,7 +19,7 @@ from .permissions import (
 
 # Import tool modules for their registration side effects (same pattern as
 # seedcode.commands): each module's @register calls populate TOOL_REGISTRY.
-from . import desktop, filesystem, git, patch, search, terminal  # noqa: E402,F401
+from . import desktop, filesystem, git, patch, search, terminal, web  # noqa: E402,F401
 
 __all__ = [
     "PermissionError_",

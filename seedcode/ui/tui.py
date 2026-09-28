@@ -781,12 +781,17 @@ class ChatTUI:
     def _resolve_confirm(self, text: str) -> None:
         """Map a permission answer to the grant the engine understands.
 
-        ``y`` / Enter -> allow once, ``a`` / ``Y`` -> allow for this session,
+        ``y`` / Enter -> allow once, ``a`` -> allow this action type for this
+        session, ``A`` (Shift+A) -> allow *every* action type for this session,
         ``d`` / ``n`` / Esc -> deny. Unknown input denies, so a stray key can
         never silently grant a dangerous action.
         """
-        key = (text or "").strip().lower()[:1]
-        answer = {"y": "y", "a": "a", "d": "n", "n": "n"}.get(key, "")
+        raw = (text or "").strip()
+        key = raw.lower()[:1]
+        if raw[:1] == "A":
+            answer = "A"  # Allow All (all categories, this session)
+        else:
+            answer = {"y": "y", "a": "a", "d": "n", "n": "n"}.get(key, "")
         if not key:
             answer = "y"  # Enter allows (the panel's primary action)
         if not answer:
@@ -985,7 +990,10 @@ class ChatTUI:
 
         palette = active_palette()
         if self._confirm_prompt is not None:
-            hint = "  Enter allow  \u00b7  a allow session  \u00b7  d deny  \u00b7  Esc cancel"
+            hint = (
+                "  Enter allow  \u00b7  a allow session  \u00b7  "
+                "A allow all  \u00b7  d deny  \u00b7  Esc cancel"
+            )
         elif self._busy:
             hint = "  Ctrl+C cancel"
         elif self.state.agent_initializing:

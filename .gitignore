@@ -64,6 +64,11 @@ Desktop.ini
 .claude/
 
 # Scratch / temporary artifacts (never part of a release)
+# _verify/ holds throwaway virtualenvs and clean-home install tests used while
+# validating a release build. It must stay out of the tree's package inputs:
+# hatchling's sdist includes untracked, non-ignored files, so leaving a scratch
+# venv here would otherwise end up inside the source distribution.
+_verify/
 *.tmp
 *.bak
 *.orig

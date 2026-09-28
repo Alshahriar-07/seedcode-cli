@@ -68,6 +68,11 @@ class ChatEngine:
         self.failover_enabled = bool(failover)
         #: ``(from_provider, to_provider)`` of the last failover, or None.
         self.last_switch: tuple[str, str] | None = None
+        #: Why the last failover happened (v9.1.1). A provider is never
+        #: switched silently: the classified reason is recorded here and can be
+        #: surfaced in the status/report so the user always knows what changed
+        #: and why.
+        self.last_switch_reason: str = ""
         # Build identity-aware system prompt with current provider + model
         system_content = build_system_prompt(
             provider_label(config.provider), config.model or "unspecified"
@@ -197,9 +202,9 @@ class ChatEngine:
                 # try another healthy configuration, unless output already
                 # streamed (retrying elsewhere would duplicate the reply).
                 switch = None if yielded else self._next_provider(tried)
-                health_mod.tracker().record_failure(provider_id, exc)
+                state = health_mod.tracker().record_failure(provider_id, exc).state
                 if switch is not None:
-                    self._switch_provider(switch)
+                    self._switch_provider(switch, reason=self._failover_reason(exc, state))
                     attempt = 0
                     continue
                 _log.error("request failed: %s", exc)
@@ -220,18 +225,37 @@ class ChatEngine:
             _log.exception("failover evaluation failed")
             return None
 
-    def _switch_provider(self, candidate: Candidate) -> None:
+    def _failover_reason(self, exc: BaseException, state) -> str:
+        """A short, user-safe reason for a provider switch (v9.1.1).
+
+        Distinguishes the failure classes the user cares about (rate limit,
+        network, authentication, unavailable) without leaking any credential
+        or request detail.
+        """
+        label = {
+            "rate_limited": "rate limited",
+            "authentication_error": "authentication rejected",
+            "offline": "network unreachable",
+            "temporarily_unavailable": "provider unavailable",
+            "retrying": "repeated transient errors",
+            "unknown": "request failed",
+        }.get(getattr(state, "value", str(state)), "request failed")
+        return label
+
+    def _switch_provider(self, candidate: Candidate, *, reason: str = "") -> None:
         """Switch to another provider while preserving all session state."""
         previous = self.config.provider
         self.config.provider = candidate.provider_id
         self.config.model = candidate.model
         self.last_switch = (previous, candidate.provider_id)
+        self.last_switch_reason = reason
         _log.warning(
-            "switch provider %s -> %s (model %s)",
-            previous, candidate.provider_id, candidate.model,
+            "switch provider %s -> %s (model %s) reason=%s",
+            previous, candidate.provider_id, candidate.model, reason or "unspecified",
         )
-        self.event(
-            "switching_provider",
-            f"{provider_label(previous)} → "
-            f"{provider_label(candidate.provider_id)}",
+        detail = (
+            f"{provider_label(previous)} → {provider_label(candidate.provider_id)}"
         )
+        if reason:
+            detail += f" ({reason})"
+        self.event("switching_provider", detail)

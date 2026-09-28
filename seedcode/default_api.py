@@ -142,7 +142,84 @@ def is_default_only(source: str) -> bool:
     return source == "embedded"
 
 
+# --- diagnostics -------------------------------------------------------------
+# Status values for the built-in connection, so the app can tell the three
+# failure modes apart instead of always reporting one generic "missing key".
+BUILTIN_AVAILABLE = "available"
+BUILTIN_MISSING = "missing"        # nothing configured anywhere
+BUILTIN_INVALID = "invalid"        # a value is present but unusable
+BUILTIN_UNAVAILABLE = "unavailable"  # configured, but not this build/provider
+
+# A plausible OpenAI-compatible key: no whitespace, ASCII, a real length. This
+# is shape validation only (a real check needs a network request); it catches
+# the common failure a clean install hits - a truncated or mis-copied value.
+_MIN_KEY_LEN = 16
+
+
+def _key_shape_problem(key: str) -> str:
+    """Why a configured value cannot be a usable key ('' when it looks fine).
+
+    Never includes any part of the value.
+    """
+    if not key:
+        return ""
+    if any(ch.isspace() for ch in key):
+        return "value contains whitespace"
+    if not key.isascii():
+        return "value contains non-ASCII characters"
+    if len(key) < _MIN_KEY_LEN:
+        return f"value is shorter than {_MIN_KEY_LEN} characters"
+    return ""
+
+
+def builtin_status() -> tuple[str, str]:
+    """``(status, reason)`` for the built-in Default connection.
+
+    Distinguishes the cases a clean installation must be able to report
+    separately (v9.1.1):
+
+    * ``available``  - a credential resolved (embedded or environment);
+    * ``missing``    - nothing is configured; guided setup should run;
+    * ``invalid``    - a value exists but is malformed (truncated, whitespace);
+    * ``unavailable``- configured for a checkout that cannot ship a credential.
+
+    ``reason`` is a short, non-secret explanation safe to display or log.
+    """
+    embedded, enabled, _ = _load_embedded()
+    if enabled and not _key_shape_problem(embedded):
+        return BUILTIN_AVAILABLE, "embedded release credential"
+    if enabled:
+        return BUILTIN_INVALID, _key_shape_problem(embedded)
+    for name in BUILTIN_KEY_ENVS:
+        value = (os.environ.get(name) or "").strip()
+        if not value:
+            continue
+        problem = _key_shape_problem(value)
+        if problem:
+            return BUILTIN_INVALID, f"{name}: {problem}"
+        return BUILTIN_AVAILABLE, f"environment variable {name}"
+    return BUILTIN_MISSING, "no built-in credential configured (source checkout)"
+
+
+def describe_builtin_status() -> str:
+    """One line for status/diagnostics without exposing the credential."""
+    status, reason = builtin_status()
+    labels = {
+        BUILTIN_AVAILABLE: "available",
+        BUILTIN_MISSING: "not configured",
+        BUILTIN_INVALID: "invalid configuration",
+        BUILTIN_UNAVAILABLE: "unavailable in this build",
+    }
+    return f"Built-in connection: {labels.get(status, status)} ({reason})"
+
+
 __all__ = [
+    "BUILTIN_AVAILABLE",
+    "BUILTIN_INVALID",
+    "BUILTIN_MISSING",
+    "BUILTIN_UNAVAILABLE",
+    "builtin_status",
+    "describe_builtin_status",
     "BUILTIN_KEY_ENVS",
     "builtin_api_available",
     "builtin_key_source",

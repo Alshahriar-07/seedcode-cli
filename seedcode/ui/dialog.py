@@ -17,18 +17,26 @@ from .selector import Option, select
 # Values returned by permission_dialog, aligned with the existing gates.
 ALLOW_ONCE = "y"
 ALLOW_ALWAYS = "a"
+# "Allow All" approves every dangerous category for the rest of the session,
+# so a multi-step task cannot keep interrupting with the same question.
+ALLOW_ALL = "A"
 DENY = "n"
 
 
 def permission_dialog(*, allow_always: bool = True) -> str:
-    """Ask Allow Once / Always Allow / Deny; returns 'y', 'a', or 'n'.
+    """Ask Allow Once / Always Allow / Allow All / Deny.
 
-    Cancelling (Esc/Ctrl+C) returns 'n' — never an approval.
+    Returns 'y' (once), 'a' (this category, this session), 'A' (every
+    category, this session) or 'n' (deny). Cancelling (Esc/Ctrl+C) returns
+    'n' — never an approval.
     """
     options = [Option("Allow Once", ALLOW_ONCE, detail="approve this action only")]
     if allow_always:
         options.append(
-            Option("Always Allow", ALLOW_ALWAYS, detail="approve for this session")
+            Option("Always Allow", ALLOW_ALWAYS, detail="this action type, this session")
+        )
+        options.append(
+            Option("Allow All", ALLOW_ALL, detail="every action type, this session")
         )
     options.append(Option("Deny", DENY, detail="block this action"))
     result = select(
@@ -36,7 +44,7 @@ def permission_dialog(*, allow_always: bool = True) -> str:
         searchable=False,
         hint="↑↓ move   Enter confirm   Esc deny",
     )
-    return result if result in (ALLOW_ONCE, ALLOW_ALWAYS, DENY) else DENY
+    return result if result in (ALLOW_ONCE, ALLOW_ALWAYS, ALLOW_ALL, DENY) else DENY
 
 
 def confirm_dialog(

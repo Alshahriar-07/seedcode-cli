@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Seed Code CLI v9.1.0 - official Windows remote installer.
+    Seed Code CLI v9.1.1 - official Windows remote installer.
 
 .DESCRIPTION
     Installs Seed Code CLI for the CURRENT USER. No administrator rights, no
@@ -31,10 +31,10 @@
 
     Or, to pass options, download-then-run:
 
-        & ([scriptblock]::Create((irm https://seedcode-cli.vercel.app/install.ps1))) -Version 9.1.0
+        & ([scriptblock]::Create((irm https://seedcode-cli.vercel.app/install.ps1))) -Version 9.1.1
 
 .PARAMETER Version
-    Release version to install. Defaults to 9.1.0 (the current stable release).
+    Release version to install. Defaults to 9.1.1 (the current stable release).
 
 .PARAMETER InstallDir
     Install directory. Defaults to %LOCALAPPDATA%\Programs\SeedCode.
@@ -59,7 +59,7 @@
 #>
 [CmdletBinding()]
 param(
-    [string] $Version = "9.1.0",
+    [string] $Version = "9.1.1",
     [string] $InstallDir = "",
     [switch] $NoPathUpdate,
     [switch] $Force,

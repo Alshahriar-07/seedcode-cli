@@ -4,6 +4,132 @@ All notable changes to Seed Code CLI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [9.1.1] — 2026-09-28
+
+An intent, dependency and diagnostics release. v9.1.0 gave Agent Mode the power
+to act; v9.1.1 makes it act *deliberately* — a turn first decides what it is
+(conversation, research, coding, computer), and only the capability that intent
+actually requires is allowed to run or even be advertised. Alongside it: Chat
+Mode can now hand a single task to Agent Mode and return, internet access is a
+capability of both modes rather than something bolted onto one, "Allow All"
+really covers the session, and a build that is missing its built-in credential
+says exactly which variable it looked for instead of failing anonymously.
+
+### Added
+
+- **Intent classification** (`seedcode.core.intent`): a deterministic,
+  model-free classifier runs before every turn and resolves it to
+  `conversation`, `research`, `coding` or `computer`, with the flags the rest of
+  the application needs (`needs_internet`, `needs_workspace`, `needs_terminal`,
+  `needs_desktop`, `executes`, `reason`, `target`). It is pure Python with no
+  provider call, so classification can never fail, cost a request, or change
+  behaviour when the network is down. Product names are recognised as products,
+  not paths, so "the latest Node.js release" is research — not a file read.
+- **Internet access as a modular capability** (`seedcode.core.internet`):
+  keyless DuckDuckGo HTML search, page fetching with boilerplate stripped, a
+  `research()` helper that reads the top sources, and a char-budgeted,
+  URL-attributed `context_block()` so retrieved text is bounded and attributable
+  in the prompt. Every failure path returns an empty result instead of raising,
+  and `SEEDCODE_DISABLE_INTERNET=1` disables the capability for a session.
+- **Web tools** (`seedcode.tools.web`): `web_search` and `web_fetch`,
+  registered in a new `web` tool group and advertised **only** to an intent that
+  needs the internet. Both are read-only (`mutates=False`).
+- **Built-in credential diagnostics** (`seedcode.default_api`):
+  `builtin_status()` and `describe_builtin_status()` report whether the built-in
+  Default connection is available, missing, invalid or unavailable for this
+  build, with a value-shape check (`_MIN_KEY_LEN`, whitespace/ASCII) — and never
+  include the key itself. `/doctor` reports the built-in connection state.
+- **"Allow All" permission scope** (`seedcode.tools.permissions`,
+  `seedcode.ui.dialog`): `ActionGrant.ALL` and `ActionGate.allow_all` grant every
+  action type for the rest of the session,  selectable from the permission dialog as a third option next to Allow Once and
+  Always Allow.
+- **New test module** (`tests/test_v911_stage1.py`): 52 tests covering intent
+  classification, intent-gated tool groups, the "no workspace context without a
+  workspace intent" guarantee, internet retrieval (fully network-patched), the
+  web tools, Chat → Agent escalation, permission persistence, the `ALL`
+  permission scope, provider failover reasons, and the build-time credential
+  diagnostics.
+
+### Improved
+
+- **Minimum-tool principle.** `AgentEngine` now builds its tool manifest from
+  the intent: `core` always, plus `web` only for research/computer, plus
+  `desktop` only for a computer intent at a permission level that allows it.
+  A coding task never sees the browser tools.
+- **Zero unnecessary file access.** Project context, the workspace coding
+  preamble and the terminal hint are all gated by intent, so a question that
+  never needed the project no longer causes the project to be read.
+- **Chat → Agent escalation, and back.** When a Chat Mode request is one that
+  needs to *execute* something, the turn runs with the agent engine and then
+  returns to Chat Mode, announced on both sides
+  (`[Agent assist - <reason>]` … `[Temporary agent task finished - back to Chat Mode]`).
+  Explicit Agent Mode (`/agent on`) is unaffected and stays on until you turn it
+  off.
+- **Modular internet access for both modes.** Chat Mode retrieves sources for a
+  research request and shows its progress (`[Accessing internet...]`,
+  `[Reading relevant sources...]`) before answering.
+- **Actionable failover messages.** A provider switch now records why it
+  happened and reports it (`rate limited`, `authentication rejected`,
+  `network unreachable`, `provider unavailable`, `repeated transient errors`)
+  instead of switching silently.
+- **`test_tools.py`** asserts the manifest over every registered group
+  (`core`, `desktop`, `web`), so a new group cannot be added without a manifest
+  entry.
+
+### Fixed
+
+- **"Allow All" did not persist.** The action gate was rebuilt for every
+  engine, so an "allow all" decision was forgotten the moment a new engine was
+  created and the same action type prompted again. There is now one
+  process-wide gate (`_ACTION_GATE`, with `reset_action_gate()` to clear it),
+  and `allow_all` short-circuits `check()` for every subsequent action.
+- **A build could silently ship without its built-in credential.** The `.env`
+  variable name was misspelt (`DEFULT_API_KEY`), which no consumer read, so the
+  packaging step embedded nothing and the installed artifact reported the
+  built-in connection as unavailable. `embed_default_key.py` now recognises both
+  documented names (`OPENROUTER_API_KEY`, `SEEDCODE_DEFAULT_API_KEY`), rejects a
+  typo'd name explicitly instead of ignoring it, validates the value's shape,
+  and exits non-zero with the exact fix — never printing the value.
+- The repository `.env` key was renamed to the documented
+  `SEEDCODE_DEFAULT_API_KEY` (file is git-ignored; the value was preserved and
+  never printed).
+
+### UI/UX
+
+- The permission panel offers three grants — **Allow Once**, **Always Allow**,
+  **Allow All** — plus Deny, and the confirmation hint names the keys
+  (`Enter allow · a allow session · A allow all · d deny · Esc cancel`).
+- Chat Mode turns that escalate show why they escalated and that control has
+  returned to Chat Mode.
+- Internet retrieval is visible while it happens rather than appearing as a
+  pause.
+
+### Agent
+
+- Agent Mode keeps working exactly as before when it is explicitly enabled;
+  what changed is that it is no longer the *only* thing that can act, and it is
+  no longer handed tools the task does not need.
+
+### Provider
+
+- A failover now explains itself (see *Improved*), and the reason travels with
+  the provider-switch event so the interface and logs agree.
+
+### Configuration
+
+- `DEFAULT_API_KEY`-style typos are a hard, named error at build time rather
+  than a silent no-credential artifact.
+- `SEEDCODE_DEFAULT_API_KEY` and `OPENROUTER_API_KEY` are the two recognised
+  built-in-credential variable names, matching what the runtime reads.
+- `SEEDCODE_DISABLE_INTERNET=1` turns the internet capability off for a session.
+
+### Testing
+
+- Full suite: **1136 passed, 1 skipped** (up from 1084 passed, 1 skipped).
+- `python -m compileall` over the package is clean.
+- Version **9.1.1** across source, packaging metadata, installers and release
+  artifacts; `seedcode.__version__` remains the single source of truth.
+
 ## [9.1.0] — 2026-09-28
 
 The workspace release. Seed Code now asks where it may work before it starts, and

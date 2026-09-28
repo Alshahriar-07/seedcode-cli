@@ -3,12 +3,12 @@
 The old Code Mode screen was a tall banner. This is the replacement — two rows
 while working, one row while idle, no decorative art::
 
-    ┌─ SEEDCODE 9.1.0 • CODE MODE ────────────────────────┐
+    ┌─ SEEDCODE 9.1.1 • CODE MODE ────────────────────────┐
     │ ● RUNNING   Task 3/8   Build authentication          │
     │   ████████████░░░░  72%   • 4m 32s • 6 calls        │
     └──────────────────────────────────────────────────────┘
 
-    ┌─ SEEDCODE 9.1.0 • CODE MODE ────────────────────────┐
+    ┌─ SEEDCODE 9.1.1 • CODE MODE ────────────────────────┐
     │ ● READY     0/0 tasks                                │
     └──────────────────────────────────────────────────────┘
 

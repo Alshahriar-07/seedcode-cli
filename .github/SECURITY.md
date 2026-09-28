@@ -20,10 +20,25 @@ that your data stays on your machine.
   no network request for the purpose of reporting usage.
 - **Network communication is limited.** Requests are made only to the model
   provider endpoints you configure (for example OpenRouter, Ollama, or your own
-  OpenAI-compatible endpoint) and, where applicable, to **localhost** computer
+  OpenAI-compatible endpoint), to the web search endpoint used by the internet
+  capability described below, and, where applicable, to **localhost** computer
   and browser-control interfaces. Provider requests carry the conversation
   content needed to answer your prompt; that is the function of the tool, not a
   separate data collection mechanism.
+- **Internet access is opt-in per turn and can be switched off.** Seed Code can
+  look up current external information (keyless DuckDuckGo HTML search and page
+  fetching) when a turn's classified intent actually requires it. Retrieved text
+  is bounded to a character budget and attributed by URL in the prompt, and no
+  other turn of that session performs a network lookup. Set
+  `SEEDCODE_DISABLE_INTERNET=1` to disable the capability for a session; the
+  tools then refuse to run and no request is made. Nothing is retrieved, cached
+  to disk, or uploaded by this capability.
+- **A turn only receives the tools its intent needs.** Each turn is classified
+  as conversation, research, coding or computer before anything runs, and the
+  tool manifest is built from that classification — the filesystem tools, the
+  web tools and the desktop tools are each advertised only when the intent
+  requires them. A conversation turn receives no machine access at all, and a
+  research turn never receives the desktop tools.
 - **Credentials are not hardcoded.** API keys and other credentials are not
   embedded in the source. They are stored per provider in your local
   configuration and are shown masked or not at all — never printed in full,
@@ -31,6 +46,13 @@ that your data stays on your machine.
   artifact may carry a build-time credential for the built-in *Default*
   provider; that credential lives only in the release artifact and is never
   committed to source control.
+- **Credential diagnostics never reveal the credential.** The build step reads
+  the first of `OPENROUTER_API_KEY` / `SEEDCODE_DEFAULT_API_KEY` found in the
+  local `.env` (never printed, never logged) and refuses to generate a
+  credential module from a value that is empty, whitespace-padded, non-ASCII or
+  implausibly short, naming the reason and the variable. The running
+  application reports the built-in connection only as a state — available,
+  missing, invalid or unavailable — and never as a value.
 - **Local is powerful.** Seed Code can read and write files and run commands
   within the permission level you grant. See *Scope* and *Best Practices*
   below.
@@ -78,7 +100,11 @@ Areas of particular interest, and of particular risk:
   agent workflows.
 - **Agent Mode** — tool use and permission gating during multi-step execution,
   including the workspace coding capability (file edits within the workspace
-  boundary and project indexing).
+  boundary and project indexing), and the per-intent tool scoping that decides
+  which capabilities a turn may reach for.
+- **Internet access** — the search and fetch capability, its `web_search` /
+  `web_fetch` tools, the character budget applied to retrieved text, and the
+  `SEEDCODE_DISABLE_INTERNET` kill switch.
 - **Installer and release artifacts** — download, checksum verification, install
   paths, and any embedded credential.
 - **The `.env` build step** — the release build reads a local `.env`; that file
@@ -95,6 +121,11 @@ Areas of particular interest, and of particular risk:
 - **Review agent actions.** Agent Mode can change files and run commands within
   the permission level you grant. Start with the least permission that does the
   job, and review what was changed.
+- **Mind the permission scope you approve.** The panel offers *Allow* (this one
+  action), *Allow Session* (this action type until you exit) and *Allow All*
+  (every action type until you exit). Both broader scopes are in-memory
+  session grants only: they are never written to disk, and closing Seed Code
+  clears them.
 - **Keep Seed Code updated.** Install from the official channels (the remote
   installers, `pip`, or GitHub Releases) so you receive the checksum-verified
   current build.

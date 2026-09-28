@@ -6,7 +6,7 @@
 > *Plant ideas. Grow code.*
 
 Seed Code is a premium terminal-based AI coding assistant and task runner.
-v9.1.0 exposes exactly **two modes** — **Chat Mode** and **Agent Mode** — over a
+v9.1.1 exposes exactly **two modes** — **Chat Mode** and **Agent Mode** — over a
 multi-provider, multi-model engine, behind the Seed Code startup logo and a
 compact block of live session state.
 
@@ -46,7 +46,22 @@ remain accepted aliases, but nothing in the UI presents a third mode.
   `AI > ✓ Tests passed`) whose lines appear only when the underlying operation
   really starts. There is no manual to-do list to create or manage, and
   completing a task never closes the application.
-- **Version:** 9.1.0 (`seedcode --version`)
+- **Intent-driven, not tool-eager:** every turn is classified (conversation,
+  research, coding, computer) before anything runs, and only the capability
+  that intent actually needs is offered to the model. A question never reads
+  your project; a coding task never sees the browser tools.
+- **Chat → Agent escalation, and back:** a request sent in Chat Mode that has
+  to *execute* something runs with the agent engine and then returns to Chat
+  Mode. An explicit `/agent on` stays on until you turn it off.
+- **Internet access when it is actually needed:** a research request can search
+  and read current sources in both Chat and Agent Mode — keyless search,
+  URL-attributed and character-budgeted context, and
+  `SEEDCODE_DISABLE_INTERNET=1` to turn it off. Progress is shown while it
+  works.
+- **Permissions that stick:** the permission panel offers Allow, Allow Session
+  and Allow All, and an approved scope is no longer forgotten when a new agent
+  engine is created.
+- **Version:** 9.1.1 (`seedcode --version`)
 
 ## Installation
 
@@ -105,8 +120,8 @@ Python required) and both run the same CLI:
 
 | Download | What it is |
 | --- | --- |
-| `SeedCode-CLI-Setup-9.1.0.exe` | **Setup installer (recommended).** A wizard that installs to Program Files, adds Seed Code to the system `PATH`, creates a Start Menu shortcut with an optional desktop shortcut, verifies the installation before reporting success, and ships a clean uninstaller that never deletes your project data silently. |
-| `SeedCode-CLI-9.1.0-windows-x64.exe` | **Standalone executable.** A single portable `seedcode.exe` — no installation and no admin rights. The Windows IRM installer above downloads exactly this file. Run it directly from wherever you put it. |
+| `SeedCode-CLI-Setup-9.1.1.exe` | **Setup installer (recommended).** A wizard that installs to Program Files, adds Seed Code to the system `PATH`, creates a Start Menu shortcut with an optional desktop shortcut, verifies the installation before reporting success, and ships a clean uninstaller that never deletes your project data silently. |
+| `SeedCode-CLI-9.1.1-windows-x64.exe` | **Standalone executable.** A single portable `seedcode.exe` — no installation and no admin rights. The Windows IRM installer above downloads exactly this file. Run it directly from wherever you put it. |
 
 Both are published on the
 [Releases page](https://github.com/Alshahriar-07/seedcode-cli/releases) with
@@ -115,7 +130,7 @@ their SHA256 in `SHA256SUMS.txt`.
 After installing by any route:
 
 ```bash
-seedcode --version    # -> Seed Code CLI 9.1.0
+seedcode --version    # -> Seed Code CLI 9.1.1
 ```
 
 > **`seedcode` not recognized?** Open a *new* terminal. `PATH` changes only
@@ -169,7 +184,7 @@ values (provider, model, mode, status, workspace, context budget and the masked
 API key) update in place the moment they change.
 
 ```text
-╭─ Seed Code CLI v9.1.0 ───────────────────────────────────────────────────────────────────────╮
+╭─ Seed Code CLI v9.1.1 ───────────────────────────────────────────────────────────────────────╮
 │    ▄█████ ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄    ▄█████  ▄▄▄  ▄▄▄▄  ▄▄▄▄▄   ▄█████ ██     ██                    │
 │    ▀▀▀▄▄▄ ██▄▄  ██▄▄  ██▀██   ██     ██▀██ ██▀██ ██▄▄    ██     ██     ██                    │
 │    █████▀ ██▄▄▄ ██▄▄▄ ████▀   ▀█████ ▀███▀ ████▀ ██▄▄▄   ▀█████ ██████ ██                    │
@@ -218,12 +233,12 @@ Below is the rendering used when the persistent interface is not available — a
 piped host, `SEEDCODE_NO_TUI=1`, or a console that cannot draw it:
 
 ```text
-╭─ Seed Code CLI v9.1.0 ───────────────────────────────────────────────────────────────────────╮
+╭─ Seed Code CLI v9.1.1 ───────────────────────────────────────────────────────────────────────╮
 │    ▄█████ ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄    ▄█████  ▄▄▄  ▄▄▄▄  ▄▄▄▄▄   ▄█████ ██     ██                    │
 │    ▀▀▀▄▄▄ ██▄▄  ██▄▄  ██▀██   ██     ██▀██ ██▀██ ██▄▄    ██     ██     ██                    │
 │    █████▀ ██▄▄▄ ██▄▄▄ ████▀   ▀█████ ▀███▀ ████▀ ██▄▄▄   ▀█████ ██████ ██                    │
 │                                                                                              │
-│ Seed Code CLI v9.1.0                                                                         │
+│ Seed Code CLI v9.1.1                                                                         │
 │ Plant ideas. Grow code.                                                                      │
 │ Provider   OpenRouter                                                                        │
 │ Model      cohere/north-mini-code:free                                                       │
@@ -256,14 +271,18 @@ own status, and its own credential slot. It resolves its credential itself,
 in this order:
 
 1. a key stored in Default's own slot (advanced/manual use);
-2. the embedded Seed Code release credential (release artifacts only);
+2. the embedded Seed Code release credential — carried by the Windows
+   standalone EXE and the Setup installer only. The wheel and sdist
+   deliberately never carry it: the build refuses to package the generated
+   credential module, so a `pip install` is always a credential-free build;
 3. `OPENROUTER_API_KEY` / `SEEDCODE_DEFAULT_API_KEY` in the environment.
 
 It never reads or writes another provider's configuration, and no other
 provider inherits Default's credential. If a build carries no built-in
-credential (a source checkout, for example), Default says so plainly instead
-of failing with an authentication error — pick OpenRouter and add your own
-key.
+credential (a source checkout or a `pip install`), Default says so plainly
+instead of failing with an authentication error — pick OpenRouter and add your
+own key. On the Windows EXE and Setup installer the credential is present, so
+a fresh install is usable on the Default provider immediately.
 
 ### Your own API key
 
@@ -289,7 +308,7 @@ configuration.
 
 | Provider | API key | Best for |
 | --- | --- | --- |
-| **Default** | not required | Working immediately on a release install (`cohere/north-mini-code:free`) |
+| **Default** | not required | Working immediately on a Windows EXE/Setup install (`cohere/north-mini-code:free`) |
 | [OpenRouter](https://openrouter.ai) | required | A broad catalogue of free and paid models |
 | FreeModel Claude | required | Claude-family models through FreeModel |
 | FreeModel Codex | required | GPT/Codex models through FreeModel |
@@ -319,6 +338,82 @@ Permission modes (view/set with `/permission`):
 | `workspace` | Allow approved changes inside the active workspace |
 | `desktop` | Add desktop automation capability after confirmation |
 | `full_system` | Allow broader computer and filesystem actions after confirmation |
+
+### Permission scopes
+
+The permission panel is a bounded TUI component shown between the conversation
+and the composer, inside the same application (never a nested prompt):
+
+```text
+╭─ Agent Action ───────────────────────────────────────────────╮
+│ Agent wants to run:                                          │
+│ npm install                                                  │
+│ Reason: Run command                                          │
+│   ❯ Allow Once       approve this action only                │
+│     Always Allow     this action type, this session          │
+│     Allow All        every action type, this session         │
+│     Deny             block this action                       │
+│   Enter allow · a allow session · A allow all · d deny        │
+╰──────────────────────────────────────────────────────────────╯
+```
+
+- **Allow Once** approves the single action.
+- **Always Allow** approves that action type until you exit.
+- **Allow All** approves every action type until you exit.
+
+Both broader scopes are in-memory session grants: they are never written to
+`config.json`, and closing Seed Code clears them. Only the agent turn waits —
+the event loop, the header and the composer stay live while you decide.
+Harmless read operations (reading project files, listing directories, searching
+sources, inspecting structure) do not prompt; consequential actions do.
+
+## Intent and capability selection
+
+Before a turn runs, Seed Code classifies it — deterministically, without calling
+the model:
+
+| Intent | Example | What it may reach for |
+| --- | --- | --- |
+| conversation | "How do I fix the provider switching bug?" | nothing; it answers |
+| research | "What changed in the latest Node.js release?" | web search and fetch |
+| coding | "Fix the provider switching bug." | project files, terminal |
+| computer | "Play this song on YouTube." | browser/desktop, web |
+
+The classification decides which tools are advertised (the **minimum-tool
+principle**), whether project context is loaded, and whether the workspace and
+desktop capabilities are available at all. Two consequences matter in practice:
+
+- **No unnecessary file access.** A question never causes your project to be
+  read; the project index and workspace context are only loaded for a turn that
+  is actually about the project.
+- **No unnecessary escalation.** A research question is answered in Chat Mode —
+  it does not turn into an agent task.
+
+When a Chat Mode request is one that executes something, that single turn is
+handed to the agent engine and control is handed back afterwards:
+
+```text
+You > Fix the provider switching bug in src/providers.py
+
+AI > [Agent assist - the request asks for a change to the project]
+     ··· the agent inspects, edits and verifies ···
+AI > [Temporary agent task finished - back to Chat Mode]
+```
+
+## Internet access
+
+Seed Code can retrieve current external information when a turn's intent needs
+it, in **both** modes:
+
+- **Chat Mode** retrieves sources before answering and shows its progress
+  (`[Accessing internet...]`, `[Reading relevant sources...]`).
+- **Agent Mode** exposes `web_search` and `web_fetch` as read-only tools to
+  research and computer turns only. A coding turn never sees them.
+
+Retrieval is keyless (no search API key is required or asked for), the retrieved
+text is attributed by URL and capped to a character budget before it reaches the
+prompt, and every failure path degrades to "no results" instead of an error.
+`SEEDCODE_DISABLE_INTERNET=1` disables the capability for a session.
 
 ## Workspace coding (part of Agent Mode)
 
@@ -436,7 +531,7 @@ sequential console Agent Mode additionally shows the plan as a checklist. Both
 reflect what the agent really did:
 
 ```text
-╭─ SEEDCODE 9.1.0 • AGENT MODE ───────────────╮
+╭─ SEEDCODE 9.1.1 • AGENT MODE ───────────────╮
 │ ● RUNNING   Task 3/8   Build authentication │
 │   ████████████░░░░  72% • 4m 32s • 18 calls │
 │ → Running: pytest tests/auth                │
@@ -677,21 +772,21 @@ stage fails loudly on a version mismatch, so a stale binary can never ship.
 
 Details: [`scripts/windows/README.md`](scripts/windows/README.md).
 
-### Release artifacts (v9.1.0)
+### Release artifacts (v9.1.1)
 
-Release: [v9.1.0](https://github.com/Alshahriar-07/seedcode-cli/releases/tag/v9.1.0)
+Release: [v9.1.1](https://github.com/Alshahriar-07/seedcode-cli/releases/tag/v9.1.1)
 
 | Artifact | Purpose |
 | --- | --- |
-| `SeedCode-CLI-Setup-9.1.0.exe` | Windows installer (Inno Setup) |
-| `SeedCode-CLI-9.1.0-windows-x64.exe` | Standalone Windows EXE — downloaded by the Windows IRM installer |
-| `seedcode_cli-9.1.0-py3-none-any.whl` | Python wheel — downloaded by the Linux IRM installer |
-| `seedcode_cli-9.1.0.tar.gz` | Python source distribution |
+| `SeedCode-CLI-Setup-9.1.1.exe` | Windows installer (Inno Setup) |
+| `SeedCode-CLI-9.1.1-windows-x64.exe` | Standalone Windows EXE — downloaded by the Windows IRM installer |
+| `seedcode_cli-9.1.1-py3-none-any.whl` | Python wheel — downloaded by the Linux IRM installer |
+| `seedcode_cli-9.1.1.tar.gz` | Python source distribution |
 | `SHA256SUMS.txt` | SHA256 checksums; verified by both installers |
 
-Built artifacts are collected in `dist/release/9.1.0/` during a release
+Built artifacts are collected in `dist/release/9.1.1/` during a release
 build. Publishing (GitHub Release) is a separate step; the remote installers
-read the release named `v9.1.0`.
+read the release named `v9.1.1`.
 
 ### The remote installers
 
@@ -713,8 +808,9 @@ read the release named `v9.1.0`.
   Run `/provider`. Default needs a built-in credential (release builds have
   one); OpenRouter/FreeModel/AeroLink need your own key.
 - **Default says the built-in connection is unavailable** — this build has no
-  embedded credential. Run `/provider` and choose OpenRouter, or set
-  `OPENROUTER_API_KEY`.
+  embedded credential. The Windows EXE and Setup installer carry one; the
+  wheel and sdist deliberately do not. Run `/provider` and choose OpenRouter,
+  or set `OPENROUTER_API_KEY` (or `SEEDCODE_DEFAULT_API_KEY`).
 - **401/403 errors** — your key is invalid or lacks access; `/apikey` to
   replace it, `/doctor` for diagnostics.
 - **402 errors** — the model needs credits; `/model` and pick a free model
@@ -736,6 +832,13 @@ read the release named `v9.1.0`.
 - Keys are shown masked (`sk-or-••••••••`) or not at all — never in full,
   never in logs, never in error messages, never in a release artifact.
 - Computer actions pass permission checks, verification, and retry limits.
+- Internet retrieval is keyless, URL-attributed, character-budgeted, and
+  disableable with `SEEDCODE_DISABLE_INTERNET=1`; it never caches retrieved
+  pages to disk.
+- Permission scope grants (Allow Session / Allow All) are in-memory only and are
+  never persisted to `config.json`.
+- The built-in Default credential's state is reported as available / missing /
+  invalid / unavailable — never as a value.
 - `.seedcode/` memory refuses secret-looking fields at write time.
 - The release build consumes the local `.env` only during packaging; the
   secret never enters source control, logs, manifests, or package metadata.

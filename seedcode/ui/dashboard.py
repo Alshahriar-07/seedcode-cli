@@ -3,12 +3,12 @@
 The primary startup branding is the Seed Code ANSI wordmark logo, followed by
 a compact, information-dense block with the live session state::
 
-    ╭─ Seed Code CLI v9.1.0 ───────────────────────────────────────────────────────╮
+    ╭─ Seed Code CLI v9.1.1 ───────────────────────────────────────────────────────╮
     │   ▄█████ ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄    ▄█████  ▄▄▄  ▄▄▄▄  ▄▄▄▄▄   ▄█████ ██     ██     │
     │   ▀▀▀▄▄▄ ██▄▄  ██▄▄  ██▀██   ██     ██▀██ ██▀██ ██▄▄    ██     ██     ██     │
     │   █████▀ ██▄▄▄ ██▄▄▄ ████▀   ▀█████ ▀███▀ ████▀ ██▄▄▄   ▀█████ ██████ ██     │
     │                                                                              │
-    │   Seed Code CLI v9.1.0                                                       │
+    │   Seed Code CLI v9.1.1                                                       │
     │   Plant ideas. Grow code.                                                    │
     │   Provider   OpenRouter                                                      │
     │   Model      gpt-5.1-codex                                                   │
