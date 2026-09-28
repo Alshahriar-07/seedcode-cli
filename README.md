@@ -6,7 +6,7 @@
 > *Plant ideas. Grow code.*
 
 Seed Code is a premium terminal-based AI coding assistant and task runner.
-v8.2.5 exposes exactly **two modes** — **Chat Mode** and **Agent Mode** — over a
+v9.1.0 exposes exactly **two modes** — **Chat Mode** and **Agent Mode** — over a
 multi-provider, multi-model engine, behind the Seed Code startup logo and a
 compact block of live session state.
 
@@ -46,7 +46,7 @@ remain accepted aliases, but nothing in the UI presents a third mode.
   `AI > ✓ Tests passed`) whose lines appear only when the underlying operation
   really starts. There is no manual to-do list to create or manage, and
   completing a task never closes the application.
-- **Version:** 8.2.5 (`seedcode --version`)
+- **Version:** 9.1.0 (`seedcode --version`)
 
 ## Installation
 
@@ -105,8 +105,8 @@ Python required) and both run the same CLI:
 
 | Download | What it is |
 | --- | --- |
-| `SeedCode-CLI-Setup-8.2.5.exe` | **Setup installer (recommended).** A wizard that installs to Program Files, adds Seed Code to the system `PATH`, creates a Start Menu shortcut with an optional desktop shortcut, verifies the installation before reporting success, and ships a clean uninstaller that never deletes your project data silently. |
-| `SeedCode-CLI-8.2.5-windows-x64.exe` | **Standalone executable.** A single portable `seedcode.exe` — no installation and no admin rights. The Windows IRM installer above downloads exactly this file. Run it directly from wherever you put it. |
+| `SeedCode-CLI-Setup-9.1.0.exe` | **Setup installer (recommended).** A wizard that installs to Program Files, adds Seed Code to the system `PATH`, creates a Start Menu shortcut with an optional desktop shortcut, verifies the installation before reporting success, and ships a clean uninstaller that never deletes your project data silently. |
+| `SeedCode-CLI-9.1.0-windows-x64.exe` | **Standalone executable.** A single portable `seedcode.exe` — no installation and no admin rights. The Windows IRM installer above downloads exactly this file. Run it directly from wherever you put it. |
 
 Both are published on the
 [Releases page](https://github.com/Alshahriar-07/seedcode-cli/releases) with
@@ -115,7 +115,7 @@ their SHA256 in `SHA256SUMS.txt`.
 After installing by any route:
 
 ```bash
-seedcode --version    # -> Seed Code CLI 8.2.5
+seedcode --version    # -> Seed Code CLI 9.1.0
 ```
 
 > **`seedcode` not recognized?** Open a *new* terminal. `PATH` changes only
@@ -138,6 +138,30 @@ seedcode
 seedcode
 ```
 
+On first launch Seed Code asks where it may work:
+
+```text
+  Select Workspace
+  --------------------------------------------------------------
+  Where should Seed Code work? Agent Mode reads, writes, indexes and
+  runs commands only inside the folder you pick.
+
+    1  Current Folder    D:\Projects\my-site
+    2  Choose a Folder   browse this PC and pick any directory
+
+  Select [1] >
+```
+
+`Current Folder` keeps the directory you launched from. `Choose a Folder` opens
+your operating system's native folder picker and makes the chosen directory the
+**workspace** — the single root for Agent Mode, file reads and writes, project
+indexing, the `.seedcode` context and `plan.md`, terminal commands and
+verification. Nothing outside that root is touched without permission.
+
+Automation is never blocked: `SEEDCODE_WORKSPACE=<dir>` selects the workspace
+directly, and `SEEDCODE_NO_WORKSPACE_PROMPT=1` (or a non-interactive host) keeps
+the launch directory.
+
 You land in the persistent Seed Code workspace: a fixed header carrying the
 Seed Code ASCII logo, a scrolling conversation region and a fixed message
 composer. The header is a live dashboard — it never scrolls away, and its
@@ -145,7 +169,7 @@ values (provider, model, mode, status, workspace, context budget and the masked
 API key) update in place the moment they change.
 
 ```text
-╭─ Seed Code CLI v8.2.5 ───────────────────────────────────────────────────────────────────────╮
+╭─ Seed Code CLI v9.1.0 ───────────────────────────────────────────────────────────────────────╮
 │    ▄█████ ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄    ▄█████  ▄▄▄  ▄▄▄▄  ▄▄▄▄▄   ▄█████ ██     ██                    │
 │    ▀▀▀▄▄▄ ██▄▄  ██▄▄  ██▀██   ██     ██▀██ ██▀██ ██▄▄    ██     ██     ██                    │
 │    █████▀ ██▄▄▄ ██▄▄▄ ████▀   ▀█████ ▀███▀ ████▀ ██▄▄▄   ▀█████ ██████ ██                    │
@@ -194,12 +218,12 @@ Below is the rendering used when the persistent interface is not available — a
 piped host, `SEEDCODE_NO_TUI=1`, or a console that cannot draw it:
 
 ```text
-╭─ Seed Code CLI v8.2.5 ───────────────────────────────────────────────────────────────────────╮
+╭─ Seed Code CLI v9.1.0 ───────────────────────────────────────────────────────────────────────╮
 │    ▄█████ ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄    ▄█████  ▄▄▄  ▄▄▄▄  ▄▄▄▄▄   ▄█████ ██     ██                    │
 │    ▀▀▀▄▄▄ ██▄▄  ██▄▄  ██▀██   ██     ██▀██ ██▀██ ██▄▄    ██     ██     ██                    │
 │    █████▀ ██▄▄▄ ██▄▄▄ ████▀   ▀█████ ▀███▀ ████▀ ██▄▄▄   ▀█████ ██████ ██                    │
 │                                                                                              │
-│ Seed Code CLI v8.2.5                                                                         │
+│ Seed Code CLI v9.1.0                                                                         │
 │ Plant ideas. Grow code.                                                                      │
 │ Provider   OpenRouter                                                                        │
 │ Model      cohere/north-mini-code:free                                                       │
@@ -412,7 +436,7 @@ sequential console Agent Mode additionally shows the plan as a checklist. Both
 reflect what the agent really did:
 
 ```text
-╭─ SEEDCODE 8.2.5 • AGENT MODE ───────────────╮
+╭─ SEEDCODE 9.1.0 • AGENT MODE ───────────────╮
 │ ● RUNNING   Task 3/8   Build authentication │
 │   ████████████░░░░  72% • 4m 32s • 18 calls │
 │ → Running: pytest tests/auth                │
@@ -653,21 +677,21 @@ stage fails loudly on a version mismatch, so a stale binary can never ship.
 
 Details: [`scripts/windows/README.md`](scripts/windows/README.md).
 
-### Release artifacts (v8.2.5)
+### Release artifacts (v9.1.0)
 
-Release: [v8.2.5](https://github.com/Alshahriar-07/seedcode-cli/releases/tag/v8.2.5)
+Release: [v9.1.0](https://github.com/Alshahriar-07/seedcode-cli/releases/tag/v9.1.0)
 
 | Artifact | Purpose |
 | --- | --- |
-| `SeedCode-CLI-Setup-8.2.5.exe` | Windows installer (Inno Setup) |
-| `SeedCode-CLI-8.2.5-windows-x64.exe` | Standalone Windows EXE — downloaded by the Windows IRM installer |
-| `seedcode_cli-8.2.5-py3-none-any.whl` | Python wheel — downloaded by the Linux IRM installer |
-| `seedcode_cli-8.2.5.tar.gz` | Python source distribution |
+| `SeedCode-CLI-Setup-9.1.0.exe` | Windows installer (Inno Setup) |
+| `SeedCode-CLI-9.1.0-windows-x64.exe` | Standalone Windows EXE — downloaded by the Windows IRM installer |
+| `seedcode_cli-9.1.0-py3-none-any.whl` | Python wheel — downloaded by the Linux IRM installer |
+| `seedcode_cli-9.1.0.tar.gz` | Python source distribution |
 | `SHA256SUMS.txt` | SHA256 checksums; verified by both installers |
 
-Built artifacts are collected in `dist/release/8.2.5/` during a release
+Built artifacts are collected in `dist/release/9.1.0/` during a release
 build. Publishing (GitHub Release) is a separate step; the remote installers
-read the release named `v8.2.5`.
+read the release named `v9.1.0`.
 
 ### The remote installers
 

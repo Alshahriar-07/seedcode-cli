@@ -63,12 +63,15 @@ Desktop.ini
 .vscode/
 .claude/
 
-# Scratch / temporary artifacts
+# Scratch / temporary artifacts (never part of a release)
 *.tmp
 *.bak
 *.orig
 *.rej
 *.crdownload
+_scratch*
+/probe*
+errorlevel
 opencode.txt
 V6.2.0/
 newupdatec6.2.5/

@@ -17,6 +17,7 @@ from __future__ import annotations
 import sys
 import threading
 import time
+from pathlib import Path
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.key_binding import KeyBindings
@@ -171,7 +172,7 @@ def _workspace_status(config: AppConfig) -> str:
 def _main_menu(config: AppConfig):
     """The interactive main menu; returns an action id or None (exit).
 
-    v8.2.5 layout: the mode/setup actions carry Ctrl+1..Ctrl+4 shortcuts that
+    v9.1.0 layout: the mode/setup actions carry Ctrl+1..Ctrl+4 shortcuts that
     execute the real handlers (no decorative items), followed by the
     chat/setup actions kept from earlier releases. There are exactly two
     modes — Chat and Agent — and Code Mode's workspace capability lives inside
@@ -719,15 +720,23 @@ def _report_session_summary(ui: UI, session) -> None:
         # A skipped task is resolved, never counted as verified work.
         ui.dim(f"  • Skipped: {skipped} task(s) not needed")
     evidence = session.session_evidence
+    changed = list(session.state.changed_files)
     if evidence.tests:
         # What matters is the final state: the last test run passed.
         passed = evidence.tests[-1].ok
         ui.dim(f"  ✓ Verification: {'accepted' if passed else 'tests NOT passing'}")
         ui.dim(f"  ✓ Tests: {'passed' if passed else 'FAILED'}")
+    elif changed:
+        # Completion is evidence-gated (a task never verifies with zero
+        # observed work), so "accepted" here means files were really written.
+        ui.dim(
+            f"  ✓ Verification: accepted ({len(changed)} file(s) created/modified)"
+        )
     else:
-        ui.dim("  ✓ Verification: accepted (no test run in this project)")
-    if session.state.changed_files:
-        ui.dim(f"  ✓ Files: {len(session.state.changed_files)} affected")
+        ui.dim("  ✓ Verification: accepted (commands ran and succeeded)")
+    if changed:
+        shown = ", ".join(changed[-5:])
+        ui.dim(f"  ✓ Files: {len(changed)} affected — {shown}")
     commands = evidence.commands
     if commands:
         ok = sum(1 for record in commands if record.ok)
@@ -828,12 +837,22 @@ def _handle_agent(
 def _make_agent(
     ui: UI, config: AppConfig, presenter: "_TaskPresenter | None" = None
 ) -> AgentEngine:
-    """Build an Agent Mode engine bound to the CWD and configured permissions."""
+    """Build an Agent Mode engine bound to the ACTIVE WORKSPACE and permissions.
+
+    The workspace is the folder the user selected at startup (or via
+    ``/workspace``), so every file operation the engine performs resolves
+    against it and stays inside it unless the permission system explicitly
+    authorizes an outside write.
+    """
     # Lazy import (matching _make_desktop_session): the optional, platform-
     # specific computer package stays out of app.py's top-level import graph.
     from .computer import is_available
+    from .workspace import active_workspace
 
-    permissions = PermissionManager(level=PermissionMode.parse(config.permission_mode))
+    permissions = PermissionManager(
+        level=PermissionMode.parse(config.permission_mode),
+        workspace=active_workspace(),
+    )
     # Desktop capability is a property of the permission level now: attach the
     # Computer Engine gate whenever the level is Desktop or higher and the
     # engine is actually available on this machine.
@@ -1098,7 +1117,7 @@ def _build_chat_session(ui: UI) -> PromptSession:
 
 
 # ---------------------------------------------------------------------------
-# Persistent TUI session (v8.2.5)
+# Persistent TUI session (v9.1.0)
 # ---------------------------------------------------------------------------
 
 
@@ -1133,6 +1152,11 @@ class _TuiController:
         self.agent: AgentEngine | None = None
         self.agent_perm = config.permission_mode
         self.agent_codemode = _codemode_enabled()
+        #: The workspace the live engine was built for. A `/workspace` change
+        #: moves the process working directory, so the engine (whose permission
+        #: manager scopes every file operation to one root) must be rebuilt —
+        #: otherwise writes would keep resolving against the old folder.
+        self.agent_workspace = str(Path.cwd())
         self._backend = config.provider
         #: Guards the agent engine pointer against a mode switch rebuilding it
         #: while a turn is reading it (both run on worker threads).
@@ -1362,15 +1386,18 @@ class _TuiController:
             if self.switcher.wait(timeout=0.1):
                 break
         codemode_now = _codemode_enabled()
+        workspace_now = str(Path.cwd())
         with self._agent_lock:
             if (
                 self.agent is None
                 or self.agent_perm != self.config.permission_mode
                 or self.agent_codemode != codemode_now
+                or self.agent_workspace != workspace_now
             ):
                 self.agent = _make_agent(self.ui, self.config, self.presenter)
                 self.agent_perm = self.config.permission_mode
                 self.agent_codemode = codemode_now
+                self.agent_workspace = workspace_now
 
     # --- the session loop --------------------------------------------------
     def run(self) -> None:

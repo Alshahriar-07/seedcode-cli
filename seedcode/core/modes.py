@@ -1,4 +1,4 @@
-"""The canonical mode system (v8.2.5): exactly two user-facing modes.
+"""The canonical mode system (v9.1.0): exactly two user-facing modes.
 
 Seed Code exposes **two** modes and nothing else:
 
@@ -108,7 +108,7 @@ def agentic(mode: Mode | str) -> bool:
 
 
 def active_mode(config: object) -> Mode:
-    """The mode the session is really in, from live state (v8.2.5).
+    """The mode the session is really in, from live state (v9.1.0).
 
     Agent Mode is the unified workspace agent: when the ``.seedcode`` workspace
     capability is enabled the session is acting as an agent, and the stored

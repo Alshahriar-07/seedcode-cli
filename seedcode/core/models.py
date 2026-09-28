@@ -243,7 +243,7 @@ class AppConfig(BaseModel):
     # Completion-token budget for chat requests. Users may override in
     # config.json; the value is clamped before every request.
     max_tokens: int = DEFAULT_MAX_TOKENS
-    # The runtime mode (v8.2.5): exactly chat | agent. Chat only converses;
+    # The runtime mode (v9.1.0): exactly chat | agent. Chat only converses;
     # Agent is the unified autonomous workspace/coding agent. The former Code
     # Mode and Assist Mode are capabilities/aliases of Agent Mode (see
     # seedcode.core.modes); a stored legacy "code"/"assist" value is normalised

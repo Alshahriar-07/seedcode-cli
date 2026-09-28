@@ -1,4 +1,4 @@
-"""Explicit, non-blocking mode transitions (v8.2.5 TUI stability).
+"""Explicit, non-blocking mode transitions (v9.1.0 TUI stability).
 
 Switching modes used to be a bare ``threading.Thread`` started per keystroke,
 with no owner, no cancellation and no staleness check: ``Chat → Agent → Chat →

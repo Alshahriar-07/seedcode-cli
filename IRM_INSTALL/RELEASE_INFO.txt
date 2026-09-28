@@ -1,13 +1,13 @@
 Seed Code CLI
 =============
 
-Version: 8.2.5
+Version: 9.1.0
 License: PolyForm Noncommercial License 1.0.0
          (https://polyformproject.org/licenses/noncommercial/1.0.0/)
 
 WHAT'S IN THIS RELEASE
 ----------------------
-The v8.2.5 release artifacts:
+The v9.1.0 release artifacts:
   - Windows portable executable (x64)
   - Windows Setup installer (x64)
   - Python wheel (any OS)
@@ -17,7 +17,7 @@ The v8.2.5 release artifacts:
 Primary command after any install method:  seedcode
 Developer fallback:                        python -m seedcode
 
-v8.2.5 IS A TERMINAL-WORKSPACE RELEASE
+v9.1.0 IS A TERMINAL-WORKSPACE RELEASE
 --------------------------------------
 Seed Code now runs as a persistent terminal application with exactly three
 fixed regions:
@@ -73,16 +73,16 @@ INSTALLATION METHODS
 
      irm https://seedcode-cli.vercel.app/install.ps1 | iex
 
-   Downloads the official SeedCode-CLI-8.2.5-windows-x64.exe from GitHub
+   Downloads the official SeedCode-CLI-9.1.0-windows-x64.exe from GitHub
    Releases and verifies its SHA-256 against the release's SHA256SUMS.txt. A
    mismatch aborts; verification is never bypassed. It installs per-user to
    %LOCALAPPDATA%\Programs\SeedCode, adds that directory to the user PATH, and
-   verifies the installed binary reports version 8.2.5. PowerShell 5.1 and 7+
+   verifies the installed binary reports version 9.1.0. PowerShell 5.1 and 7+
    compatible; ANSI UI with graceful fallback; Ctrl+C safe.
 
 2) Windows - Setup installer
 
-   Download SeedCode-CLI-Setup-8.2.5.exe from
+   Download SeedCode-CLI-Setup-9.1.0.exe from
    https://github.com/Alshahriar-07/seedcode-cli/releases and run it.
    Installs per-user with a Start Menu shortcut and adds the install
    directory to the user PATH so `seedcode` works in new terminals.
@@ -91,21 +91,21 @@ INSTALLATION METHODS
 
 3) Windows - portable executable
 
-   Download SeedCode-CLI-8.2.5-windows-x64.exe from the releases page and
+   Download SeedCode-CLI-9.1.0-windows-x64.exe from the releases page and
    run it directly. No installation, no PATH changes; `seedcode --version`
-   reports 8.2.5. For a persistent `seedcode` command, use method 1 or 2.
+   reports 9.1.0. For a persistent `seedcode` command, use method 1 or 2.
 
 4) Linux / macOS - remote shell installer
 
      curl -fsSL https://seedcode-cli.vercel.app/install.sh | bash
 
-   Downloads the official SeedCode-CLI-8.2.5-<os>-<arch> standalone binary
+   Downloads the official SeedCode-CLI-9.1.0-<os>-<arch> standalone binary
    from GitHub Releases when the release publishes one for this platform, and
-   otherwise downloads the official seedcode_cli-8.2.5-py3-none-any.whl. Either
+   otherwise downloads the official seedcode_cli-9.1.0-py3-none-any.whl. Either
    way the downloaded file's SHA-256 is verified against the release's
    SHA256SUMS.txt before anything is installed (a mismatch aborts, and an
    unreachable checksum file aborts too - verification is never bypassed).
-   Installs to ~/.local/bin and verifies the installed binary reports 8.2.5.
+   Installs to ~/.local/bin and verifies the installed binary reports 9.1.0.
    pipx is used for the wheel when available (otherwise pip --user, with
    PEP 668 handling). Clean ANSI UI with ASCII fallback; Ctrl+C safe.
 
@@ -133,7 +133,7 @@ CHECKSUMS
 ---------
 Every release artifact has a SHA-256 entry in SHA256SUMS.txt:
 
-  cd dist/release/8.2.5
+  cd dist/release/9.1.0
   sha256sum -c SHA256SUMS.txt            # Linux/macOS
   Get-FileHash <file> -Algorithm SHA256  # Windows
 

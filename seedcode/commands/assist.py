@@ -1,4 +1,4 @@
-"""Agent Mode: the unified autonomous workspace/coding agent (v8.2.5).
+"""Agent Mode: the unified autonomous workspace/coding agent (v9.1.0).
 
 /agent on   — selects Agent Mode: the full capability set (AI, filesystem,
               terminal, git, browser, keyboard, mouse, windows, vision, OCR,

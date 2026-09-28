@@ -1,4 +1,4 @@
-"""v8.2.5: mode switching and terminal resizing — the two stability contracts.
+"""v9.1.0: mode switching and terminal resizing — the two stability contracts.
 
 This module locks in the fixes for the two defects users reported against the
 persistent interface, written so a regression fails loudly rather than as an
@@ -262,6 +262,20 @@ class TestModeSwitchStateMachine:
                     # waits for the superseded one to stop before starting.
                     assert controller.switcher.working_workers() <= 1
                 controller._mode_transition("/agent on")
+                # `run()` only *starts* the worker; the worker registers itself
+                # as "working" a moment later (after letting any superseded
+                # worker stop). Poll briefly instead of sampling a single
+                # instant, so this asserts the real guarantee - exactly one
+                # worker is doing the work - rather than whether the scheduler
+                # happened to run the thread before the next line. The stand-in
+                # work blocks until `release` is set, so once the count reaches
+                # 1 it stays there until the finally block.
+                deadline = time.monotonic() + 5
+                while (
+                    controller.switcher.working_workers() != 1
+                    and time.monotonic() < deadline
+                ):
+                    time.sleep(0.01)
                 assert controller.switcher.working_workers() == 1
         finally:
             release.set()

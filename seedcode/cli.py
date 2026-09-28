@@ -90,8 +90,7 @@ def main() -> None:
     from .utils.terminal_env import detect_terminal, workspace_root
 
     # Detect the terminal host/shell once (VS Code, Windows Terminal, Git Bash
-    # or unknown) so a support log says exactly where this session ran. The
-    # workspace root is the launch directory and is never changed below.
+    # or unknown) so a support log says exactly where this session ran.
     terminal = detect_terminal()
     log.info(
         "Seed Code v%s starting (python %s on %s); terminal %s; cwd=%s",
@@ -102,13 +101,24 @@ def main() -> None:
         workspace_root(),
     )
 
+    # v9.1.0: pick the project workspace explicitly instead of silently
+    # treating the launch directory as the project. Non-interactive hosts
+    # (pipelines, CI, scripts) skip the prompt and keep the launch directory;
+    # `SEEDCODE_WORKSPACE` selects one directly. Everything below — Agent
+    # Mode, file I/O, .seedcode, indexing, terminal commands, verification —
+    # resolves against whatever this returns.
+    from .workspace import ensure_workspace
+
+    workspace = ensure_workspace(interactive=_interactive())
+    log.info("workspace selected: %s", workspace)
+
     from .app import run
     from .ui import UI
 
     ui = UI(plain=terminal.plain)
     try:
         if _use_persistent_tui(terminal.plain):
-            # v8.2.5: a real console gets the persistent three-region TUI;
+            # v9.1.0: a real console gets the persistent three-region TUI;
             # every other host keeps the sequential console experience.
             from .app import run_persistent
 

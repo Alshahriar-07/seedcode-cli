@@ -1,4 +1,4 @@
-"""Centralized reactive application state (v8.2.5).
+"""Centralized reactive application state (v9.1.0).
 
 The persistent TUI must never rebuild the world to show a new value: the header,
 the content region and the composer are rendered from **one** object, and a

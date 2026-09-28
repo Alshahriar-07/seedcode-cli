@@ -1,4 +1,4 @@
-"""Content region storage and ANSI-to-styled-line conversion (v8.2.5).
+"""Content region storage and ANSI-to-styled-line conversion (v9.1.0).
 
 The middle region of the TUI is a scrolling buffer of *styled lines*. Two
 producers write into it:

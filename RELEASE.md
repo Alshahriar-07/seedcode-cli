@@ -1,8 +1,8 @@
-# Seed Code CLI v8.2.5 — Release Notes
+# Seed Code CLI v9.1.0 — Release Notes
 
-**Version:** 8.2.5 · **Tag:** `v8.2.5`
+**Version:** 9.1.0 · **Tag:** `v9.1.0`
 
-v8.2.5 is a **terminal-workspace** release. Seed Code is a serious AI coding
+v9.1.0 is a **terminal-workspace** release. Seed Code is a serious AI coding
 workspace that happens to run inside a terminal: a persistent, three-region
 interface with the Seed Code ASCII logo permanently in the fixed header, a
 professional bounded message composer, and a single unified **Agent Mode** that
@@ -13,7 +13,7 @@ separate mode: its workspace coding capabilities are now native to Agent Mode.
 
 ---
 
-## What's new in 8.2.5
+## What's new in 9.1.0
 
 ### Two modes: Chat and Agent
 
@@ -37,6 +37,31 @@ that route into Agent Mode, but nothing in the interface presents a third mode.
 /codemode on   # explicitly (re)activate the workspace capability
 ```
 
+### Select the workspace at startup
+
+Before the interface comes up, Seed Code asks **where it may work**. This is the
+folder Agent Mode reads, writes, indexes and runs commands in — nothing happens
+outside it without a permission prompt:
+
+```text
+  Select Workspace
+  --------------------------------------------------------------
+  Where should Seed Code work? Agent Mode reads, writes, indexes and
+  runs commands only inside the folder you pick.
+
+    1  Current Folder    D:\Projects\my-site
+    2  Choose a Folder   browse this PC and pick any directory
+
+  Select [1] >
+```
+
+`Current Folder` keeps the directory Seed Code was launched from. `Choose a
+Folder` opens the operating system's own folder picker (Tk on any platform, then
+PowerShell on Windows and `osascript` / `zenity` / `kdialog` on Linux and macOS)
+and makes the selection the active workspace. Headless or scripted hosts are
+never blocked: `SEEDCODE_WORKSPACE=<dir>` selects the workspace directly, and
+`SEEDCODE_NO_WORKSPACE_PROMPT=1` keeps the launch directory.
+
 ### The header keeps the Seed Code ASCII logo
 
 The Seed Code block logo is the product's identity, so it is **not** replaced by
@@ -44,7 +69,7 @@ The Seed Code block logo is the product's identity, so it is **not** replaced by
 now with the live session state underneath it.
 
 ```text
-╭─ Seed Code CLI v8.2.5 ───────────────────────────────────────────────────────────────────────╮
+╭─ Seed Code CLI v9.1.0 ───────────────────────────────────────────────────────────────────────╮
 │    ▄█████ ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄    ▄█████  ▄▄▄  ▄▄▄▄  ▄▄▄▄▄   ▄█████ ██     ██                    │
 │    ▀▀▀▄▄▄ ██▄▄  ██▄▄  ██▀██   ██     ██▀██ ██▀██ ██▄▄    ██     ██     ██                    │
 │    █████▀ ██▄▄▄ ██▄▄▄ ████▀   ▀█████ ▀███▀ ████▀ ██▄▄▄   ▀█████ ██████ ██                    │
@@ -197,17 +222,17 @@ cleanly.
 
 ---
 
-## Release artifacts (v8.2.5)
+## Release artifacts (v9.1.0)
 
 | Artifact | Purpose |
 | --- | --- |
-| `SeedCode-CLI-Setup-8.2.5.exe` | Windows setup installer (Inno Setup wizard, uninstaller, Start Menu entry) |
-| `SeedCode-CLI-8.2.5-windows-x64.exe` | Standalone Windows executable (portable; downloaded by the Windows IRM installer) |
-| `seedcode_cli-8.2.5-py3-none-any.whl` | Python wheel (`pip install seedcode-cli`) |
-| `seedcode_cli-8.2.5.tar.gz` | Python source distribution |
+| `SeedCode-CLI-Setup-9.1.0.exe` | Windows setup installer (Inno Setup wizard, uninstaller, Start Menu entry) |
+| `SeedCode-CLI-9.1.0-windows-x64.exe` | Standalone Windows executable (portable; downloaded by the Windows IRM installer) |
+| `seedcode_cli-9.1.0-py3-none-any.whl` | Python wheel (`pip install seedcode-cli`) |
+| `seedcode_cli-9.1.0.tar.gz` | Python source distribution |
 | `SHA256SUMS.txt` | SHA256 checksums covering every artifact above |
 
-Both remote installers read `SHA256SUMS.txt` from the release named `v8.2.5` and
+Both remote installers read `SHA256SUMS.txt` from the release named `v9.1.0` and
 refuse to install anything that is not listed or that fails its digest. Neither
 of them installs a checksum it cannot verify.
 
@@ -218,7 +243,7 @@ of them installs a checksum it cannot verify.
 sha256sum -c SHA256SUMS.txt
 
 # Windows (PowerShell)
-Get-FileHash .\SeedCode-CLI-8.2.5-windows-x64.exe -Algorithm SHA256
+Get-FileHash .\SeedCode-CLI-9.1.0-windows-x64.exe -Algorithm SHA256
 ```
 
 ## Verification performed
@@ -227,7 +252,7 @@ Verified against this repository (offline, no network):
 
 | Check | How | Result |
 | --- | --- | --- |
-| Version is 8.2.5 everywhere | `seedcode.__version__`, CLI `--version`, installer/Docs references, distribution tests | Pass |
+| Version is 9.1.0 everywhere | `seedcode.__version__`, CLI `--version`, installer/Docs references, distribution tests | Pass |
 | ASCII logo preserved | `tests/test_v825_tui.py` asserts the exact logo lines appear in the header at Unicode widths and are never clipped below them | Pass |
 | Two modes only | `Mode` enum has `CHAT`/`AGENT`; `code`/`codemode`/`assist`/`desktop` resolve to Agent Mode | Pass |
 | Code capabilities inside Agent Mode | `/agent on` activates the workspace capability; `/codemode on` enables it explicitly | Pass |
@@ -266,7 +291,7 @@ pip install seedcode-cli
 After installing by any route:
 
 ```bash
-seedcode --version    # -> Seed Code CLI 8.2.5
+seedcode --version    # -> Seed Code CLI 9.1.0
 ```
 
 ## Upgrade safety
@@ -277,5 +302,5 @@ install directory, and is never deleted by an installer.
 
 ---
 
-Version **8.2.5**, tag **`v8.2.5`** —
-<https://github.com/Alshahriar-07/seedcode-cli/releases/tag/v8.2.5>
+Version **9.1.0**, tag **`v9.1.0`** —
+<https://github.com/Alshahriar-07/seedcode-cli/releases/tag/v9.1.0>

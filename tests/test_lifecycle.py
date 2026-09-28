@@ -14,6 +14,8 @@ Everything runs against fakes; no real window, process, or keystroke is used.
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 from seedcode.computer import selfguard
@@ -176,9 +178,40 @@ class TestSelfGuardWindows:
         assert selfguard.is_own_title("") is False
 
     def test_window_object_via_hwnd(self, monkeypatch):
+        # The Windows console APIs this exercises are faked below, so the test
+        # must also pin the platform gate: on non-Windows hosts there are no
+        # window handles and `_windows_ok` is False by design (see the
+        # `test_non_windows_...` cases). Without this the assertion only held
+        # on Windows and failed on the Linux CI runner.
+        monkeypatch.setattr(selfguard, "_windows_ok", True)
         monkeypatch.setattr(selfguard, "console_hwnd", lambda: 4242)
         assert selfguard.is_own_window(FakeWindow("whatever", hwnd=4242)) is True
         assert selfguard.is_own_window(FakeWindow("whatever", hwnd=99)) is False
+
+    def test_non_windows_never_claims_a_window_handle(self, monkeypatch):
+        """On a POSIX host no handle can be ours — the guard is a safe no-op.
+
+        This is the honest counterpart of the Windows identification path: a
+        handle that happens to equal the (absent) console handle must NOT be
+        reported as ours, because on this platform there is no such thing.
+        """
+        monkeypatch.setattr(selfguard, "_windows_ok", False)
+        monkeypatch.setattr(selfguard, "console_hwnd", lambda: 4242)
+        assert selfguard.is_own_hwnd(4242) is False
+        assert selfguard.is_own_window(FakeWindow("whatever", hwnd=4242)) is False
+        assert selfguard.foreground_hwnd() == 0
+
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="POSIX-only: verifies the real non-Windows detection path",
+    )
+    def test_real_posix_selfguard_is_a_safe_noop(self):
+        """Unpatched: on Linux/macOS the module imports and answers safely."""
+        assert selfguard._windows_ok is False
+        assert selfguard.console_hwnd() == 0
+        assert selfguard.foreground_hwnd() == 0
+        assert selfguard.is_own_hwnd(1234) is False
+        assert selfguard.foreground_is_own() is False
 
     def test_window_object_via_exact_title(self, monkeypatch):
         monkeypatch.setattr(selfguard, "console_title", lambda: "SeedCode")

@@ -1,4 +1,4 @@
-"""The persistent Seed Code terminal interface (v8.2.5).
+"""The persistent Seed Code terminal interface (v9.1.0).
 
 A real terminal application instead of a sequence of printed banners. The
 screen is split into exactly three regions:

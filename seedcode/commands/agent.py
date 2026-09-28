@@ -1,4 +1,4 @@
-"""Agent Mode commands: /agent and /permission (v8.2.5).
+"""Agent Mode commands: /agent and /permission (v9.1.0).
 
 /agent is the primary route into Agent Mode — the unified autonomous
 workspace/coding agent that the retired Code Mode and Assist Mode folded

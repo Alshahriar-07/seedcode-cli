@@ -1,4 +1,4 @@
-"""Responsive header rendering for the persistent TUI (v8.2.5).
+"""Responsive header rendering for the persistent TUI (v9.1.0).
 
 The header is the fixed top region of the interface. It is rendered from the
 live :class:`~seedcode.ui.state.AppState` on every frame, so a provider, model,

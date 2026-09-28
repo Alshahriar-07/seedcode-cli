@@ -859,8 +859,19 @@ def _criterion_check(
         return True, "tests passed"
 
     if low.startswith(_CRITERION_NO_ERRORS) or low in ("no errors", "no unresolved errors"):
+        # "No errors" is a *guard*, not evidence of work. An empty error list is
+        # exactly what a model that did nothing produces, so the criterion also
+        # requires concrete progress (a file written, a command that succeeded).
+        # Without this, a plan whose only criterion was "no-errors" verified
+        # instantly and reported "Task completed" / "Project completed" while
+        # the requested files were never created.
         if evidence.errors:
             return False, f"unresolved error: {evidence.errors[-1][:120]}"
+        if not evidence.any_success:
+            return False, (
+                "no concrete progress observed (a clean error log is not "
+                "evidence that the requested work was done)"
+            )
         return True, "no unresolved errors"
 
     # Free-text criterion: it cannot be machine-checked, so it is only counted
@@ -898,6 +909,17 @@ def verify_task(
             unmet.append("no file change or successful command was observed")
         else:
             checked.append("concrete progress observed")
+
+    # Non-negotiable: a task is never verified with zero observed work. This is
+    # the hard backstop behind the per-criterion checks above, so no criterion
+    # wording (a plan the model wrote itself, free text, an empty list) can turn
+    # "the model talked about it" into "the task is done". A task whose criteria
+    # are all satisfied *and* which changed/ran nothing cannot pass.
+    if not unmet and not evidence.any_success:
+        unmet.append(
+            "no file was created/modified and no command succeeded — "
+            "the requested work was not actually performed"
+        )
 
     if evidence.tests and not evidence.tests_passed:
         failed = next(c for c in evidence.tests if not c.ok)

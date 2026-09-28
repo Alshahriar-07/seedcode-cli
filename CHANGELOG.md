@@ -4,6 +4,48 @@ All notable changes to Seed Code CLI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [9.1.0] — 2026-09-28
+
+The workspace release. Seed Code now asks where it may work before it starts, and
+Agent Mode performs the work — creating, editing and running real commands in the
+project — instead of describing it.
+
+### Added
+
+- **Explicit workspace selection at startup** (`seedcode/workspace.py`): every
+  interactive start presents `Select Workspace` with `Current Folder` and
+  `Choose a Folder` (the operating system's native folder picker). The selected
+  directory becomes the **workspace** — the single root for Agent Mode, file
+  reads and writes, project indexing, the `.seedcode` context and `plan.md`,
+  terminal commands and verification. Automation is never blocked:
+  `SEEDCODE_WORKSPACE=<dir>` selects the workspace directly and
+  `SEEDCODE_NO_WORKSPACE_PROMPT=1` keeps the launch directory.
+- **Verified agent execution**: a task is only `COMPLETED` when its acceptance
+  criteria are backed by evidence on disk — files that exist, a command that ran
+  and exited 0, tests that passed. A model that claims "done" while the checks
+  fail is sent back to fix them; completion is never a text assertion.
+- **Built-in `Default` provider** in the packaged builds (wheel, sdist,
+  standalone EXE and installer), so a fresh install can run without the user
+  configuring a key first. `openrouter` and `ollama` remain available.
+
+### Changed
+
+- **Version 9.1.0** across source, packaging metadata, installers and release
+  artifacts; `seedcode.__version__` remains the single source of truth.
+- **One deterministic checksum source**: the release's `SHA256SUMS.txt`,
+  generated from the final artifacts after the last one is built, is the only
+  expected value. The remote installers no longer carry a pinned digest.
+
+### Fixed
+
+- **Windows installer checksum mismatch** — the hand-maintained pinned digest
+  that drifted from a rebuilt binary (and aborted with "SHA256SUMS.txt and this
+  installer's pinned checksum disagree") is gone.
+- **Linux CI test failure** — the lifecycle self-guard test no longer assumes a
+  Windows-only window handle, so `ubuntu-latest` passes without disabling it.
+- **Flaky mode-switch test** that sampled the worker count on the line directly
+  after starting the thread; it now waits for the worker to register.
+
 ## [8.2.5] — 2026-09-25
 
 A terminal-workspace release. Seed Code CLI runs as a **persistent terminal

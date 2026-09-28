@@ -322,8 +322,16 @@ Rules that make the plan executable:
     * "run: <command fragment>"              - that command ran and succeeded
     * "tests"                                - a test run happened and passed
     * "no-errors"                            - no unresolved error remains
-  Only use free-text criteria when the outcome genuinely cannot be checked;
-  they still require concrete progress.
+- EVERY task that creates or changes a file MUST name it with a "file:"
+  criterion (use "file: <path> | contains: <text>" for created content), so
+  the result is checked against the real filesystem.
+- "no-errors" is a guard, never proof of work: it may only accompany a concrete
+  criterion, never stand alone. A task whose only criterion is "no-errors" can
+  never be verified, because doing nothing also produces no errors.
+- Only use free-text criteria when the outcome genuinely cannot be checked;
+  they still require concrete progress (a file written or a command run).
+- A task is never "done" because a reply said so: verification reads the
+  project, so plan criteria that can actually be observed.
 - Include a final task that runs the project's tests/build when the project has
   them.
 - Finish the plan with the last line: "Task 1 is next."

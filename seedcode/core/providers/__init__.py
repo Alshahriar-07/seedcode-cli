@@ -2,10 +2,11 @@
 
 The registry is the single source of truth for which providers exist:
 
-* **built-in** — OpenRouter and Ollama are the supported first-class choices,
-  with Default, FreeModel Claude/Codex and AeroLink retained for backward
-  compatibility (an existing configuration can still load, select and use
-  them; they are simply no longer advertised in the default list);
+* **built-in** — Default (Seed Code's own key-free connection, and the
+  provider the app ships with), OpenRouter and Ollama are the first-class
+  choices advertised everywhere, with FreeModel Claude/Codex and AeroLink
+  retained for backward compatibility (an existing configuration can still
+  load, select and use them; they are simply no longer advertised);
 * **custom** — any number of user-defined, OpenAI-compatible providers
   (``custom:<slug>``), synchronised from the saved configuration.
 
@@ -42,12 +43,22 @@ PROVIDERS: dict[str, Provider] = {
     )
 }
 
-#: Providers the user-facing list advertises by default (v7.2.5).
-CORE_PROVIDER_IDS: tuple[str, ...] = ("openrouter", "ollama")
+#: Providers the user-facing list advertises by default (v9.1.0).
+#:
+#: ``default`` is first because it is the provider the application *ships*
+#: with (``seedcode.defaults.DEFAULT_PROVIDER``) and the one a release
+#: install can use immediately with no API key. It used to be omitted from
+#: the advertised list, which meant a user who switched to OpenRouter could no
+#: longer pick Seed Code's built-in connection again, and a release build
+#: never exposed it at all — the packaged Default provider was effectively
+#: unreachable. It is a first-class entry now, advertised everywhere.
+CORE_PROVIDER_IDS: tuple[str, ...] = ("default", "openrouter", "ollama")
 
-#: Legacy built-ins kept for backward compatibility but no longer advertised.
+#: Legacy built-ins kept for backward compatibility but no longer advertised:
+#: they need a key the user must supply, so they are not part of the shipped
+#: out-of-the-box experience.
 LEGACY_PROVIDER_IDS: frozenset[str] = frozenset(
-    {"default", "freemodel_claude", "freemodel_codex", "aerolink"}
+    {"freemodel_claude", "freemodel_codex", "aerolink"}
 )
 
 #: The configuration currently bound to the registry (set by

@@ -201,18 +201,29 @@ def test_sync_registers_and_unregisters_custom_providers() -> None:
     assert a.id not in PROVIDERS
 
 
-def test_visible_list_is_openrouter_ollama_and_customs() -> None:
+def test_visible_list_is_default_openrouter_ollama_and_customs() -> None:
     config = _config_with_customs()
     config.provider = "openrouter"
     sync_custom_providers(config)
     ids = visible_provider_ids(config)
-    assert ids[:2] == ["openrouter", "ollama"]
-    assert [e.id for e in config.custom_providers] == ids[2:]
-    # Legacy built-ins are not advertised while unused...
-    assert "default" not in ids
-    # ...but stay reachable when the user is actually on one.
+    # v9.1.0: the shipped provider is advertised first, so the built-in
+    # connection is always reachable (it used to vanish once the user switched
+    # away, and a release build never exposed it at all).
+    assert ids[:3] == ["default", "openrouter", "ollama"]
+    assert [e.id for e in config.custom_providers] == ids[3:]
+    # Legacy, key-requiring built-ins stay unadvertised while unused...
+    assert "freemodel_claude" not in ids and "aerolink" not in ids
+    # ...while the shipped default is present regardless of the active provider.
     config.provider = "default"
     assert visible_provider_ids(config)[0] == "default"
+
+
+def test_shipped_provider_is_advertised_without_a_config() -> None:
+    """A fresh install (or a bare call) still offers the built-in Default."""
+    from seedcode.defaults import DEFAULT_PROVIDER
+
+    assert DEFAULT_PROVIDER in visible_provider_ids(None)
+    assert visible_provider_ids(None)[0] == DEFAULT_PROVIDER
 
 
 def test_provider_ready_uses_each_custom_providers_own_key() -> None:

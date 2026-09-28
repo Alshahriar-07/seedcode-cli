@@ -1,4 +1,4 @@
-"""/mode — the generic switcher for the two canonical modes (v8.2.5).
+"""/mode — the generic switcher for the two canonical modes (v9.1.0).
 
 /mode           — show the current mode.
 /mode chat      — plain conversation (no tools).

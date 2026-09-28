@@ -1,4 +1,4 @@
-"""Live, step-by-step task progress for Agent Mode (v8.2.5).
+"""Live, step-by-step task progress for Agent Mode (v9.1.0).
 
 This is a *truthful* progress view, not a decoration. Every step state is
 driven by an event the engine actually produced:

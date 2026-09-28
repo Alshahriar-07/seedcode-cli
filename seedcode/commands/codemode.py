@@ -1,4 +1,4 @@
-"""/codemode — the Agent Mode workspace coding capability (v8.2.5).
+"""/codemode — the Agent Mode workspace coding capability (v9.1.0).
 
 Code Mode is no longer a separate mode: its workspace-aware coding behaviour
 is a native capability of Agent Mode. This command activates that capability
@@ -109,11 +109,77 @@ def _detect_workspace():
     return Path.cwd()
 
 
-@command("workspace", "Show the active Agent Mode workspace")
+@command(
+    "workspace",
+    "Show or change the active workspace. Usage: /workspace [change | <path>]",
+)
 def _workspace(ctx: CommandContext, arg: str) -> CommandResult:
+    """Show, pick, or switch the workspace that Agent Mode works in.
+
+    The workspace is the single root for file reads/writes, indexing,
+    ``.seedcode`` context and terminal commands, so changing it re-points the
+    live capability and the UI header in one step. `/workspace change` opens the
+    OS folder picker; `/workspace <path>` switches directly.
+    """
+    from ..workspace import active_workspace, pick_folder_native, set_workspace
+
     state = codemode_state()
-    if state.enabled and state.workspace is not None:
-        ctx.ui.info(f"Workspace: {state.workspace}")
-    else:
-        ctx.ui.dim("Workspace capability is off — enable with /codemode on")
+    target = arg.strip()
+
+    if target.lower() in ("change", "pick", "select", "choose", "browse"):
+        chosen = pick_folder_native(active_workspace())
+        if chosen is None:
+            ctx.ui.dim(
+                "No folder picker is available on this host — use: "
+                "/workspace <path>"
+            )
+            return CommandResult()
+        target = str(chosen)
+
+    if not target:
+        current = active_workspace()
+        ctx.ui.info(f"Workspace: {current}")
+        if state.enabled and state.workspace is not None:
+            ctx.ui.dim(f"  .seedcode memory + index active at {state.workspace}")
+        else:
+            ctx.ui.dim("  Workspace capability is off — enable with /codemode on")
+        ctx.ui.dim(
+            "Change with: /workspace change (folder picker) or "
+            "/workspace <path>"
+        )
+        return CommandResult()
+
+    try:
+        previous = active_workspace()
+        selected = set_workspace(target)
+    except (NotADirectoryError, OSError) as exc:
+        ctx.ui.warning(f"[Command Error] {exc}")
+        ctx.ui.dim("Expected an existing directory: /workspace <path>")
+        return CommandResult()
+
+    ctx.ui.success(f"Workspace changed: {previous} -> {selected}")
+    # Re-point the live workspace capability so .seedcode, the index and the
+    # agent's permissions all move with it; a disabled capability stays off.
+    if state.enabled:
+        from .. import codemode_state as cms
+
+        result = cms.enable(selected)
+        for line in result.status_lines()[1:]:
+            ctx.ui.dim(f"  {line}")
+    _refresh_ui_workspace(ctx, selected)
     return CommandResult()
+
+
+def _refresh_ui_workspace(ctx: CommandContext, path) -> None:
+    """Surface a workspace change in the persistent header (best-effort)."""
+    try:
+        tui = getattr(ctx.ui, "tui", None)
+        state = getattr(tui, "state", None)
+        if state is None:
+            return
+        state.update(workspace=str(path))
+        invalidate = getattr(tui, "_invalidate", None)
+        if callable(invalidate):
+            invalidate()
+    except Exception:  # a cosmetic refresh must never break the switch
+        pass

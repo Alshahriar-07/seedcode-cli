@@ -1,13 +1,13 @@
-"""Startup dashboard tests (v8.2.5 logo branding).
+"""Startup dashboard tests (v9.1.0 logo branding).
 
 The startup screen is now the Seed Code ANSI wordmark logo followed by a
 compact, information-rich block with the live session state::
 
-    ╭─ Seed Code CLI v8.2.5 ──────────────────────────────────────────────╮
+    ╭─ Seed Code CLI v9.1.0 ──────────────────────────────────────────────╮
     │   ▄█████ ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄    ▄█████  ▄▄▄  ▄▄▄▄  ▄▄▄▄▄   ▄█████ ██ ...│
     │   ...                                                                │
     │                                                                      │
-    │   Seed Code CLI v8.2.5                                               │
+    │   Seed Code CLI v9.1.0                                               │
     │   Plant ideas. Grow code.                                            │
     │   Provider   OpenRouter                                              │
     │   Model      gpt-5.1-codex                                           │
