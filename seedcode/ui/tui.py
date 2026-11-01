@@ -82,6 +82,9 @@ _MIN_INPUT_LINES = 2
 _MAX_INPUT_LINES = 6
 #: Rows of the bounded permission panel (shown only while a request waits).
 _PERMISSION_HEIGHT = 7
+#: The slash-command suggestion list shows at most this many rows; typing
+#: further narrows the list instead of growing it.
+_MAX_AUTOCOMPLETE_ROWS = 8
 #: Rows the composer's ``Frame`` adds around the editor (its top and bottom
 #: border) and the single hint row underneath it.
 _COMPOSER_FRAME_ROWS = 2
@@ -104,11 +107,19 @@ _COMPOSER_PAD = 1
 #: a display-only attribution for the chat history: the composer itself carries
 #: no such prefix, so the submitted message is never decorated with it.
 _INPUT_PROMPT = "You > "
-#: Every assistant line (activity and streamed answer) is attributed with this.
+#: The streamed answer's first line is attributed with this. Activity lines,
+#: by contrast, carry **no** prefix — they are indented under the turn instead,
+#: so the log reads clean while the user prompt keeps its ``You >`` marker.
 _AI_PREFIX = "AI > "
+#: The two-space indent every activity line is printed under the turn with.
+_ACTIVITY_INDENT = "  "
 
-#: Frames of the pre-response thinking indicator (dots that grow, then reset).
-_THINK_FRAMES = (".", "..", "...")
+#: Frames of the pre-response thinking indicator (a small animated spinner
+#: beside the current activity, per the v9.2.x clean-log design).
+_THINK_FRAMES = (
+    "\u280b", "\u2819", "\u2839", "\u2838", "\u283c", "\u2834",
+    "\u2826", "\u2827", "\u2807", "\u280f",
+)
 #: Animation cadence: alive enough to reassure, calm enough not to distract.
 _THINK_INTERVAL_S = 0.4
 
@@ -118,11 +129,10 @@ def _agentic_mode(mode: str) -> bool:
     return str(mode).startswith("Agent")
 
 
-#: Commands that are pure mode switches / state transitions. They are dispatched
-#: in place so switching modes never tears down the application or event loop.
-_MODE_COMMANDS = frozenset(
-    {"agent", "assist", "chat", "mode", "codemode", "desktop", "status"}
-)
+#: Commands dispatched in place inside the live application (no exit, no
+#: rebuild). v9.2.0 has no mode switches any more; /workspace is included so
+#: changing the active project never tears down the session either.
+_MODE_COMMANDS = frozenset({"workspace", "permission", "status"})
 
 
 def _is_mode_command(text: str) -> bool:
@@ -197,6 +207,10 @@ class _NullStream:
 class _ContentControl(UIControl):
     """A non-focusable control that renders the buffer's visible slice."""
 
+    #: Left padding of the conversation region (cells). Text starts two
+    #: columns in, so nothing is clipped against the terminal edge.
+    LEFT_PAD = 2
+
     def __init__(
         self,
         provider: Callable[[int, int], list[StyledLine]],
@@ -224,15 +238,65 @@ class _ContentControl(UIControl):
         control (with its own fragment processing) on every frame was needless
         churn in the one region that already updates continuously.
         """
+        pad = max(0, min(self.LEFT_PAD, width - 1))
         try:
-            lines = self._provider(width, height)
+            lines = self._provider(width - pad, height)
         except Exception:
             lines = [[("", "(display error)")]]
+        # Conversation-region padding: the provider slices to the inner width
+        # and this control prepends the left pad, so a message is never flush
+        # against (or clipped by) the terminal's left edge.
+        prefix = [("", " " * pad)]
+        rendered: list[list[tuple[str, str]]] = [prefix + line for line in lines]
         return UIContent(
-            get_line=lambda index: lines[index],
-            line_count=len(lines),
+            get_line=lambda index: rendered[index],
+            line_count=len(rendered),
             show_cursor=False,
         )
+
+
+class _AutocompleteControl(UIControl):
+    """A non-focusable, clickable slash-command suggestion list.
+
+    ``provider`` renders the visible rows; a mouse click on a row calls
+    ``on_pick(row)`` — the row number is the row of the window, which is
+    exactly one displayed suggestion.
+    """
+
+    def __init__(
+        self,
+        provider: Callable[[int, int], list[StyledLine]],
+        on_pick: Callable[[int], None],
+    ) -> None:
+        self._provider = provider
+        self._on_pick = on_pick
+
+    def is_focusable(self) -> bool:
+        return False
+
+    def is_scrollable(self) -> bool:
+        return False
+
+    def create_content(self, width: int, height: int):
+        try:
+            rows = self._provider(width, height)
+        except Exception:
+            rows = [[("", "")]]
+        if not rows:
+            rows = [[("", "")]]
+        return UIContent(
+            get_line=lambda index: rows[index],
+            line_count=len(rows),
+            show_cursor=False,
+        )
+
+    def mouse_handler(self, mouse_event):
+        if mouse_event.event_type == MouseEventType.MOUSE_CLICK:
+            self._on_pick(mouse_event.position.y)
+            return None
+        if mouse_event.event_type == MouseEventType.MOUSE_MOVE:
+            return None  # hover selection is noise in a one-row-per-item list
+        return NotImplemented
 
 
 class TuiStreamRenderer:
@@ -299,6 +363,19 @@ class ChatTUI:
         self._ui_thread: int | None = None
         #: The live stream block, so a resize can re-wrap the answer in place.
         self._stream: "TuiStreamRenderer | None" = None
+        #: The last file change (path, diff), expandable with Ctrl+E.
+        self._last_change: tuple[str, str] | None = None
+        #: The last terminal command's real result, expandable with Ctrl+T.
+        self._last_command: dict | None = None
+        #: Slash-command autocomplete: the entries currently suggested above
+        #: the composer, the highlighted row, and the row budget. The catalog
+        #: is loaded lazily from the live dispatch registry
+        #: (``seedcode.commands``), so the suggestions are always the commands
+        #: the backend actually dispatches.
+        self._auto_entries: list[tuple[str, str]] = []
+        self._auto_index = 0
+        self._auto_rows = 0
+        self._command_catalog: list[tuple[str, str]] | None = None
         #: Cancel a mode's background initialization (wired by the controller).
         self.on_cancel_init: Callable[[], None] | None = None
         self.on_submit: Callable[[str], None] | None = None
@@ -317,7 +394,11 @@ class ChatTUI:
             theme=rich_theme(),
             highlight=False,
         )
-        self._input = Buffer(multiline=True, accept_handler=self._accept)
+        self._input = Buffer(
+            multiline=True,
+            accept_handler=self._accept,
+            on_text_changed=self._on_input_changed,
+        )
         self._app: Application | None = None
         self._header_window: Window | None = None
         self._input_window: Window | None = None
@@ -346,6 +427,8 @@ class ChatTUI:
         self._think_label = "Thinking"
         self._think_index = 0
         self._thinking_active = False
+        # When the indicator started (for the live elapsed-seconds counter).
+        self._think_started = 0.0
         self._reallocate_rows()  # a sane first frame before the real size lands
         state.subscribe(lambda _state: self._invalidate())
 
@@ -404,11 +487,13 @@ class ChatTUI:
         self.console.print()
 
     def append_activity(self, kind: str, text: str, *, legacy: bool = False) -> None:
-        """One live activity line, attributed to the assistant.
+        """One clean activity line, indented under the current turn.
 
-        Rendered as ``AI > ⚙ Reading package.json``. ``kind`` is ``action``
-        (started), ``success``, ``error`` or ``note``. Only real events are
-        passed here — the stream never invents progress.
+        Rendered as ``⚙ Reading package.json`` — activity carries **no**
+        ``AI >`` prefix (only the user prompt keeps ``You >``). ``kind`` is
+        ``action`` (a tool/step started), ``success``, ``error`` or ``note``
+        (informational). Only real events are passed here — the stream never
+        invents progress.
         """
         from rich.text import Text
 
@@ -419,14 +504,190 @@ class ChatTUI:
             "action": ("\u2699", palette.accent),
             "success": ("\u2713", palette.success),
             "error": ("\u2715", palette.error),
-            "note": ("\u00b7", palette.dim),
+            "note": ("\u2139", palette.dim),
         }
         mark, colour = marks.get(kind, marks["note"])
         line = Text()
-        line.append(_AI_PREFIX, style=f"bold {palette.primary}")
-        line.append(f"{mark} ", style=colour)
+        line.append(f"{_ACTIVITY_INDENT}{mark} ", style=colour)
         line.append(safe_text(text), style=colour)
         self.console.print(line, highlight=False)
+
+    def append_change(self, event: dict) -> None:
+        """Render a real file change: summary, line ranges and a diff preview."""
+        from rich.text import Text
+
+        path = safe_text(str(event.get("path") or "(unknown)"))
+        diff = safe_text(str(event.get("diff") or ""))
+        kind = str(event.get("type") or "")
+        added = int(event.get("lines_added") or 0)
+        removed = int(event.get("lines_removed") or 0)
+        start = int(event.get("line") or 0)
+        end = int(event.get("line_end") or start)
+        if kind == "file_created":
+            verb = "Created"
+        elif kind == "file_deleted":
+            verb = "Deleted"
+        else:
+            verb = "Updated"
+        summary = f"{verb} {path} — +{added}/-{removed} lines"
+        if start:
+            summary += f" (lines {start}–{end})" if end and end != start else f" (line {start})"
+        self._last_change = (path, diff)
+        self.append_activity("success" if kind != "file_deleted" else "note", summary)
+        self._print_diff(diff, limit=12, indent="    ")
+        if diff:
+            self.console.print(
+                Text("      Ctrl+E expands the last diff", style="seed.dim"),
+                highlight=False,
+            )
+
+    def _print_diff(self, diff: str, *, limit: int | None, indent: str = "") -> None:
+        """Print unified-diff body lines with add/remove colouring."""
+        from rich.text import Text
+
+        lines = [
+            line
+            for line in (diff or "").splitlines()
+            if not line.startswith(("---", "+++"))
+        ]
+        shown = lines if limit is None else lines[:limit]
+        for line in shown:
+            style = (
+                "seed.success"
+                if line.startswith("+")
+                else "seed.error"
+                if line.startswith("-")
+                else "seed.dim"
+            )
+            self.console.print(Text(f"{indent}{line}", style=style), highlight=False)
+        if limit is not None and len(lines) > limit:
+            self.console.print(
+                Text(
+                    f"{indent}... {len(lines) - limit} more diff line(s)",
+                    style="seed.dim",
+                ),
+                highlight=False,
+            )
+
+    def show_last_change(self) -> None:
+        """Expand the last file diff in full (Ctrl+E)."""
+        if self._last_change is None:
+            self.append_activity("note", "No file change to expand yet.")
+            return
+        path, diff = self._last_change
+        self.append_activity("note", f"Full diff for {path}")
+        self._print_diff(diff, limit=None)
+        self._invalidate()
+
+    # --- terminal inspection (Ctrl+T) -----------------------------------
+    def record_command(self, command: str, ok: bool, output: str) -> None:
+        """Store one terminal command's real result for later inspection."""
+        self._last_command = {
+            "command": safe_text(str(command or "")),
+            "ok": bool(ok),
+            "output": safe_text(str(output or "")),
+            "cwd": safe_text(str(getattr(self.state, "workspace", "") or "")),
+        }
+
+    def show_last_command(self) -> None:
+        """Expand the last terminal command in full (Ctrl+T)."""
+        from rich.text import Text
+
+        record = self._last_command
+        if record is None:
+            self.append_activity("note", "No command has run yet (Ctrl+T).")
+            return
+        ok = bool(record.get("ok"))
+        command = str(record.get("command") or "")
+        cwd = str(record.get("cwd") or "(workspace)")
+        body = str(record.get("output") or "")
+        # The tool's own status line ("✓ Success" / "✗ FAILED (exit N)") is
+        # real output; it is rendered as the status header, the rest as body.
+        lines = body.splitlines() or [""]
+        status_line = lines[0]
+        self.append_activity("note", f"$ {command}   (cwd: {cwd})")
+        self.append_activity(
+            "success" if ok else "error",
+            status_line.split(" ", 1)[-1] if status_line else "finished",
+        )
+        shown = lines[1:301]
+        for line in shown:
+            self.console.print(
+                Text(f"    {line}", style="seed.dim"), highlight=False
+            )
+        if len(lines) - 1 > len(shown):
+            self.console.print(
+                Text(
+                    f"    ... {len(lines) - 1 - len(shown)} more line(s)",
+                    style="seed.dim",
+                ),
+                highlight=False,
+            )
+        self._invalidate()
+
+    # --- final execution report ----------------------------------------------
+    def append_report(self, report: dict) -> None:
+        """The final report for the turn, from this turn's real events only.
+
+        Every number here was observed by the backend (file operations, command
+        results, tests, research). A section with nothing to report is omitted
+        rather than filled in with a placeholder.
+        """
+        from rich.text import Text
+
+        from .theme import active_palette
+
+        palette = active_palette()
+        heading = "Execution Report"
+        state = str(report.get("state") or "completed")
+        mark, mark_style = (
+            ("\u2713", "seed.success")
+            if state == "completed"
+            else ("\u2715", "seed.error")
+        )
+        self.console.print(
+            Text(f"\u2500 {heading} " + "\u2500" * 4, style=mark_style),
+            highlight=False,
+        )
+
+        def section(text: str) -> None:
+            self.console.print(Text(text, style=f"fg:{palette.dim}"), highlight=False)
+
+        def paths(label: str, items: list[str]) -> None:
+            items = sorted(dict.fromkeys(items))
+            if not items:
+                return
+            shown = ", ".join(items[:6])
+            more = len(items) - 6
+            section(f"  {label}: {len(items)} — {shown}{f' (+{more})' if more > 0 else ''}")
+
+        paths("Files created", list(report.get("created") or []))
+        paths("Files modified", list(report.get("modified") or []))
+        paths("Files deleted", list(report.get("deleted") or []))
+
+        commands: list[tuple[str, bool]] = list(report.get("commands") or [])
+        if commands:
+            ok_count = sum(1 for _cmd, ok in commands if ok)
+            last_cmd, last_ok = commands[-1]
+            section(
+                f"  Commands: {ok_count}/{len(commands)} ok — "
+                f"last: {last_cmd[:80]} {'(ok)' if last_ok else '(FAILED)'}"
+            )
+        tests = report.get("tests")
+        if tests:
+            ok_count = sum(1 for ok in tests if ok)
+            section(f"  Tests: {ok_count}/{len(tests)} run(s) passed")
+        research = report.get("research")
+        if research:
+            section(f"  Research: {len(research)} source(s) consulted")
+        errors: list[str] = list(report.get("errors") or [])
+        if errors:
+            for error in errors[-3:]:
+                self.console.print(
+                    Text(f"  \u2715 {error[:160]}", style="seed.error"),
+                    highlight=False,
+                )
+        self.console.print(highlight=False)
 
     def set_stream(self, text: str, *, force: bool = False) -> None:
         """Render the streamed markdown into the live block (throttled)."""
@@ -445,10 +706,25 @@ class ChatTUI:
     def _thinking_lines(self) -> list[StyledLine]:
         frame = _THINK_FRAMES[self._think_index % len(_THINK_FRAMES)]
         palette = _palette()
+        # Live elapsed time on the same line: the operation is genuinely
+        # running and the user deserves to see how long it has been running.
+        elapsed = max(0, int(time.monotonic() - self._think_started))
+        timer = f"  \u00b7 {elapsed}s" if self._think_started else ""
+        # The label is the *real* current operation the backend published
+        # (``state.operation``), never a generic word: when the engine is
+        # reading a file or generating, that is exactly what this line shows.
+        label = (getattr(self.state, "operation", "") or "").strip()
+        if not label:
+            label = self._think_label
+        if label:
+            # Display quality: the status comes in lowercase ("analyzing the
+            # task"); a sentence case reads better on the spinner line.
+            label = label[0].upper() + label[1:]
+            if not label.endswith(("...", "\u2026")):
+                label = f"{label}..."
         return [
             [
-                (f"bold fg:{palette.primary}", _AI_PREFIX),
-                (f"fg:{palette.accent}", f"\u25cc {self._think_label}{frame}"),
+                (f"bold fg:{palette.accent}", f"{_ACTIVITY_INDENT}{frame} {label}{timer}"),
             ]
         ]
 
@@ -457,7 +733,7 @@ class ChatTUI:
         self._invalidate()
 
     def start_thinking(self, label: str = "Thinking") -> None:
-        """Show the animated ``AI > ◌ Thinking…`` line (idempotent).
+        """Show the animated ``◌ <current operation> — e.g. Reading…`` line (idempotent).
 
         The animation is a UI state only: it lives on a daemon thread, is
         stopped the moment real output starts, and never delays the turn.
@@ -465,6 +741,7 @@ class ChatTUI:
         with self._think_lock:
             self._think_label = (label or "").strip() or "Thinking"
             self._think_index = 0
+            self._think_started = time.monotonic()
             self._thinking_active = True
             self._render_thinking()
             thread = self._think_thread
@@ -498,6 +775,7 @@ class ChatTUI:
             if not self._thinking_active:
                 return
             self._thinking_active = False
+            self._think_started = 0.0
             stop = self._think_stop
             self._think_stop = None
             self._think_thread = None
@@ -568,6 +846,149 @@ class ChatTUI:
         lines = self._input.text.count("\n") + 1
         return max(_MIN_INPUT_LINES, min(lines, _MAX_INPUT_LINES))
 
+    # --- slash-command autocomplete -----------------------------------------
+    def _command_entries(self) -> list[tuple[str, str]]:
+        """The real registered commands (name, description), loaded once.
+
+        Drawn from the live dispatch registry (``seedcode.commands``), so a
+        suggestion can never drift from a command the backend dispatches. A
+        registry that fails to import simply suggests nothing.
+        """
+        if self._command_catalog is None:
+            try:
+                from ..commands import _REGISTRY
+
+                self._command_catalog = sorted(
+                    (name, str(entry[1])) for name, entry in _REGISTRY.items()
+                )
+            except Exception:
+                self._command_catalog = []
+        return self._command_catalog
+
+    def _on_input_changed(self, buffer: Buffer) -> None:
+        """Filter the suggestions to the command being typed.
+
+        The list appears while the buffer holds exactly one ``/token``
+        (a single word, no newline) and narrows with every character. As soon
+        as the user moves to the arguments the list disappears.
+        """
+        text = buffer.text
+        entries: list[tuple[str, str]] = []
+        if text.startswith("/") and "\n" not in text and " " not in text:
+            query = text[1:].lower()
+            entries = [
+                (name, help_text)
+                for name, help_text in self._command_entries()
+                if name.lower().startswith(query)
+            ]
+            if not entries:
+                # Prefix miss: try a substring match before giving up, so
+                # /theme still finds /workspace-like typos being typed.
+                entries = [
+                    (name, help_text)
+                    for name, help_text in self._command_entries()
+                    if query and query in name.lower()
+                ]
+        if entries != self._auto_entries:
+            self._auto_entries = entries
+            self._auto_index = 0
+        elif self._auto_entries:
+            self._auto_index %= len(self._auto_entries)
+        # The row budget is re-fit immediately (not only on the next frame's
+        # before_render) so the layout is already correct when it paints.
+        self._reallocate_rows()
+        self._invalidate()
+
+    def _auto_display_entries(self) -> list[tuple[str, str]]:
+        """The visible suggestions (the list is bounded)."""
+        return list(self._auto_entries[:_MAX_AUTOCOMPLETE_ROWS])
+
+    def _inline_selection_is_complete(self) -> bool:
+        """True when the buffer already holds exactly one highlighted command.
+
+        Typing ``/help`` matches only ``/help``; the completion would replace
+        the buffer with text the user cannot distinguish from what was typed,
+        so Enter must submit instead of looping back into the same selection.
+        A proper prefix (``/hel``, ``/wor`` for ``/workspace set``) still
+        completes first.
+        """
+        entries = self._auto_display_entries()
+        if len(entries) != 1:
+            return False
+        typed = self._input.text.strip().lower()
+        return typed == f"/{entries[0][0].lower()}"
+
+    def _complete_selected(self) -> None:
+        """Replace the typed token with the highlighted suggestion.
+
+        Completion ends with a trailing space (the argument position the
+        completed command expects) and leaves the composer focused, so Enter
+        submits exactly what is on screen — no hidden state.
+        """
+        entries = self._auto_display_entries()
+        if not entries:
+            return
+        name = entries[min(self._auto_index, len(entries) - 1)][0]
+        self._input.text = f"/{name} "
+        self._input.cursor_position = len(self._input.text)
+        self._invalidate()
+
+    def _autocomplete_move(self, step: int) -> None:
+        """Highlight the previous/next suggestion (wrap both ways)."""
+        if self._auto_entries:
+            self._auto_index = (self._auto_index + step) % len(self._auto_entries)
+            self._invalidate()
+
+    def _autocomplete_pick(self, row: int) -> None:
+        """Mouse: clicking a suggestion row selects and completes it."""
+        entries = self._auto_display_entries()
+        if 0 <= row < len(entries):
+            self._auto_index = row
+            self._complete_selected()
+
+    def _dismiss_autocomplete(self) -> None:
+        """Close the suggestion list, keeping what is typed."""
+        if self._auto_entries:
+            self._auto_entries = []
+            self._auto_rows = 0
+            self._invalidate()
+
+    def _auto_row_count(self) -> int:
+        return len(self._auto_display_entries())
+
+    def _autocomplete_fragments(self) -> list[list[tuple[str, str]]]:
+        """The rendered suggestion rows (one line per displayed command)."""
+        from .theme import active_palette
+
+        palette = active_palette()
+        entries = self._auto_display_entries()
+        if not entries:
+            return [[("", "")]]
+        rows: list[list[tuple[str, str]]] = []
+        selected = min(self._auto_index, len(entries) - 1)
+        for index, (name, help_text) in enumerate(entries):
+            is_selected = index == selected
+            marker = "\u203a " if is_selected else "  "
+            description = str(help_text or "")
+            budget = max(4, self._width - len(name) - 6)
+            description = description[:budget]
+            rows.append(
+                [
+                    (
+                        f"fg:{palette.accent}" if is_selected else f"fg:{palette.dim}",
+                        marker,
+                    ),
+                    (
+                        f"bold fg:{palette.primary}"
+                        if is_selected
+                        else f"fg:{palette.text}",
+                        f"/{name}",
+                    ),
+                    (f"fg:{palette.dim}", f"  {description}"),
+                ]
+            )
+        return rows
+
     # --- responsive row allocation ------------------------------------------
     def _on_ui_thread(self) -> bool:
         """Whether the caller is the thread running the prompt_toolkit loop."""
@@ -603,6 +1024,10 @@ class ChatTUI:
         budget -= input_rows + _COMPOSER_FRAME_ROWS
         header = min(self._header_row_count(), max(0, budget))
         budget -= header
+        # The suggestion list is transient but bounded: served after the
+        # header, it never squeezes the composer — the conversation gives.
+        self._auto_rows = min(self._auto_row_count(), max(0, budget))
+        budget -= self._auto_rows
         permission = min(self._permission_height(), max(0, budget))
 
         self._hint_rows = hint
@@ -619,6 +1044,7 @@ class ChatTUI:
         """
         return (
             self._header_rows
+            + self._auto_rows
             + self._permission_rows
             + self._input_rows
             + _COMPOSER_FRAME_ROWS
@@ -627,6 +1053,9 @@ class ChatTUI:
 
     def _header_dimension(self) -> Dimension:
         return Dimension.exact(self._header_rows)
+
+    def _auto_dimension(self) -> Dimension:
+        return Dimension.exact(self._auto_rows)
 
     def _input_dimension(self) -> Dimension:
         return Dimension.exact(self._input_rows)
@@ -654,10 +1083,10 @@ class ChatTUI:
             return
         self._remember(text)
         if text.startswith("/"):
-            # Mode switches are pure state transitions: they run inside the
-            # live application (no exit, no rebuild, no flicker). Everything
-            # else may open a selector/menu that needs the terminal to itself,
-            # so it hands control back to the controller for one dispatch.
+            # Selected state transitions run inside the live application (no
+            # exit, no rebuild, no flicker). Everything else may open a
+            # selector/menu that needs the terminal to itself, so it hands
+            # control back to the controller for one dispatch.
             if self.on_command is not None and _is_mode_command(text):
                 self._start_command(text)
                 return
@@ -1013,6 +1442,14 @@ class ChatTUI:
 
         @kb.add("enter")
         def _(_event) -> None:
+            # With the suggestion list open Enter completes the highlighted
+            # command instead of submitting — unless the buffer already is
+            # exactly the highlighted command (`/help` typed in full), in
+            # which case completing again would be a no-op and the composer
+            # would wait forever for a second Enter that never adds anything.
+            if self._auto_entries and not self._inline_selection_is_complete():
+                self._complete_selected()
+                return
             # One submission path: Enter runs the buffer's accept handler.
             self._input.validate_and_handle()
 
@@ -1027,6 +1464,9 @@ class ChatTUI:
         # focusable field, and they preserve the historical bindings).
         @kb.add("tab")
         def _(event) -> None:
+            if self._auto_entries:
+                self._complete_selected()
+                return
             event.app.layout.focus_next()
 
         @kb.add("s-tab")
@@ -1035,6 +1475,11 @@ class ChatTUI:
 
         @kb.add("up")
         def _(_event) -> None:
+            # With the suggestion list open Up/Down move the selection; only
+            # when it is closed does the cursor/history movement apply.
+            if self._auto_entries:
+                self._autocomplete_move(-1)
+                return
             # Inside a multiline message Up/Down move the cursor; only at the
             # top/bottom edge do they walk the input history.
             if self._input.document.cursor_position_row > 0:
@@ -1044,6 +1489,9 @@ class ChatTUI:
 
         @kb.add("down")
         def _(_event) -> None:
+            if self._auto_entries:
+                self._autocomplete_move(1)
+                return
             last_row = self._input.document.line_count - 1
             if self._input.document.cursor_position_row < last_row:
                 self._input.cursor_down()
@@ -1089,6 +1537,14 @@ class ChatTUI:
             self.buffer.clear()
             self._invalidate()
 
+        @kb.add("c-e")
+        def _(_event) -> None:
+            self.show_last_change()
+
+        @kb.add("c-t")
+        def _(_event) -> None:
+            self.show_last_command()
+
         @kb.add("c-c")
         def _(_event) -> None:
             if self._deny_confirm():
@@ -1110,6 +1566,10 @@ class ChatTUI:
         @kb.add("escape")
         def _(_event) -> None:
             if self._deny_confirm():
+                return
+            if self._auto_entries:
+                # Esc dismisses the suggestions but keeps what is typed.
+                self._dismiss_autocomplete()
                 return
             if self._busy:
                 self.request_cancel()
@@ -1177,10 +1637,20 @@ class ChatTUI:
             title=lambda: self._composer_title().strip(),
             style="class:composer",
         )
+        self._autocomplete_window = Window(
+            _AutocompleteControl(
+                lambda w, h: self._autocomplete_fragments(),
+                self._autocomplete_pick,
+            ),
+            height=self._auto_dimension,
+            dont_extend_height=True,
+            wrap_lines=False,
+        )
         root = HSplit(
             [
                 self._header_window,
                 self._content_window,
+                self._autocomplete_window,
                 self._permission_window,
                 composer,
                 self._hint_window,
@@ -1238,6 +1708,9 @@ class ChatTUI:
     def shutdown(self) -> None:
         """Stop background UI work and release the application (called once)."""
         self.stop_thinking()
+        # No background UI state survives the session: a workspace
+        # preparation left mid-flight must not outlive the exit path.
+        self.end_initialization()
         self._cancel.set()
         self._app = None
 
@@ -1366,6 +1839,23 @@ class TuiUI:
     def dim(self, message: str) -> None:
         self.print(safe_text(message), style=_rich("dim"))
 
+    # --- structured live activity ------------------------------------------
+    def append_activity(self, kind: str, message: str) -> None:
+        """One real backend activity message in the persistent feed."""
+        self.tui.append_activity(kind, message)
+
+    def append_change(self, event: dict) -> None:
+        """A real file change with its line ranges and diff preview."""
+        self.tui.append_change(event)
+
+    def record_command(self, command: str, ok: bool, output: str) -> None:
+        """One real terminal command result, expandable with Ctrl+T."""
+        self.tui.record_command(command, ok, output)
+
+    def append_report(self, report: dict) -> None:
+        """The turn's final execution report (from real observed events)."""
+        self.tui.append_report(report)
+
     def success(self, message: str) -> None:
         self.print(f"{self._ok_mark} {safe_text(message)}", style=_rich("success"))
 
@@ -1399,7 +1889,7 @@ class TuiUI:
 
     @contextmanager
     def thinking(self, label: str = "Thinking") -> Iterator[None]:
-        """Animate ``AI > ◌ Thinking…`` while a real operation is in flight.
+        """Animate ``◌ <current operation>`` while a real operation is in flight.
 
         The indicator is removed on exit — including when the block wrapped a
         command that ran with the prompt_toolkit application stepped aside — so
@@ -1460,15 +1950,6 @@ class TuiUI:
         cancel: Callable[[], bool] | None = None,
     ) -> str:
         return self.tui.confirm(title, category_label, description, cancel=cancel)
-
-    def confirm_desktop(
-        self,
-        category_label: str,
-        description: str,
-        *,
-        cancel: Callable[[], bool] | None = None,
-    ) -> str:
-        return self._confirm("Desktop Control", category_label, description, cancel=cancel)
 
     def confirm_tool_action(
         self,

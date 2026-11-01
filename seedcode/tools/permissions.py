@@ -3,25 +3,19 @@
 A single hierarchical :class:`PermissionLevel` is the one source of truth for
 what the session may do, checked before every privileged operation:
 
-* ``read_only``    — inspect only: no writes, no commands, no git mutations,
-                     no desktop control.
+* ``read_only``    — inspect only: no writes, no commands, no git mutations.
 * ``workspace``    — read anywhere, mutate only inside the workspace directory
-                     (the directory Seed Code was started in); still no desktop.
-* ``desktop``      — everything ``workspace`` allows, plus control of the local
-                     computer through the Computer Engine (mouse, keyboard,
-                     windows, apps, browser, non-sensitive registry reads).
-* ``full_system``  — no path restriction on mutations and sensitive desktop
-                     actions (registry writes, secrets, system power, deletes,
-                     purchases) become available (still confirmed per action).
+                     (the directory Seed Code was started in).
+* ``full_system``  — no path restriction on mutations (still confirmed per
+                     action).
 
-Levels are ordered (``READ_ONLY < WORKSPACE < DESKTOP < FULL_SYSTEM``) so a
-capability check is a single comparison: ``level >= required``. Desktop
-automation is a *capability of a level*, not a separate mode — the old
-``desktop_mode`` flag is gone.
+Levels are ordered (``READ_ONLY < WORKSPACE < FULL_SYSTEM``) so a capability
+check is a single comparison: ``level >= required``. Desktop automation was
+removed from the product in v9.2.0 — the old ``desktop`` level and
+``desktop_mode`` flag are gone.
 
 On top of the levels, *dangerous* actions (shell commands, file deletes, git
-mutations, writes outside the workspace, and every sensitive desktop action)
-ask the user first — the Y/A/N prompt is [Y] once / [A] always for this
+mutations, writes outside the workspace) ask the user first — the Y/A/N prompt is [Y] once / [A] always for this
 session / [N] cancel. "Always"/"Deny" answers are remembered per category for
 the session only, never persisted; sensitive categories never remember.
 
@@ -36,10 +30,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum, IntEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable
-
-if TYPE_CHECKING:
-    from ..computer.permissions import DesktopSession
+from typing import Callable
 
 
 class PermissionError_(Exception):
@@ -55,10 +46,9 @@ class PermissionLevel(IntEnum):
 
     READ_ONLY = 0
     WORKSPACE = 1
-    DESKTOP = 2
-    FULL_SYSTEM = 3
+    FULL_SYSTEM = 2
     # Legacy alias: pre-vNext configs used "full_access" for the top level.
-    FULL_ACCESS = 3
+    FULL_ACCESS = 2
 
     @classmethod
     def parse(cls, value: "str | PermissionLevel") -> "PermissionLevel":
@@ -71,8 +61,6 @@ class PermissionLevel(IntEnum):
             "read_only": cls.READ_ONLY,
             "ws": cls.WORKSPACE,
             "workspace": cls.WORKSPACE,
-            "desktop": cls.DESKTOP,
-            "computer": cls.DESKTOP,
             "full": cls.FULL_SYSTEM,
             "full_access": cls.FULL_SYSTEM,
             "fullaccess": cls.FULL_SYSTEM,
@@ -84,7 +72,7 @@ class PermissionLevel(IntEnum):
         if level is None:
             raise ValueError(
                 f"Unknown permission level '{value}'. "
-                "Choose read_only, workspace, desktop, or full_system."
+                "Choose read_only, workspace, or full_system."
             )
         return level
 
@@ -94,7 +82,6 @@ class PermissionLevel(IntEnum):
         return {
             PermissionLevel.READ_ONLY: "read_only",
             PermissionLevel.WORKSPACE: "workspace",
-            PermissionLevel.DESKTOP: "desktop",
             PermissionLevel.FULL_SYSTEM: "full_system",
         }[PermissionLevel(int(self))]
 
@@ -103,14 +90,10 @@ class PermissionLevel(IntEnum):
         return {
             PermissionLevel.READ_ONLY: "Read Only",
             PermissionLevel.WORKSPACE: "Workspace",
-            PermissionLevel.DESKTOP: "Desktop",
             PermissionLevel.FULL_SYSTEM: "Full System",
         }[PermissionLevel(int(self))]
 
-    @property
-    def allows_desktop(self) -> bool:
-        """Whether this level may drive the Computer Engine at all."""
-        return int(self) >= int(PermissionLevel.DESKTOP)
+
 
 
 # Backward-compatible name: older modules import ``PermissionMode`` and
@@ -211,15 +194,15 @@ class PermissionManager:
         # ``level`` is the canonical field; ``mode`` is accepted as the legacy
         # keyword and both stay in sync through the ``mode`` property below.
         self.level = PermissionLevel.parse(level if level is not None else mode)
-        # Desktop Control gate (the Computer Engine); attached by the app layer
-        # when the level allows desktop. None means desktop tools refuse.
-        self.desktop: "DesktopSession | None" = None
         # Dangerous-action confirmation gate; attached by the app layer. None
         # means no prompting (headless/tests) — the level checks alone decide.
         self.gate: ActionGate | None = None
         # Live command output sink (attached by the app layer): each line a
         # running terminal command prints is echoed here as it arrives.
         self.on_output: Callable[[str], None] | None = None
+        # Structured terminal-output sink (attached by the agent engine): each
+        # line becomes a real ``terminal_output`` activity event.
+        self.on_activity: Callable[[str], None] | None = None
 
     # --- level (with legacy ``mode`` alias) ----------------------------------
     @property
@@ -234,10 +217,9 @@ class PermissionManager:
     def require(self, required: "PermissionLevel | str", description: str = "") -> None:
         """Raise unless the current level meets ``required``.
 
-        The single capability gate the Computer Engine and every privileged
-        tool consults. Elevation prompting is handled by the app layer (which
-        may raise the level in response); this method only enforces the
-        current level.
+        The single capability gate every privileged tool consults. Elevation
+        prompting is handled by the app layer (which may raise the level in
+        response); this method only enforces the current level.
         """
         needed = PermissionLevel.parse(required)
         if self.level >= needed:

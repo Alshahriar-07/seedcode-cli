@@ -121,7 +121,9 @@ def test_byok_provider_values_are_dynamic() -> None:
     out = _render(_byok())
     assert "OpenRouter" in out
     assert "gpt-5.1-codex" in out
-    assert "Chat" in out
+    # v9.2.0: one unified coding agent — the Mode row names the capability,
+    # there is no Chat mode to name any more.
+    assert "Coding Agent" in out
     assert "Ready" in out
 
 
@@ -129,7 +131,7 @@ def test_mode_and_status_are_separate_rows() -> None:
     lines = _lines(_byok(), 88)
     mode = next(ln for ln in lines if re.search(r"\bMode\b", ln))
     status = next(ln for ln in lines if re.search(r"\bStatus\b", ln))
-    assert "Chat" in mode
+    assert "Coding Agent" in mode
     assert "Ready" in status
 
 
@@ -179,27 +181,27 @@ class _StubUI:
         return "n"
 
 
-def test_agent_mode_is_named_and_code_mode_is_not_a_mode(monkeypatch, tmp_path) -> None:
-    cfg = _byok()
-    cfg.agent_mode = True
-    assert "Agent Mode" in _render(cfg)
-
+def test_single_agent_mode_and_removed_modes_are_not_named(monkeypatch, tmp_path) -> None:
+    """v9.2.0: one coding agent, and the removed mode commands stay removed."""
     from seedcode import codemode_state as cms
     from seedcode.commands import CommandContext, dispatch
-    from seedcode.commands import assist as assist_cmd
-    from seedcode.commands import codemode as codemode_cmd
+
+    ui = _StubUI()
+    cfg = _byok()
+    assert "Coding Agent" in _render(cfg)
+    assert "Agent Mode" not in _render(cfg)
+    assert "Code Mode" not in _render(cfg)
 
     cms.reset()
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(codemode_cmd, "save_config", lambda config: None)
-    monkeypatch.setattr(assist_cmd, "save_config", lambda config: None)
-    monkeypatch.setattr(assist_cmd, "is_available", lambda: (False, "test"))
     try:
-        # The workspace capability (former Code Mode) is part of Agent Mode,
-        # so it is named Agent Mode, never a second user-facing mode.
-        dispatch(CommandContext(ui=_StubUI(), config=cfg, engine=None), "/codemode on")
-        assert "Agent Mode" in _render(cfg)
-        assert "Code Mode" not in _render(cfg)
+        # The former mode-switch commands (/chat /agent /code /mode /codemode)
+        # were removed with the mode system: they must be reported as unknown
+        # instead of silently pretending to switch to a mode that is gone.
+        for command in ("/agent on", "/mode chat", "/codemode on"):
+            dispatch(CommandContext(ui=ui, config=cfg, engine=None), command)
+        assert any("Unknown command" in m for m in ui.messages)
+        assert "Coding Agent" in _render(cfg)  # the session never left the agent
     finally:
         cms.reset()
 
@@ -257,7 +259,7 @@ def test_narrow_terminals_get_the_compact_panel() -> None:
         assert len(lines) == 3, (width, lines)
         out = "\n".join(lines)
         assert "OpenRouter" in out or "OpenR" in out
-        assert "Chat" in out
+        assert "Coding Agent" in out
 
 
 def test_very_narrow_terminals_render_plain_lines() -> None:
@@ -299,19 +301,22 @@ def test_session_status_bar_is_one_line_of_live_state() -> None:
     lines = [ln for ln in ui.console.export_text().splitlines() if ln.strip()]
     assert len(lines) == 1
     out = lines[0]
-    for expected in ("OpenRouter", "gpt-5.1-codex", "Chat", "Ready"):
+    for expected in ("OpenRouter", "gpt-5.1-codex", "Coding Agent", "Ready"):
         assert expected in out, out
 
 
-def test_mode_switch_reprints_the_session_bar() -> None:
+def test_removed_mode_command_is_reported_and_state_is_untouched() -> None:
+    """The former /mode chat switch is gone: reported, not silently faked."""
     from seedcode.commands import CommandContext, dispatch
 
     ui = _ui()
     config = AppConfig(provider="default", model="cohere/north-mini-code:free")
     dispatch(CommandContext(ui=ui, config=config, engine=None), "/mode chat")
     out = ui.console.export_text()
-    assert "cohere/north-mini-code:free" in out
-    assert "Setup needed" in out
+    assert "Unknown command" in out
+    # The provider/model state the user actually has is untouched.
+    assert config.provider == "default"
+    assert config.model == "cohere/north-mini-code:free"
 
 
 def test_legacy_console_gets_an_ascii_panel() -> None:

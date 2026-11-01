@@ -48,9 +48,9 @@ from .tools import PermissionManager, PermissionMode
 from .ui import UI
 from .ui.badges import badge_for_status
 from .ui.menu import MenuItem, run_menu
-from .ui.mode_switch import ModeSwitcher
 from .ui.reference import CONTROLS_HINT, INPUT_HINT
 from .ui.state import AppState, Status
+from .workspace import active_workspace
 from .ui.tasks import TaskFlow, TaskState, activity_for
 from .ui.textbox import prompt_label
 from .ui.theme import pt_style, set_active_theme
@@ -91,40 +91,13 @@ def _exit_application(ui: "UI", reason: str) -> None:
 
 
 def _release_desktop_resources() -> None:
-    """Teardown hook: release desktop/session resources, never the process.
+    """Teardown hook: release internal session resources, never the process.
 
-    Cleanup clears caches and closes driver connections only. It must never
-    terminate SeedCode — historically a finally-block that "cleaned up" by
-    exiting was one of the auto-exit paths.
-
-    v7.1.0 additionally guarantees the other direction: cleanup never closes a
-    user-facing application. Applications Seed Code opened stay open, which is
-    why this hook releases only internal resources (sockets, drivers, caches).
+    v9.2.0: desktop control is removed from the product, so there is nothing
+    from the Computer Engine to release any more. The hook remains as the one
+    teardown point the lifecycle registered at startup.
     """
-    try:
-        from .computer import lifecycle_guard
-
-        lifecycle_guard.release_internal()  # logs what is deliberately left open
-    except Exception:
-        pass
-    try:
-        from .computer.browser_cdp import reset as _cdp_reset
-
-        _cdp_reset()
-    except Exception:
-        pass
-    try:
-        from .computer import browser_skills
-
-        browser_skills.reset_engines()
-    except Exception:
-        pass
-    try:
-        from .computer.permissions import session_permissions
-
-        session_permissions().reset()
-    except Exception:
-        pass
+    return None
 
 
 def _provider_status(config: AppConfig) -> str:
@@ -156,12 +129,7 @@ def _key_status(config: AppConfig) -> str:
 
 
 def _workspace_status(config: AppConfig) -> str:
-    """Menu status for the workspace capability (ON only when really active).
-
-    The workspace (`.seedcode` project memory + index) is a capability of Agent
-    Mode, not a separate mode, so its status reflects that session alone rather
-    than the mode name.
-    """
+    """Menu status for the active project (ON only when really bound)."""
     try:
         from .codemode_state import codemode_state
 
@@ -173,26 +141,25 @@ def _workspace_status(config: AppConfig) -> str:
 def _main_menu(config: AppConfig):
     """The interactive main menu; returns an action id or None (exit).
 
-    v9.1.0 layout: the mode/setup actions carry Ctrl+1..Ctrl+4 shortcuts that
-    execute the real handlers (no decorative items), followed by the
-    chat/setup actions kept from earlier releases. There are exactly two
-    modes — Chat and Agent — and Code Mode's workspace capability lives inside
-    Agent Mode.
+    v9.2.0 layout — one coding agent, no mode items: the session starts in
+    the agent directly (``Start Coding Session``), the project workspace
+    (folder selection + memory/index) is a first-class item, and the setup
+    actions remain.
     """
     provider = PROVIDERS.get(config.provider)
     badge = badge_for_status(provider.status if provider is not None else "")
     return run_menu(
         [
-            MenuItem("Agent Mode", "agent", shortcut="1"),
             MenuItem(
-                "Project Workspace",
-                "memory",
-                status=_workspace_status(config),
-                shortcut="2",
+                "Start Coding Session", "chat",
+                status=_model_status(config), badge=badge, shortcut="1",
+            ),
+            MenuItem(
+                "Project Workspace", "memory",
+                status=_workspace_status(config), shortcut="2",
             ),
             MenuItem("Settings", "settings", shortcut="3"),
             MenuItem("Exit", "exit", shortcut="4"),
-            MenuItem("Start Chat", "chat", status=_model_status(config), badge=badge),
             MenuItem("Provider", "provider", status=_provider_status(config)),
             MenuItem("API Key", "apikey", status=_key_status(config)),
             MenuItem("Model", "model", status=_model_status(config)),
@@ -271,64 +238,6 @@ def _retrieve_context(ui: UI, intent: Intent, text: str) -> str:
         return ""
 
 
-def _handle_chat(
-    ui: UI,
-    engine: ChatEngine,
-    history: HistoryStore,
-    text: str,
-    intent: Intent | None = None,
-) -> None:
-    """Send a user turn to the model and stream the reply to screen.
-
-    When the request needs current information, only a lightweight status is
-    shown (``[Accessing internet...]`` / ``[Reading relevant sources...]``)
-    and the retrieved sources are prepended to the turn; the browsing itself
-    is never exposed line by line.
-    """
-    resolved = intent or classify(text)
-    outgoing = text
-    if resolved.needs_internet:
-        block = _retrieve_context(ui, resolved, text)
-        if block:
-            outgoing = block + "\n\n" + text
-    engine.add_user(outgoing)
-    renderer = None
-    try:
-        chunks = engine.stream_reply()
-        # Spinner until the first token, then hand off to the live renderer.
-        first = ""
-        with ui.thinking():
-            for piece in chunks:
-                first = piece
-                break
-        with ui.streaming() as renderer:
-            if first:
-                renderer.feed(first)
-            for piece in chunks:
-                renderer.feed(piece)
-    except ChatError as exc:
-        # Drop the unanswered user turn so a retry doesn't send two
-        # consecutive user messages (strict APIs reject that shape).
-        engine.drop_last_user()
-        ui.error(str(exc))
-        return
-    except KeyboardInterrupt:
-        # Ctrl+C cancels this response only — the session keeps going.
-        ui.blank()
-        ui.dim("(response cancelled)")
-
-    reply = renderer.text if renderer is not None else ""
-    if reply.strip():
-        engine.add_assistant(reply)
-        history.save(engine.transcript)
-    else:
-        # No reply (empty response, or cancelled before the first token):
-        # forget the user turn so the transcript stays alternating.
-        engine.drop_last_user()
-        if renderer is not None:
-            ui.dim("(no response)")
-
-
 class _TaskPresenter:
     """Bridges engine activity to the live step view (and plain narration).
 
@@ -346,6 +255,12 @@ class _TaskPresenter:
         self.flow: TaskFlow | None = None
         self._echo_lines = 0
         self._echo_elided = False
+        # Event ids already rendered: the backend may re-report a step through
+        # both observers, and the feed must never duplicate a message.
+        self._seen_events: set[str] = set()
+        # This turn's observed operations (the final report's data). Every
+        # entry comes from a real structured event, never from the model.
+        self._turn_ops = self._fresh_turn()
 
     # --- live status (persistent TUI only) ----------------------------------
     def _set_status(self, status: Status, operation: str | None = None) -> None:
@@ -380,6 +295,80 @@ class _TaskPresenter:
             )
         self._echo_lines += 1
 
+    # --- turn operation tracking (the final report's data) -------------------
+    @staticmethod
+    def _fresh_turn() -> dict:
+        """Empty operation buckets for one turn."""
+        return {
+            "created": [],
+            "modified": [],
+            "deleted": [],
+            "commands": [],  # (command, ok) in order
+            "tests": [],  # ok flags in run order
+            "research": [],  # queries and fetched urls
+            "errors": [],
+        }
+
+    def _record_op(self, payload: dict) -> None:
+        """Fold one real backend event into the turn's report data."""
+        kind = str(payload.get("type") or "")
+        turn = self._turn_ops
+        args = payload.get("args") or {}
+        path = str(payload.get("path") or "")
+        if kind == "file_created":
+            turn["created"].append(path)
+        elif kind == "file_updated":
+            turn["modified"].append(path)
+        elif kind in ("file_deleted", "folder_deleted"):
+            turn["deleted"].append(path)
+        elif kind in ("terminal_completed", "test_completed"):
+            ok = bool(payload.get("ok"))
+            command = str(args.get("command") or "").strip()
+            if not command:
+                return
+            turn["commands"].append((command, ok))
+            if kind == "test_completed":
+                turn["tests"].append(ok)
+            record = getattr(self.ui, "record_command", None)
+            if callable(record):
+                record(command, ok, str(payload.get("output") or ""))
+        elif kind == "internet_search":
+            query = str(args.get("query") or "").strip()
+            if query:
+                turn["research"].append(query)
+        elif kind == "internet_result":
+            if path:
+                turn["research"].append(path)
+        elif kind == "error":
+            detail = str(payload.get("message") or "").strip()
+            if detail:
+                turn["errors"].append(detail)
+
+    def _flush_report(self, state: str) -> None:
+        """Render the turn's final execution report, built from observed events.
+
+        A turn that performed no file/command/test/research work prints no
+        report at all — sections are never filled in with placeholders. The
+        buckets reset either way so the next turn starts clean.
+        """
+        append_report = getattr(self.ui, "append_report", None)
+        turn = self._turn_ops
+        empty = (
+            not turn["created"]
+            and not turn["modified"]
+            and not turn["deleted"]
+            and not turn["commands"]
+            and not turn["tests"]
+            and not turn["research"]
+            and not turn["errors"]
+        )
+        if callable(append_report) and not empty:
+            try:
+                append_report({"state": state, **turn})
+            except Exception:
+                pass  # a display bug must never end a task
+        self._turn_ops = self._fresh_turn()
+
     # --- narration (human-readable) -----------------------------------------
     def on_event(self, kind: str, detail: str) -> None:
         flow = self.flow
@@ -399,20 +388,30 @@ class _TaskPresenter:
             self.ui.dim(f"  {detail}")
         elif kind == "limit":
             self.ui.warning(f"Agent Mode stopped: {detail}")
-        elif kind == "call" and flow is None:
+        elif kind == "call" and flow is None and not getattr(self.ui, "is_tui", False):
             # With a task view on screen the step list already shows the tool
             # work; without one, narrate it (the plain/legacy experience).
+            # The TUI renders the richer structured event instead.
             self.ui.dim(f"  ⚒ {detail}")
             self._set_status(Status.EXECUTING, detail)
 
     # --- structured activity -> step states ---------------------------------
     def on_step(self, payload: dict) -> None:
-        flow = self.flow
-        if flow is None:
-            return
+        event_id = str(payload.get("event_id") or "")
+        if event_id:
+            if event_id in self._seen_events:
+                return
+            self._seen_events.add(event_id)
+            if len(self._seen_events) > 4000:
+                self._seen_events.clear()
         phase = str(payload.get("phase") or "")
         name = str(payload.get("name") or "")
         args = payload.get("args") or {}
+        if getattr(self.ui, "is_tui", False):
+            self._tui_activity(payload, phase, name, args)
+        flow = self.flow
+        if flow is None:
+            return
         if phase == "tool_start":
             self.reset_echo()
             flow.observe_tool_start(name, args)
@@ -424,10 +423,119 @@ class _TaskPresenter:
                 str(payload.get("output") or ""),
                 args,
             )
-            self._set_status(Status.WORKING, "continuing")
+            self._set_status(Status.WORKING, "waiting for the model response")
         elif phase == "say":
             flow.observe_text(str(payload.get("text") or ""))
 
+    def _tui_activity(
+        self, payload: dict, phase: str, name: str, args: dict
+    ) -> None:
+        """Render one structured backend event as a persistent TUI message.
+
+        The TUI has no transient step view, so this is its activity feed: every
+        message comes from a real event the engine emitted. File changes are
+        followed by the actual diff (collapsed to a bounded preview; Ctrl+E
+        expands the last one).
+        """
+        append = getattr(self.ui, "append_activity", None)
+        if not callable(append):
+            return
+        message = str(payload.get("message") or "")
+        if phase == "task_started":
+            self._turn_ops = self._fresh_turn()
+            append("note", "Analyzing the task and inspecting the workspace...")
+            self._set_status(Status.THINKING, "analyzing the task")
+            return
+        if phase == "terminal_output":
+            # The command's live echo is already handled by on_output; the
+            # structured event is for event consumers, not a second echo.
+            return
+        if phase == "say":
+            text = str(payload.get("text") or "").strip()
+            if text:
+                append("note", text)
+            return
+        self._record_op(payload)
+        if phase == "tool_start":
+            self.reset_echo()
+            append("action", activity_for(name, args))
+            self._set_status(Status.EXECUTING, activity_for(name, args))
+            return
+        if phase == "tool_done":
+            ok = bool(payload.get("ok"))
+            # One operation, one line: a real file change is rendered by the
+            # diff view (summary + accurate line numbers), so the generic
+            # event message is not printed a second time on top of it.
+            if ok and payload.get("diff"):
+                append_change = getattr(self.ui, "append_change", None)
+                if callable(append_change):
+                    append_change(payload)
+                else:
+                    append("success", message or f"{name} finished")
+            else:
+                append("success" if ok else "error", message or f"{name} finished")
+            self._set_status(Status.WORKING, "waiting for the model response")
+            return
+        if phase == "task_completed":
+            append("success", "Task completed.")
+            self._set_status(Status.COMPLETED, "")
+            self._flush_report("completed")
+            return
+        if phase == "task_failed":
+            append("error", message or "Task failed.")
+            self._set_status(Status.ERROR, message or "task failed")
+            self._flush_report("failed")
+
+
+    # --- live TODO/plan lines (TUI) -----------------------------------------
+    def _tui_plan_update(self, kind: str, detail: str) -> None:
+        """One real plan-state line in the persistent TUI feed.
+
+        States come from the session's own events (the task graph is touched
+        by the session before each announcement), so the visible checklist
+        always reflects actual execution state, never an animation.
+        """
+        try:
+            from .core import session as session_mod
+
+            session = session_mod.current_session()
+            graph = getattr(session, "graph", None)
+            total = int(getattr(graph, "total", 0) or 0)
+        except Exception:
+            return
+        if kind == "plan_ready":
+            text = f"Plan: {total} task(s)" if total else "Plan ready"
+            if detail:
+                text = f"{text} — {str(detail).strip()[:120]}"
+            self.ui.append_activity("action", text)
+            return
+        states = {
+            "task_start": ("\u25cf", "action", "Working on"),
+            "task_done": ("\u2713", "success", "Completed"),
+            "task_failed": ("\u2717", "error", "Failed"),
+            "task_blocked": ("\u2717", "error", "Blocked"),
+            "task_skipped": ("\u2013", "note", "Skipped"),
+            "recovery": ("\u25cf", "action", "Repairing"),
+        }
+        info = states.get(kind)
+        if info is None or total <= 0:
+            return
+        mark, level, label = info
+        step = getattr(graph, "checklist", None)
+        index = ""
+        if callable(step) and detail:
+            try:
+                rows = list(graph.checklist())
+                for row_index, (_state, title) in enumerate(rows, start=1):
+                    if str(title).strip() and str(title).strip() in str(detail):
+                        index = f"[{row_index}/{len(rows)}] "
+                        break
+            except Exception:
+                index = ""
+        text = f"{mark} {label}: {(detail or '').strip()[:140]}"
+        if index:
+            text = f"{index}{text}"
+        self.ui.append_activity(level, text.strip())
 
     # --- persistent session events (Code Mode) ------------------------------
     def on_session_event(self, kind: str, detail: str) -> None:
@@ -439,6 +547,10 @@ class _TaskPresenter:
         """
         from .core import session as session_mod
 
+        # The persistent TUI gets its plan state as real feed lines (the
+        # TODO view): one line per observed state change, never an animation.
+        if getattr(self.ui, "is_tui", False):
+            self._tui_plan_update(kind, detail)
         flow = self.flow
         session = session_mod.current_session()
         # Reflect the real session phase on the live header (TUI only).
@@ -535,24 +647,6 @@ def _advance(lc, method: str) -> None:
         _log.debug("lifecycle transition %s skipped", method)
 
 
-#: How long an Agent Mode turn waits for a background mode initialization that
-#: is still running before it gets on with building its own engine. The wait
-#: happens on the turn's worker thread, so nothing on screen is ever held up.
-_AGENT_INIT_WAIT_S = 20.0
-
-
-def _is_mode_command(text: str) -> bool:
-    """Whether ``text`` is an in-place mode transition (single source: the TUI).
-
-    Imported lazily so the controller can route a mode command to the
-    background worker without pulling prompt_toolkit into every entry point
-    that merely imports this module.
-    """
-    from .ui.tui import _is_mode_command as _is
-
-    return _is(text)
-
-
 def _codemode_enabled() -> bool:
     """Whether Code Mode is active (the persistent-session path)."""
     try:
@@ -607,10 +701,8 @@ def agent_presenter(agent: AgentEngine) -> _TaskPresenter | None:
 
 
 def _task_mode_label(config: AppConfig) -> str:
-    """The mode named in a task header (Chat Mode / Agent Mode only)."""
-    from .core.modes import active_mode, mode_title
-
-    return mode_title(active_mode(config))
+    """The mode named in a task header (v9.2.0: one unified Agent Mode)."""
+    return "Agent Mode"
 
 
 def _save_codemode_summary(agent: AgentEngine, text: str, outcome: str) -> None:
@@ -796,10 +888,13 @@ def _handle_agent(
     text: str,
     presenter: _TaskPresenter | None = None,
 ) -> None:
-    """Run one full Agent/Code turn (tool loop) and render the final answer.
+    """Run one full coding-agent turn (tool loop) and render the final answer.
 
     The turn is shown as a compact live task flow whose step states follow real
     engine activity (see :mod:`seedcode.ui.tasks`) — never a fake progress bar.
+    With an active project workspace the turn continues as the persistent
+    plan-session loop (plan → implement → verify); without one it is still a
+    full agent turn on the loose files around the prompt.
 
     Lifecycle note: every outcome — success, tool failure, provider error,
     Ctrl+C — ends by printing a status, finishing the task view and RETURNING.
@@ -826,7 +921,7 @@ def _handle_agent(
     reply: str | None = None
     try:
         if flow is None:  # the task view already shows that work is happening
-            with ui.thinking("Working"):
+            with ui.thinking("Generating a response"):
                 _advance(lc, "to_executing")
                 reply = agent.run_turn(text)
         else:
@@ -888,20 +983,10 @@ def _make_agent(
     against it and stays inside it unless the permission system explicitly
     authorizes an outside write.
     """
-    # Lazy import (matching _make_desktop_session): the optional, platform-
-    # specific computer package stays out of app.py's top-level import graph.
-    from .computer import is_available
-    from .workspace import active_workspace
-
     permissions = PermissionManager(
         level=PermissionMode.parse(config.permission_mode),
         workspace=active_workspace(),
     )
-    # Desktop capability is a property of the permission level now: attach the
-    # Computer Engine gate whenever the level is Desktop or higher and the
-    # engine is actually available on this machine.
-    if permissions.level.allows_desktop and is_available()[0]:
-        permissions.desktop = _make_desktop_session(ui)
     permissions.gate = _make_action_gate(ui)
 
     presenter = presenter or _TaskPresenter(ui)
@@ -960,29 +1045,6 @@ def reset_action_gate() -> None:
     with _ACTION_GATE_LOCK:
         _ACTION_GATE = None
 
-
-def _make_desktop_session(ui: UI):
-    """Desktop Control gate wired to the interactive permission dialog.
-
-    The session is bound to the process-wide
-    :class:`~seedcode.computer.SessionPermissionManager` so a permission the
-    user granted once at ``/agent on`` keeps holding even though this gate is
-    rebuilt whenever the permission level changes.
-    """
-    from .computer import DesktopGrant, DesktopSession, session_permissions
-    from .computer.permissions import CATEGORY_LABELS
-
-    def confirm(category: str, description: str) -> DesktopGrant:
-        label = CATEGORY_LABELS.get(category, category)
-        answer = ui.confirm_desktop(label, description)
-        return {
-            "y": DesktopGrant.ONCE,
-            "a": DesktopGrant.ALWAYS,
-        }.get(answer, DesktopGrant.DENY)
-
-    return DesktopSession(
-        enabled=True, confirm=confirm, session=session_permissions()
-    )
 
 
 def _run_key_action(ui: UI, ctx: CommandContext, config: AppConfig, action: str) -> None:
@@ -1088,39 +1150,38 @@ def _chat_loop(
         # prompts again. A task can never end the app.
         with lifecycle().task_span():
             intent = classify(text)
-            if config.agent_mode or intent.executes:
-                # Build (or rebuild) the Agent engine for the live config. A
-                # temporary escalation builds exactly the same engine an
-                # explicit Agent Mode turn would, so behaviour cannot diverge.
-                try:
-                    from . import codemode_state as _cms
+            # v9.2.0 unified engine: every user request — a coding task, a
+            # research question, a plain conversation — is one agent turn.
+            # The engine decides from the request (``Intent``) which tools it
+            # needs; there is no chat/agent split to choose between.
+            # Build (or rebuild) the Agent engine for the live config. A
+            # rebuild is needed whenever the permission level or the bound
+            # workspace changed since the engine was constructed.
+            try:
+                from . import codemode_state as _cms
 
-                    codemode_now = _cms.enabled
-                except Exception:
-                    codemode_now = False
-                if (
-                    agent is None
-                    or agent_perm != config.permission_mode
-                    or agent_codemode != codemode_now
-                ):
-                    agent = _make_agent(ui, config, presenter)
-                    agent_perm = config.permission_mode
-                    agent_codemode = codemode_now
-                if not config.agent_mode:
-                    # Chat Mode escalation: one agent turn, then back to chat.
-                    # The persistent mode is untouched.
-                    ui.dim(f"[Agent assist - {intent.reason}]")
-                    try:
-                        agent.set_intent(intent)  # type: ignore[union-attr]
-                    except Exception:
-                        pass
-                # One task flow per turn: the engine reports real activity into
-                # it, and the REPL keeps prompting when the turn ends.
-                _handle_agent(ui, agent, history, text, presenter)
-                if not config.agent_mode:
-                    ui.dim("[Temporary agent task finished - back to Chat Mode]")
-            else:
-                _handle_chat(ui, engine, history, text, intent)
+                codemode_now = _cms.enabled
+            except Exception:
+                codemode_now = False
+            if (
+                agent is None
+                or agent_perm != config.permission_mode
+                or agent_codemode != codemode_now
+            ):
+                agent = _make_agent(ui, config, presenter)
+                agent_perm = config.permission_mode
+                agent_codemode = codemode_now
+            # Research requests fetch fresh sources first and prepend them to
+            # the turn — the same behaviour the old chat path had.
+            if intent.needs_internet:
+                block = _retrieve_context(ui, intent, text)
+                if block:
+                    text = block + "\n\n" + text
+            try:
+                agent.set_intent(intent)
+            except Exception:
+                pass
+            _handle_agent(ui, agent, history, text, presenter)
 
 
 def _interactive() -> bool:
@@ -1239,19 +1300,12 @@ class _TuiController:
         #: otherwise writes would keep resolving against the old folder.
         self.agent_workspace = str(Path.cwd())
         self._backend = config.provider
-        #: Guards the agent engine pointer against a mode switch rebuilding it
-        #: while a turn is reading it (both run on worker threads).
+        #: Guards the agent engine pointer against a rebuild while a turn is
+        #: reading it (turns run on worker threads).
         self._agent_lock = threading.RLock()
-        #: The single owner of every background mode transition. A switch is a
-        #: state change plus a worker; it is never a bare thread started from a
-        #: UI callback (which is how a switch could freeze the terminal).
-        self.switcher = ModeSwitcher(
-            on_finished=self._switch_finished,
-            on_failed=self._switch_failed,
-        )
         tui.on_submit = self.submit
-        # Mode switches run in place: no application exit, no rebuild.
-        tui.on_command = self._mode_command
+        # Commands run in place: no application exit, no rebuild.
+        tui.on_command = self._inplace_command
         tui.on_cancel_init = self._cancel_initialization
 
     # --- provider/backend --------------------------------------------------
@@ -1260,6 +1314,10 @@ class _TuiController:
             self.ui.warning(f"Switching provider: {detail}")
         elif kind == "retry":
             self.ui.dim(f"  {detail}")
+        elif kind == "provider_stay":
+            # v9.2.0 provider faithfulness: the selected local provider was
+            # NOT switched away from — say so instead of hiding it.
+            self.ui.warning(f"  {detail}")
 
     def _rebuild_backend(self) -> None:
         """Rebuild the chat backend/history after a provider change."""
@@ -1274,173 +1332,32 @@ class _TuiController:
     # --- one turn (worker thread) ------------------------------------------
     def submit(self, text: str) -> None:
         """Run one user turn to completion (never raises into the TUI)."""
-        from .core.modes import active_mode, agentic
-
         with lifecycle().task_span():
-            if agentic(active_mode(self.config)):
-                self._ensure_agent()
+            # v9.2.0 unified engine: every request is one coding-agent turn;
+            # the engine reads the request's intent itself.
+            intent = classify(text)
+            self._ensure_agent()
+            if self.agent is not None:
+                if intent.needs_internet:
+                    block = _retrieve_context(self.ui, intent, text)
+                    if block:
+                        text = block + "\n\n" + text
+                try:
+                    self.agent.set_intent(intent)
+                except Exception:
+                    pass
                 _handle_agent(self.ui, self.agent, self.history, text, self.presenter)
-            else:
-                intent = classify(text)
-                if intent.executes:
-                    # Chat Mode detected a request needing real execution:
-                    # escalate to Agent for THIS turn only, then return to
-                    # Chat. The persistent mode is never changed.
-                    self._run_escalated_turn(text, intent)
-                else:
-                    _handle_chat(self.ui, self.engine, self.history, text, intent)
         try:
             self.tui.sync_from_config(self.config)
         except Exception:
             pass
 
-    def _run_escalated_turn(self, text: str, intent: Intent) -> None:
-        """Run one Agent turn from Chat Mode, then hand control back (v9.1.1).
-
-        This is the *temporary* escalation path: the user stays in Chat Mode,
-        one request is executed with the full agent loop, and the session
-        returns to conversation. Explicit Agent Mode is unaffected and stays
-        active until the user changes it.
-        """
-        self.ui.dim(f"[Agent assist - {intent.reason}]")
-        try:
-            self._ensure_agent()
-            agent = self.agent
-            if agent is None:
-                _handle_chat(self.ui, self.engine, self.history, text, intent)
-                return
-            agent.set_intent(intent)
-            _handle_agent(self.ui, agent, self.history, text, self.presenter)
-        except Exception:  # escalation must never break the session
-            _log.exception("temporary agent escalation failed")
-            self.ui.error("The agent step could not run; answering in Chat Mode.")
-            _handle_chat(self.ui, self.engine, self.history, text, intent)
-        finally:
-            self.ui.dim("[Temporary agent task finished - back to Chat Mode]")
-
-    # --- mode transitions ---------------------------------------------------
-    def _mode_command(self, text: str) -> None:
-        """Handle a mode-switch command from the composer — *never* inline.
-
-        Entering Agent Mode does real work (the ``.seedcode`` workspace scan,
-        the desktop capability probe, and a permission prompt that waits for the
-        user). The permission prompt is answered by the prompt_toolkit event
-        loop, so running any of it on the event-loop thread would wait forever
-        for a key press that thread had already made impossible — the freeze.
-        Every transition therefore runs on the switcher's owned worker.
-        """
-        self._mode_transition(text)
-
-    def _mode_transition(self, text: str) -> int:
-        """Start a mode transition; return immediately, never blocking the loop."""
-        if not self._enters_agent_mode(text):
-            # Leaving Agent Mode — and reporting mode state — is cheap and has
-            # no permission prompt, so it applies here and now, and it cancels
-            # any preparation still in flight. Nothing in this path can wait
-            # for the event loop, so running it on the loop thread is safe.
-            self.switcher.cancel()
-            self.tui.end_initialization()
-            self._inplace_command(text)
-            return self.switcher.generation
-        # Entering Agent Mode: the immediate, cheap half now; everything that
-        # scans, probes or prompts happens on the switcher's owned worker.
-        self._activate_agent_mode_now()
-        return self.switcher.run(
-            "agent", lambda cancel: self._run_mode_command(text, cancel)
-        )
-
-    def _enters_agent_mode(self, text: str) -> bool:
-        """Whether a mode command is turning Agent Mode **on**.
-
-        Mirrors the command layer's own aliases (``/agent``, ``/assist``,
-        ``/desktop``, ``/mode``, ``/codemode``) so the immediate UI state and
-        the background preparation agree. A bare form toggles, which is why the
-        live config is consulted. Getting this wrong is not fatal — the command
-        layer still performs the real switch — it only decides whether the
-        user sees "Initializing..." instantly.
-        """
-        parts = text.strip().lstrip("/").split(maxsplit=1)
-        if not parts:
-            return False
-        head = parts[0].lower()
-        arg = parts[1].strip().lower() if len(parts) > 1 else ""
-        if head in ("agent", "assist", "desktop"):
-            if arg == "on":
-                return True
-            if arg == "off":
-                return False
-            return not self.config.agent_mode  # the bare form toggles
-        if head == "mode":
-            if not arg:
-                return False
-            from .core.modes import Mode, parse_mode
-
-            return parse_mode(arg, default=Mode.CHAT) is Mode.AGENT
-        if head == "codemode":
-            return arg == "on"
-        return False  # /chat, /status and the rest never enter Agent Mode
-
-    def _activate_agent_mode_now(self) -> None:
-        """Apply the cheap half of ``/agent on`` immediately.
-
-        Only the mode change itself (plus its config write): no workspace scan,
-        no capability probe, no permission prompt. Those are what
-        :func:`~seedcode.commands.assist.prepare_agent_mode` does on the worker.
-        """
-        from .commands.assist import activate_agent_mode
-
-        try:
-            activate_agent_mode(self.config)
-        except Exception:
-            _log.exception("could not switch to Agent Mode")
-        with self._agent_lock:
-            # The engine built for Chat Mode must not serve an agent turn.
-            self.agent = None
-        self.tui.begin_initialization("Agent Mode")
-        self.tui.sync_from_config(self.config)
-
-    def _run_mode_command(self, text: str, cancel) -> CommandResult:
-        """The worker body of an Agent Mode entry (runs off the event loop).
-
-        ``cancel`` is the switcher's probe for this transition: it is handed to
-        the command through the context so the workspace scan and the permission
-        prompt stop as soon as this transition is superseded, and everything
-        this worker might report is suppressed once it is stale.
-        """
-        ctx = CommandContext(
-            ui=self.ui,
-            config=self.config,
-            engine=self.engine,
-            cancel=cancel,
-        )
-        backend_before = self.config.provider
-        try:
-            result = dispatch(ctx, text)
-        except (KeyboardInterrupt, EOFError):
-            if not cancel():
-                self.ui.dim("Cancelled.")
-            result = CommandResult()
-        except Exception as exc:  # a broken command must not kill the session
-            if not cancel():
-                _log.exception("mode command failed: %s", text)
-                _report_command_error(self.ui, exc)
-            result = CommandResult()
-        if cancel():
-            return result  # superseded: a newer transition owns the screen
-        if self.config.provider != backend_before:
-            self._rebuild_backend()
-        self.tui.sync_from_config(self.config)
-        return result
-
+    # --- in-place commands ---------------------------------------------------
     def _cancel_initialization(self) -> None:
-        """Cancel a background Agent Mode preparation (Ctrl+C, Esc, shutdown)."""
-        self.switcher.cancel()
+        """Cancel a background workspace preparation (Ctrl+C, Esc, shutdown)."""
         self.tui.end_initialization()
         self.tui.state.set_status(Status.READY, "")
-        self.ui.dim(
-            "(initialization cancelled — still in Agent Mode, preparing when "
-            "needed; /chat on returns to Chat Mode)"
-        )
+        self.ui.dim("(preparation cancelled — it will resume when needed)")
 
     def _switch_finished(self, _generation: int, _key: str, _result) -> None:
         """The background preparation completed (called on the worker)."""
@@ -1487,16 +1404,10 @@ class _TuiController:
     def _ensure_agent(self) -> None:
         """Build the Agent engine for the live config (on the turn worker).
 
-        If a mode switch is still preparing Agent Mode, wait for it here: this
-        runs on the turn's own worker thread, so waiting costs the interface
-        nothing, and it keeps one engine from being built underneath another.
-        The wait is bounded, and Ctrl+C still aborts it.
+        Runs on the turn's own worker thread, so waiting for a rebuild costs
+        the interface nothing, and one engine is never built underneath
+        another: the whole rebuild happens under the agent lock.
         """
-        deadline = time.monotonic() + _AGENT_INIT_WAIT_S
-        while self.tui.state.agent_initializing and time.monotonic() < deadline:
-            self.tui.check_cancel()  # Ctrl+C still aborts the waiting turn
-            if self.switcher.wait(timeout=0.1):
-                break
         codemode_now = _codemode_enabled()
         workspace_now = str(Path.cwd())
         with self._agent_lock:
@@ -1515,11 +1426,6 @@ class _TuiController:
     def run(self) -> None:
         while True:
             kind, payload = self.tui.run_once()
-            # A mode command that somehow reached the main loop (an unexpected
-            # result) still must not be dispatched on the event-loop thread.
-            if kind == "command" and payload and _is_mode_command(payload):
-                self._mode_transition(payload)
-                continue
             if kind == "exit":
                 self._shutdown()
                 _exit_application(self.ui, "tui exit")
@@ -1560,24 +1466,16 @@ class _TuiController:
             self.tui.sync_from_config(self.config)
 
     def _shutdown(self) -> None:
-        """Release the session: stop background work, then the application.
-
-        A background mode initialization is cancelled and given a moment to
-        finish, so no worker outlives the interface it belongs to.
-        """
-        try:
-            self.switcher.cancel(wait=1.0)
-        except Exception:
-            pass  # a teardown hiccup must never stop the session from ending
+        """Release the session and stop the application."""
         self.tui.shutdown()
 
     def _toolbar_action(self, action: str) -> None:
-        """Run a real action behind a header control (provider/model/mode).
+        """Run a real action behind a header control (project/provider/model).
 
         The control is real UI, so the action is the same one the equivalent
-        slash command performs: provider/model open their selectors and mode
-        opens the three-way mode picker. A provider change rebuilds the chat
-        backend exactly as a mid-chat switch does.
+        slash command performs: provider/model open their selectors and the
+        workspace control opens the project selector. A provider change
+        rebuilds the chat backend exactly as a mid-session switch does.
         """
         try:
             if action == "provider":
@@ -1585,7 +1483,8 @@ class _TuiController:
             elif action == "model":
                 select_model(self.ui, self.config)
             elif action == "mode":
-                self._mode_menu()
+                # v9.2.0: the header's third control is the PROJECT picker.
+                dispatch(self.ctx, "/workspace select")
         except (KeyboardInterrupt, EOFError):
             self.ui.dim("Cancelled.")
         except Exception as exc:  # a control must never crash the session
@@ -1593,28 +1492,6 @@ class _TuiController:
             _report_command_error(self.ui, exc)
         if self.config.provider != self._backend:
             self._rebuild_backend()
-
-    def _mode_menu(self) -> None:
-        """Mode picker for the header's Mode control (a real mode switch)."""
-        from .core.modes import Mode, active_mode
-
-        current = active_mode(self.config)
-        choice = run_menu(
-            [
-                MenuItem(
-                    "Chat", "chat", status="current" if current is Mode.CHAT else ""
-                ),
-                MenuItem(
-                    "Agent", "agent", status="current" if current is Mode.AGENT else ""
-                ),
-            ],
-            title="Mode",
-            hint="\u2191\u2193 move   Enter select   Esc cancel",
-        )
-        if choice:
-            # A real mode switch — routed to the background worker, never
-            # dispatched on the event-loop thread.
-            self._mode_transition(f"/mode {choice}")
 
     def _menu(self) -> bool:
         """The interactive main menu; returns True when the user quits."""
@@ -1634,13 +1511,8 @@ class _TuiController:
                     apikey_menu(self.ui, self.config)
                 elif choice == "model":
                     select_model(self.ui, self.config)
-                elif choice == "agent":
-                    # Agent Mode preparation is background work: it must not run
-                    # on the menu's (main) thread, which would deadlock on the
-                    # permission prompt it raises.
-                    self._mode_transition("/agent on")
                 elif choice == "memory":
-                    self._command("/codemode status")
+                    self._command("/workspace status")
                 elif choice == "settings":
                     settings_menu(self.ui, self.config)
                 elif choice == "theme":
@@ -1792,9 +1664,9 @@ def run(ui: UI) -> None:
             elif choice == "model":
                 select_model(ui, config)
             elif choice == "agent":
-                _dispatch_command(ui, config, engine, "/agent on")
+                _dispatch_command(ui, config, engine, "/workspace status")
             elif choice == "memory":
-                _dispatch_command(ui, config, engine, "/codemode status")
+                _dispatch_command(ui, config, engine, "/workspace status")
             elif choice == "settings":
                 settings_menu(ui, config)
             elif choice == "theme":

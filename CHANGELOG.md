@@ -4,6 +4,54 @@ All notable changes to Seed Code CLI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [9.2.0] — 2026-11-01
+
+The dedicated coding-agent release: one unified agent, a clean and honest live
+activity log, and the removal of the remaining non-coding features.
+
+### Added
+
+- **Live current-operation status.** The thinking spinner shows the backend's
+  real operation (`Reading README.md…`, `Waiting for the model response…`) with
+  a live elapsed timer instead of a generic "Working".
+- **Real exit codes in the activity log** (`✓ Command completed · Exit code: 0`)
+  parsed from the terminal tool's own output.
+- **Real file-change summaries** with path, `+N/-M` line counts, the affected
+  line range and a bounded unified-diff preview.
+- **Research activity** showing the search query and the retrieved sources as
+  real events.
+
+### Changed
+
+- **One unified coding agent.** Chat/Agent/Code/Assist modes were merged; the
+  deterministic intent classifier selects the capability a request needs.
+  `/chat`, `/agent`, `/mode`, `/assist` and `/codemode` were removed.
+- **Clean activity log.** Agent activity no longer carries an `AI >` prefix;
+  lines are indented under the `You >` turn with `⚙`, `✓`, `✗`, `ℹ` markers.
+- **Compact header.** The oversized boxed logo became a two-row compact bar
+  (branding/provider/model/mode above; status/workspace/context/key below).
+- **Default state mode is `Agent`**, matching the single runtime; the session
+  status after a turn is `Completed`.
+- **build.bat cleans only build outputs** and preserves `dist/release/`.
+- **Package extras:** the `desktop`, `vision` and `browser` extras were removed
+  with the Computer Engine.
+
+### Fixed
+
+- `NameError: name 'active_workspace' is not defined` on a normal message: the
+  permission manager now receives the selected workspace.
+- A single file change printed two success lines (the diff view owns the line).
+- A command's success message omitted its exit code.
+- The spinner ignored the current operation.
+- `tui.shutdown()` left the initializing state set.
+- The header's mode cell could show `Chat` in the unified runtime.
+
+### Removed
+
+- Desktop control (windows, keyboard, mouse, vision/OCR), the Computer Engine,
+  the browser automation stack and the YouTube Music command.
+- The `/computer`, `/screenshot` and `/windows` commands.
+
 ## [9.1.1] — 2026-09-28
 
 An intent, dependency and diagnostics release. v9.1.0 gave Agent Mode the power

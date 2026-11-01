@@ -357,7 +357,7 @@ def test_session_command_shows_the_live_session(tmp_path, monkeypatch) -> None:
     _dispatch(ui, AppConfig(), "/session")
     out = ui.console.export_text()
 
-    assert "Code Mode Session" in out
+    assert "Agent Session" in out
     assert "RUNNING" in out
     assert "1/3 tasks verified" in out
     assert "Tasks — 1/3 verified" in out
@@ -396,8 +396,8 @@ def test_session_command_without_a_session_says_so(tmp_path, monkeypatch) -> Non
     ui = _ui()
     _dispatch(ui, AppConfig(), "/session")
     out = ui.console.export_text()
-    assert "No Code Mode session to inspect" in out
-    assert "Code Mode Session" not in out
+    assert "No session to inspect" in out
+    assert "Agent Session" not in out
 
 
 def test_status_carries_the_compact_session_row(tmp_path, monkeypatch) -> None:

@@ -23,8 +23,9 @@ def test_config_defaults() -> None:
 
 
 def test_max_tokens_clamped() -> None:
+    # v9.2.0: the unified agent is the only runtime, so its ceiling applies.
     cfg = AppConfig(model="some/model", max_tokens=65536)
-    assert cfg.effective_max_tokens() == 4096  # never send huge budgets
+    assert cfg.effective_max_tokens() == 8192  # never send huge budgets
     cfg.max_tokens = 0
     assert cfg.effective_max_tokens() == 1
     cfg.max_tokens = 2048

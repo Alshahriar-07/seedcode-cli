@@ -618,7 +618,7 @@ def test_resume_command_reports_when_code_mode_is_off(monkeypatch) -> None:
 
     ui = _StubUI()
     dispatch(CommandContext(ui=ui, config=object(), engine=None), "/resume")
-    assert any("No paused Code Mode session" in m or "Code Mode is off" in m for m in ui.messages)
+    assert any("No active project" in m for m in ui.messages)
 
 
 def test_resume_command_continues_a_paused_session(tmp_path, monkeypatch) -> None:
@@ -691,7 +691,7 @@ def test_resume_command_continues_a_paused_session(tmp_path, monkeypatch) -> Non
         app, "resume_codemode_session", lambda ui, config, history=None: False
     )
     dispatch(CommandContext(ui=ui2, config=config, engine=None), "/resume")
-    assert any("No paused Code Mode session" in m for m in ui2.messages)
+    assert any("No paused session to resume" in m for m in ui2.messages)
 
 
 def test_paused_session_reports_paused_status_and_keeps_the_plan(tmp_path: Path) -> None:

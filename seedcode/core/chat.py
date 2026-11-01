@@ -14,7 +14,7 @@ from typing import Any
 
 from .identity import build_system_prompt
 from .models import AppConfig, Message
-from .providers import ProviderError, get_provider, provider_label
+from .providers import PROVIDERS, ProviderError, get_provider, provider_label
 from .providers import health as health_mod
 from .providers.base import StreamEvent, ToolSpec
 from .providers.failover import Candidate, FailoverChain
@@ -64,8 +64,15 @@ class ChatEngine:
         self.config = config
         # Progress callback (a UI bug must never break a request).
         self._on_event = on_event
-        #: Whether automatic provider failover is allowed (v7.2.5).
-        self.failover_enabled = bool(failover)
+        # v9.2.0: provider faithfulness. Automatic failover is allowed only
+        # when BOTH the caller enabled it and the stored configuration turned
+        # it on (``config.auto_failover``). A user who selected Ollama — or any
+        # other provider — can rely on Seed Code using exactly that backend:
+        # a failed request is reported as an error, never silently rerouted
+        # to another vendor.
+        self.failover_enabled = bool(failover) and bool(
+            getattr(config, "auto_failover", False)
+        )
         #: ``(from_provider, to_provider)`` of the last failover, or None.
         self.last_switch: tuple[str, str] | None = None
         #: Why the last failover happened (v9.1.1). A provider is never
@@ -216,8 +223,37 @@ class ChatEngine:
                 raise ChatError(f"Unexpected error: {exc}") from exc
 
     def _next_provider(self, tried: set[str]) -> Candidate | None:
-        """The next healthy provider configuration to fail over to, if any."""
+        """The next healthy provider configuration to fail over to, if any.
+
+        v9.2.0 provider-faithfulness rules, applied even when failover is
+        explicitly enabled:
+
+        * a provider the user explicitly selected is only ever switched away
+          from after a *transient* failure; a connection/model error on a local
+          provider (Ollama) is reported instead — irrecoverable switching was
+          the reported bug: Ollama going down quietly rerouted coding sessions
+          to a cloud provider with a different model;
+        * local providers (``provider.local``) are never switched away from at
+          all without explicit re-validation, because the user's intent in
+          picking one is to run locally.
+        """
         if not self.failover_enabled:
+            return None
+        provider_id = (self.config.provider or "").lower()
+        provider = PROVIDERS.get(provider_id)
+        if provider is not None and provider.local:
+            # The user chose a local backend (Ollama). Connection problems are
+            # reported as actionable errors, never converted into a provider
+            # switch — see :meth:`stream_reply`'s error path.
+            _log.info(
+                "failover suppressed: %s is a local provider the user selected",
+                provider_id,
+            )
+            self.event(
+                "provider_stay",
+                f"{provider.label} is your selected local provider — no "
+                "automatic switch; fix the connection and retry.",
+            )
             return None
         try:
             return FailoverChain(self.config).next_candidate(tried)

@@ -1,102 +1,79 @@
 Seed Code CLI
 =============
 
-Version: 9.1.1
+Version: 9.2.0
 License: PolyForm Noncommercial License 1.0.0
          (https://polyformproject.org/licenses/noncommercial/1.0.0/)
 
 WHAT'S IN THIS RELEASE
 ----------------------
-The v9.1.1 release artifacts:
+The v9.2.0 release artifacts:
   - Windows portable executable (x64)
   - Windows Setup installer (x64)
   - Python wheel (any OS)
   - Python sdist (any OS)
+  - npm package tarball (launcher)
   - SHA256SUMS.txt checksum file covering all of the above
 
 Primary command after any install method:  seedcode
 Developer fallback:                        python -m seedcode
 
-WHAT CHANGED IN v9.1.1
+WHAT CHANGED IN v9.2.0
 ----------------------
-v9.1.1 is an intent and diagnostics release on top of the v9.1.0 terminal
-workspace. No capability was removed.
+v9.2.0 is the dedicated coding-agent release. It removes the remaining
+non-coding features and makes the terminal experience a real, live view of the
+agent's work.
 
-  * Intent-driven behaviour. Every turn is classified before anything runs --
-    conversation, research, coding or computer -- with a deterministic,
-    model-free classifier (seedcode/core/intent.py). The classification decides
-    which tools are advertised, whether project context is loaded, and whether
-    the workspace and desktop capabilities are available at all.
+  * One unified coding agent. Chat Mode, Agent Mode, Assist Mode and Code Mode
+    are gone; every request is one agent turn. The deterministic, model-free
+    intent classifier decides which capability the request needs, so a question
+    never reads your project and a coding task never fetches the web unless it
+    must. /chat, /agent, /mode, /assist and /codemode no longer exist.
 
-  * Minimum-tool principle. A turn is offered the core tools plus only the
-    capability its intent needs: the web tools for research/computer turns, the
-    desktop tools for computer turns. A coding task never sees the browser
-    tools.
+  * Clean live activity log. The repeated "AI >" prefix is gone from agent
+    activity. Lines are indented under your turn and marked by real state:
+    a gear for a tool or file operation, a check for success, a cross for
+    failure and an info glyph for informational events. "You >" is unchanged.
 
-  * Zero unnecessary file access. Project context, the workspace coding
-    preamble and the terminal hint are gated by intent, so a question does not
-    cause your project to be read.
+  * The spinner shows the actual operation. Instead of a generic "Working...",
+    the animated spinner carries the backend's current operation - "Reading
+    README.md...", "Running python -m pytest...", "Waiting for the model
+    response..." - with a live elapsed timer.
 
-  * Internet access, modular to both modes. A new capability
-    (seedcode/core/internet.py) does keyless DuckDuckGo HTML search, fetches
-    pages with boilerplate stripped, reads the top sources, and injects a
-    character-budgeted, URL-attributed context block. web_search and web_fetch
-    are read-only tools in the new "web" tool group. Chat Mode retrieves
-    sources for a research request and shows its progress; Agent Mode calls the
-    tools itself. Every failure path degrades to "no results" instead of an
-    error. SEEDCODE_DISABLE_INTERNET=1 turns the capability off for a session.
+  * Real terminal reporting. A completed command reports its real exit code
+    ("Command completed - Exit code: 0"); failed commands report failure. No
+    operation is ever reported as successful unless it succeeded.
 
-  * Chat -> Agent escalation, and back. A Chat Mode request that has to execute
-    something runs with the agent engine and then returns to Chat Mode, with
-    both sides announced ("[Agent assist - <reason>]" and "[Temporary agent task
-    finished - back to Chat Mode]"). An explicit /agent on stays on until you
-    turn it off.
+  * Real file-operation diffs. Created, updated and deleted files report the
+    path, line counts, the affected line range and a bounded unified diff.
 
-  * Permissions that persist. The dangerous-action gate is now process-wide, so
-    an approved scope is no longer forgotten when a new engine is created. The
-    permission panel offers Allow Once, Always Allow and Allow All, plus Deny.
-    Both broader grants are in-memory session grants only -- nothing is written
-    to config.json.
+  * Duplicate-free events. One operation produces one activity line: a file
+    change is rendered by the diff view instead of being printed twice.
 
-  * Provider failover explains itself: rate limited, authentication rejected,
-    network unreachable, provider unavailable, or repeated transient errors.
+  * Compact header. The oversized boxed ASCII logo in the fixed header was
+    replaced by a compact two-row bar: branding/provider/model/mode above,
+    live status/workspace/context/key below. No line exceeds the terminal
 
-  * Built-in credential diagnostics. The build step now recognises both
-    documented variable names (OPENROUTER_API_KEY, SEEDCODE_DEFAULT_API_KEY),
-    reports a typo'd name explicitly, validates the value's shape, and exits
-    non-zero with the exact fix -- never printing the value. A misspelt variable
-    name (DEFULT_API_KEY) previously caused a build to ship with no embedded
-    credential. The running application reports the built-in connection only as
-    available / missing / invalid / unavailable, also through /doctor.
+    width at any size and the branding line never churns while the agent
+    works.
 
-TWO MODES, ONE WORKSPACE (unchanged from v9.1.0)
-------------------------------------------------
-Seed Code runs as a persistent terminal application with three fixed regions --
-a header carrying the Seed Code ASCII logo and live state, a scrolling
-conversation region, and a fixed bounded composer. Mode switches run as a state
-transition inside the same application; the application is never destroyed and
-rebuilt.
+  * Removed non-coding features. Desktop control (windows, keyboard, mouse),
+    OCR/vision, the Computer Engine and the YouTube Music command were removed,
+    together with their [desktop], [vision] and [browser] extras. The tool
+    surface is now the coding agent's own: filesystem, search, terminal, git and
+    web research.
 
-Seed Code exposes exactly two modes:
+  * Workspace lifecycle fix. The engine's permission manager is now bound to
+    the selected workspace at construction (the missing import that made a
+    normal message crash with NameError: name 'active_workspace' is not defined
+    is fixed), and a clean shutdown clears any in-flight initialization state.
 
-  * Chat Mode  - conversation only; it does not act on your project.
-  * Agent Mode - the unified autonomous workspace/coding agent: inspect, plan,
-                 edit, run, verify and keep working until the task is verified,
-                 using every available tool (filesystem, terminal, git, web,
-                 browser, keyboard, mouse, windows, vision/OCR, desktop
-                 automation).
+  * Provider honesty. A failed request is reported, never silently rerouted to
+    another provider; automatic failover is opt-in (auto_failover) and Ollama
+    failures surface as Ollama errors.
 
-The former Code Mode and Assist Mode are not separate modes: their capabilities
-belong to Agent Mode. /codemode, /assist and /desktop remain accepted aliases
-for an existing habit. Completing a task never closes the application.
-
-Before the interface comes up, Seed Code asks where it may work
-("Select Workspace": Current Folder or the operating system's folder picker).
-Set SEEDCODE_WORKSPACE=<dir> to select it directly and
-SEEDCODE_NO_WORKSPACE_PROMPT=1 to keep the launch directory. Set
-SEEDCODE_NO_TUI=1 for the sequential console instead of the persistent
-interface (automatic on piped hosts, SEEDCODE_PLAIN, and consoles that cannot
-draw it).
+  * Release gate. The build pipeline runs the full test suite before packaging
+    and refuses to build an artifact when a test fails.
 
 INSTALLATION METHODS
 --------------------
@@ -105,17 +82,18 @@ INSTALLATION METHODS
 
      irm https://seedcode-cli.vercel.app/install.ps1 | iex
 
-   Downloads the official SeedCode-CLI-9.1.1-windows-x64.exe from GitHub
+   Downloads the official SeedCode-CLI-9.2.0-windows-x64.exe from GitHub
    Releases and verifies its SHA-256 against the release's SHA256SUMS.txt. A
-   mismatch aborts; verification is never bypassed. It installs per-user to
+   mismatch, a missing entry, or an unreachable checksum file aborts;
+   verification is never bypassed. It installs per-user to
    %LOCALAPPDATA%\Programs\SeedCode, adds that directory to the user PATH, and
-   verifies the installed binary reports version 9.1.1. PowerShell 5.1 and 7+
+   verifies the installed binary reports version 9.2.0. PowerShell 5.1 and 7+
    compatible; ANSI UI with graceful fallback; Ctrl+C safe.
 
 2) Windows - Setup installer
 
-   Download SeedCode-CLI-Setup-9.1.1.exe from
-   https://github.com/Alshahriar-07/seedcode-cli/releases and run it.
+   Download SeedCode-CLI-Setup-9.2.0.exe from
+   https://github.com/Alshahriar-07/seedcode-cli/releases/tag/v9.2.0 and run it.
    Installs with a Start Menu shortcut and adds the install directory to the
    PATH so `seedcode` works in new terminals. Preserves configuration during
    upgrades (user config lives in the Seed Code config directory, not the
@@ -123,21 +101,21 @@ INSTALLATION METHODS
 
 3) Windows - portable executable
 
-   Download SeedCode-CLI-9.1.1-windows-x64.exe from the releases page and
+   Download SeedCode-CLI-9.2.0-windows-x64.exe from the releases page and
    run it directly. No installation, no PATH changes; `seedcode --version`
-   reports 9.1.1. For a persistent `seedcode` command, use method 1 or 2.
+   reports 9.2.0. For a persistent `seedcode` command, use method 1 or 2.
 
 4) Linux / macOS - remote shell installer
 
      curl -fsSL https://seedcode-cli.vercel.app/install.sh | bash
 
-   Downloads the official SeedCode-CLI-9.1.1-<os>-<arch> standalone binary
+   Downloads the official SeedCode-CLI-9.2.0-<os>-<arch> standalone binary
    from GitHub Releases when the release publishes one for this platform, and
-   otherwise downloads the official seedcode_cli-9.1.1-py3-none-any.whl. Either
+   otherwise downloads the official seedcode_cli-9.2.0-py3-none-any.whl. Either
    way the downloaded file's SHA-256 is verified against the release's
    SHA256SUMS.txt before anything is installed (a mismatch aborts, and an
    unreachable checksum file aborts too - verification is never bypassed).
-   Installs to ~/.local/bin and verifies the installed binary reports 9.1.1.
+   Installs to ~/.local/bin and verifies the installed binary reports 9.2.0.
    pipx is used for the wheel when available (otherwise pip --user, with
    PEP 668 handling). Clean ANSI UI with ASCII fallback; Ctrl+C safe.
 
@@ -151,9 +129,8 @@ INSTALLATION METHODS
      python -m seedcode   (developer fallback)
 
    First launch initializes the per-user configuration in the Seed Code
-   config directory (never inside site-packages), shows provider/model
-   status, and prompts for an API key if none is configured. The wheel
-   requires Python 3.10+.
+   config directory (never inside site-packages) and prompts for a provider
+   and model. The wheel requires Python 3.10+.
 
 UPGRADE SAFETY
 --------------
@@ -165,7 +142,7 @@ CHECKSUMS
 ---------
 Every release artifact has a SHA-256 entry in SHA256SUMS.txt:
 
-  cd dist/release/9.1.1
+  cd dist/release/9.2.0
   sha256sum -c SHA256SUMS.txt            # Linux/macOS
   Get-FileHash <file> -Algorithm SHA256  # Windows
 

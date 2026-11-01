@@ -165,7 +165,8 @@ class AppState:
 
     provider: str = ""
     model: str = ""
-    mode: str = "Chat"
+    # v9.2.0: one unified coding agent — there is no Chat/Agent split.
+    mode: str = "Agent"
     status: Status = Status.READY
     workspace: str = ""
     api_key: str = ""  # always the masked form; the real key never enters here
@@ -271,7 +272,6 @@ class AppState:
 
     def sync_from_config(self, config: Any, *, workspace: str | None = None) -> None:
         """Refresh the config-derived header values in one notification."""
-        from ..core.modes import active_mode, mode_title
         from ..core.providers import provider_label, provider_ready, provider_requires_key
 
         provider_id = getattr(config, "provider", "") or ""
@@ -283,7 +283,9 @@ class AppState:
         fields: dict[str, Any] = {
             "provider": provider_label(provider_id) if ready else "",
             "model": getattr(config, "model", "") or "",
-            "mode": mode_title(active_mode(config)),
+            # v9.2.0: one unified agent — the header reports the capability,
+            # not a mode selector.
+            "mode": "Agent",
             "key_required": provider_requires_key(provider_id),
             "api_key": config.masked_key() if hasattr(config, "masked_key") else "",
         }

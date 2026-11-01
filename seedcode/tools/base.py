@@ -46,6 +46,8 @@ class ToolResult:
 
     ok: bool
     output: str
+    #: Unified diff of the real file change (empty for non-mutating tools).
+    diff: str = ""
 
     def __post_init__(self) -> None:
         # v7.1.0: a tool's output may contain a lone surrogate (a command that
@@ -54,6 +56,7 @@ class ToolResult:
         # no consumer — model request, JSON, file, console — can ever fail to
         # encode it.
         self.output = safe_text(self.output)
+        self.diff = safe_text(self.diff)
 
     def for_model(self) -> str:
         """Result text as the model sees it, truncated to a safe size."""

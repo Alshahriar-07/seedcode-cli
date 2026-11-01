@@ -1,12 +1,11 @@
 """/status — the live runtime state of the current session (v7.1.0).
 
 One panel, every value read from real application state: the active provider
-and its backend, the selected model, the current mode (Chat / Code / Agent),
-the Code Mode session (its state, verified progress and whether a stopped one
-can be resumed), the workspace, the provider connection status, and where
-config and project memory live. Nothing here is hardcoded or fabricated — a
-status of "Not checked" means exactly that, and no session row is drawn when
-no session exists.
+and its backend, the selected model, the coding session (its state, verified
+progress and whether a stopped one can be resumed), the project workspace,
+the provider connection status, and where config and project memory live.
+Nothing here is hardcoded or fabricated — a status of "Not checked" means
+exactly that, and no session row is drawn when no session exists.
 """
 
 from __future__ import annotations
@@ -20,22 +19,6 @@ from ..core.providers.base import STATUS_UNKNOWN
 from ..utils.helpers import config_path
 from ..utils.terminal_env import detect_terminal
 from . import CommandContext, CommandResult, command
-
-
-def mode_label(config) -> str:
-    """The active mode label: Chat Mode / Code Mode / Agent Mode.
-
-    Delegates to the single mode resolver (:mod:`seedcode.core.modes`) so
-    /status, /mode, /chat, the dashboard and the header can never disagree,
-    and the retired Assist Mode can never reappear as a fourth name.
-    """
-    from ..core.modes import mode_label as _label
-
-    return _label(config)
-
-
-# Backward-compatible private name.
-_mode_label = mode_label
 
 
 def session_label(config) -> str | None:
@@ -119,7 +102,6 @@ def _status(ctx: CommandContext, arg: str) -> CommandResult:
     table.add_row("Backend", _backend_label(config, provider))
     table.add_row("API Key", _api_key_label(config, provider))
     table.add_row("Model", config.model or "(none — run /model)")
-    table.add_row("Mode", mode_label(config))
     session = session_label(config)
     if session is not None:
         table.add_row("Session", session)
@@ -129,7 +111,8 @@ def _status(ctx: CommandContext, arg: str) -> CommandResult:
     table.add_row("Terminal", terminal.describe())
 
     workspace = codemode_state().workspace
-    table.add_row("Workspace", str(workspace) if workspace is not None else "(Code Mode off)")
+    table.add_row("Project", workspace.name if workspace is not None else "(none selected)")
+    table.add_row("Workspace", str(workspace) if workspace is not None else "(/workspace select)")
     table.add_row("Memory", ".seedcode" if workspace is not None else "(not active)")
     table.add_row("Config", str(config_path()))
 

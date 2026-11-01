@@ -54,7 +54,7 @@ def test_command_hint_is_a_single_compact_line() -> None:
     render_command_hint(console)
     lines = [ln for ln in console.export_text().splitlines() if ln.strip()]
     assert len(lines) == 1
-    for name in ("help", "status", "codemode", "agent", "provider", "model"):
+    for name in ("help", "status", "provider", "model"):
         assert f"/{name}" in lines[0]
 
 
@@ -64,7 +64,7 @@ def test_command_hint_only_lists_real_commands() -> None:
     console = _console()
     render_command_hint(console)
     text = console.export_text()
-    for name in ("help", "status", "codemode", "agent", "provider", "model"):
+    for name in ("help", "status", "provider", "model"):
         assert name in _REGISTRY
         assert f"/{name}" in text
 
@@ -75,7 +75,7 @@ def test_runtime_state_is_shown_exactly_once() -> None:
     out = _banner(_configured())
     # Each value appears once — no footer repeating the panel.
     assert out.count("OpenRouter") == 1
-    assert out.count("Chat") == 1
+    assert out.count("Agent") == 1
     # Match each label as a whole word, so "Mode" is not found inside "Model".
     # v7.2.5 gives status its own row (the spec's info block), so it appears
     # exactly once too — never repeated in a footer.

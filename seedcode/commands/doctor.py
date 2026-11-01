@@ -44,35 +44,6 @@ def _check_storage() -> tuple[str, str]:
         return _FAIL, f"cannot write to {app_dir()} ({exc}) — history/config won't persist"
 
 
-def _check_desktop(config) -> tuple[str, str]:
-    """Computer Engine availability (only a WARN when desktop mode is off)."""
-    from ..computer import is_available
-
-    ok, reason = is_available()
-    if ok:
-        state = "enabled" if config.desktop_mode else "available (off — /desktop on)"
-        return _OK, state
-    return (_FAIL if config.desktop_mode else _WARN), reason
-
-
-def _check_ocr() -> tuple[str, str]:
-    """OCR engine health — a real probe, not just an import check.
-
-    Only ever a WARN: OCR is one tier of the detection ladder (accessibility,
-    DOM inspection, and URL-driven workflows all come first), so a missing
-    engine narrows capability rather than breaking anything.
-    """
-    try:
-        from ..computer import ocr
-
-        ok, detail = ocr.status()
-    except Exception as exc:  # the doctor must never crash the app
-        return _WARN, f"could not probe OCR ({exc})"
-    if not ok:
-        return _WARN, detail
-    return _OK, ocr.version() or detail
-
-
 def _run_checks(config) -> list[tuple[str, str, str]]:
     """Return (status, check name, detail) rows."""
     rows: list[tuple[str, str, str]] = []
@@ -83,11 +54,17 @@ def _run_checks(config) -> list[tuple[str, str, str]]:
     status, detail = _check_storage()
     rows.append((status, "Data directory", detail))
 
-    status, detail = _check_desktop(config)
-    rows.append((status, "Desktop control", detail))
+    # v9.2.0: the workspace (.seedcode project memory) replaced the desktop row.
+    try:
+        from .. import codemode_state
 
-    status, detail = _check_ocr()
-    rows.append((status, "OCR engine", detail))
+        state = codemode_state.codemode_state()
+        if state.enabled and state.workspace is not None:
+            rows.append((_OK, "Active project", str(state.workspace)))
+        else:
+            rows.append((_WARN, "Active project", "none selected — /workspace to choose one"))
+    except Exception:  # the doctor must never crash the app
+        rows.append((_WARN, "Active project", "could not be read"))
 
     try:
         provider = get_provider(config.provider)

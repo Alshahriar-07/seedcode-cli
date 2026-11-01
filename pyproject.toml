@@ -36,40 +36,10 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0.0", "pytest-mock>=3.12.0"]
-# Computer Engine (desktop control) — Windows only in this release.
-# OCR and OpenCV belong to THIS extra rather than an optional add-on: the
-# detection ladder's OCR/CV tiers must exist on every machine that has desktop
-# control, so a workflow can never fail with "OCR is not installed". The
-# tesseract ENGINE (a native binary, not a Python package) ships with the
-# Windows installer and is located at runtime by seedcode/computer/ocr.py.
-desktop = [
-    "pyautogui>=0.9.54",
-    "mss>=9.0.1",
-    "pygetwindow>=0.0.9",
-    "uiautomation>=2.0.18; sys_platform == 'win32'",
-    "pillow>=10.0.0",
-    # Lets the verifier confirm a process is really running (instead of falling
-    # back to a window-title guess).
-    "psutil>=5.9.0",
-    # Detection ladder: OCR (tier 4) for windows exposing no accessibility
-    # tree, OpenCV (tiers 5-6) for control-boundary refinement and image match.
-    "pytesseract>=0.3.10",
-    "opencv-python>=4.9.0",
-]
-# Retained so existing `seedcode-cli[vision]` installs keep resolving; these
-# tiers are now part of [desktop].
-vision = [
-    "pytesseract>=0.3.10",
-    "opencv-python>=4.9.0",
-]
-# Optional DOM-level browser control via WebDriver. NOT needed for normal web
-# automation: the Browser Engine drives the user's own default browser through
-# the OS, the DevTools protocol, and the UI resolver. Install only for tasks
-# that genuinely need a scripted throwaway browser profile.
-browser = [
-    "selenium>=4.18.0",
-    "webdriver-manager>=4.0.1",
-]
+# v9.2.0 removed desktop control, OCR and DOM-level browser automation, so the
+# former [desktop], [vision] and [browser] extras (and their heavy native
+# dependencies) are gone. A dedicated coding agent needs only the core
+# dependencies above plus the standard library.
 
 [project.urls]
 Homepage = "https://github.com/Alshahriar-07/seedcode-cli"

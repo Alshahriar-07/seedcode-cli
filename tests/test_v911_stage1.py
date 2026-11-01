@@ -506,20 +506,23 @@ def _ui():
     return ui
 
 
-def test_chat_mode_escalates_then_returns_without_changing_mode(monkeypatch) -> None:
+def test_every_turn_is_one_unified_agent_turn(monkeypatch) -> None:
+    """v9.2.0: no chat/agent split — a request runs as one agent turn.
+
+    The former Chat -> Agent escalation path is gone: the unified engine owns
+    every turn, and the session keeps running afterwards.
+    """
     from seedcode.core.chat import ChatEngine
 
+    # Hermetic: this test asserts the turn routing, not live retrieval.
+    monkeypatch.setenv("SEEDCODE_DISABLE_INTERNET", "1")
     agent_calls: list[str] = []
-    chat_calls: list[str] = []
     monkeypatch.setattr(
         app,
         "_make_agent",
         lambda ui, config, presenter=None: _RecordingAgent(agent_calls),
     )
-    monkeypatch.setattr(
-        app, "_handle_chat", lambda ui, engine, history, text, intent=None: chat_calls.append(text)
-    )
-    config = AppConfig(provider="openrouter", model="test/model", agent_mode=False)
+    config = AppConfig(provider="openrouter", model="test/model")
     config.set_api_key("openrouter", "sk-or-test")
     ui = _ui()
     session = _ScriptedSession(["Play this song on YouTube.", "/exit"])
@@ -527,57 +530,44 @@ def test_chat_mode_escalates_then_returns_without_changing_mode(monkeypatch) -> 
     app._chat_loop(ui, config, ChatEngine(config), _FakeHistory(), session)
 
     assert agent_calls == ["Play this song on YouTube."]
-    assert chat_calls == []  # never fell back to a chat answer
-    # The persistent mode is untouched: agent_mode was never flipped on.
-    assert config.mode == "chat"
     out = ui.console.export_text()
-    assert "Agent assist" in out
-    assert "back to Chat Mode" in out
+    assert "Agent assist" not in out  # no escalation banner exists anymore
+    assert "back to Chat Mode" not in out
 
 
-def test_conversation_does_not_escalate(monkeypatch) -> None:
+def test_a_conversation_also_runs_through_the_unified_engine(monkeypatch) -> None:
     from seedcode.core.chat import ChatEngine
 
     agent_calls: list[str] = []
-    chat_calls: list[str] = []
     monkeypatch.setattr(
         app,
         "_make_agent",
         lambda ui, config, presenter=None: _RecordingAgent(agent_calls),
     )
-    monkeypatch.setattr(
-        app, "_handle_chat", lambda ui, engine, history, text, intent=None: chat_calls.append(text)
-    )
-    config = AppConfig(provider="openrouter", model="test/model", agent_mode=False)
+    config = AppConfig(provider="openrouter", model="test/model")
     config.set_api_key("openrouter", "sk-or-test")
     ui = _ui()
     session = _ScriptedSession(["Hello there", "/exit"])
 
     app._chat_loop(ui, config, ChatEngine(config), _FakeHistory(), session)
 
-    assert agent_calls == []
-    assert chat_calls == ["Hello there"]
-    assert "Agent assist" not in ui.console.export_text()
+    assert agent_calls == ["Hello there"]
 
 
-def test_explicit_agent_mode_stays_on_after_a_task(monkeypatch) -> None:
+def test_consecutive_tasks_keep_the_session_running(monkeypatch) -> None:
     from seedcode.core.chat import ChatEngine
 
     calls: list[str] = []
     monkeypatch.setattr(
         app, "_make_agent", lambda ui, config, presenter=None: _RecordingAgent(calls)
     )
-    config = AppConfig(provider="openrouter", model="test/model", agent_mode=True)
+    config = AppConfig(provider="openrouter", model="test/model")
     config.set_api_key("openrouter", "sk-or-test")
     session = _ScriptedSession(["first task", "second task", "/exit"])
-    monkeypatch.setattr(
-        app, "_handle_chat", lambda ui, engine, history, text, intent=None: None
-    )
 
     app._chat_loop(_ui(), config, ChatEngine(config), _FakeHistory(), session)
 
     assert calls == ["first task", "second task"]
-    assert config.mode == "agent"
 
 
 # --------------------------------------------------------------------------

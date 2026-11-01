@@ -331,6 +331,8 @@ def test_failover_chain_skips_excluded_and_cooling_down() -> None:
 def test_chat_engine_fails_over_without_losing_the_conversation(monkeypatch) -> None:
     monkeypatch.setenv("SEEDCODE_MAX_RETRIES", "0")
     config = _failover_config()
+    # v9.2.0: automatic failover is opt-in — a selected provider is respected.
+    config.auto_failover = True
     primary = _StubProvider(outcome="permanent")
     primary.id = "openrouter"
     primary.label = "OpenRouter"

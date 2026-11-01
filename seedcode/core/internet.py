@@ -46,11 +46,14 @@ __all__ = [
 # A conservative browser-ish UA: the default python-httpx UA is refused by some
 # hosts, and we are reading public pages (never authenticating).
 _USER_AGENT = (
-    "Mozilla/5.0 (compatible; SeedCode/9.1.1; +https://github.com/Alshahriar-07/seedcode-cli)"
+    "Mozilla/5.0 (compatible; SeedCode/9.2.0; +https://github.com/Alshahriar-07/seedcode-cli)"
 )
 
 # DuckDuckGo's no-JS HTML endpoint: stable, keyless, and tolerant of automation.
 _SEARCH_URL = "https://html.duckduckgo.com/html/"
+#: Fallback endpoint: the no-JS Lite page uses different markup but the same
+#: keyless contract, so parsing supports both.
+_SEARCH_URL_LITE = "https://lite.duckduckgo.com/lite/"
 
 _TIMEOUT_S = 10.0
 _MAX_PAGE_CHARS = 6000
@@ -124,26 +127,36 @@ def _strip_html(markup: str) -> str:
     return _BLANK_RE.sub("\n\n", "\n".join(lines)).strip()
 
 
+_RESULT_ANCHOR = re.compile(r"<a\b([^>]*)>(.*?)</a>", re.DOTALL | re.IGNORECASE)
+_HREF_RE = re.compile(r'href\s*=\s*["\']([^"\']+)["\']', re.IGNORECASE)
+_SNIPPET_RE = re.compile(
+    r"class\s*=\s*[\"']result(?:__snippet|-snippet)[\"'][^>]*>(.*?)</(?:a|td)>",
+    re.DOTALL | re.IGNORECASE,
+)
+
+
 def _ddg_results(page: str, limit: int) -> list[SearchResult]:
-    """Parse results out of DuckDuckGo's HTML endpoint."""
+    """Parse results out of DuckDuckGo's HTML or Lite endpoint.
+
+    The result anchor is scanned directly instead of splitting on a wrapping
+    element: DuckDuckGo emits the title anchor *before* ``result__body``, so
+    block-splitting found nothing (the reported zero-results bug). The tail
+    after each anchor is searched for the snippet that belongs to it.
+    """
     results: list[SearchResult] = []
-    # Each result is an anchor with class result__a; the snippet follows in a
-    # nearby result__snippet anchor. Parse by block to keep the pairing.
-    blocks = re.split(r'class="result__body"', page)
-    for block in blocks[1:]:
-        link = re.search(
-            r'<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>(.*?)</a>',
-            block,
-            re.DOTALL,
-        )
-        if not link:
+    anchors = list(_RESULT_ANCHOR.finditer(page))
+    for index, match in enumerate(anchors):
+        attrs = match.group(1)
+        if "result__a" not in attrs and "result-link" not in attrs:
             continue
-        url = _html.unescape(link.group(1))
-        url = _unwrap_ddg_url(url)
-        title = _strip_html(link.group(2))
-        snippet_match = re.search(
-            r'class="result__snippet"[^>]*>(.*?)</a>', block, re.DOTALL
-        )
+        href = _HREF_RE.search(attrs)
+        if href is None:
+            continue
+        url = _unwrap_ddg_url(_html.unescape(href.group(1)))
+        title = _strip_html(match.group(2))
+        tail_end = anchors[index + 1].start() if index + 1 < len(anchors) else len(page)
+        tail = page[match.end() : tail_end]
+        snippet_match = _SNIPPET_RE.search(tail)
         snippet = _strip_html(snippet_match.group(1)) if snippet_match else ""
         if title and url:
             results.append(SearchResult(title=title, url=url, snippet=snippet))
@@ -171,14 +184,18 @@ def search(query: str, *, limit: int = _DEFAULT_RESULTS) -> list[SearchResult]:
     if not query or internet_disabled():
         return []
     limit = max(1, min(int(limit), 10))
-    try:
-        page = _http_get(_SEARCH_URL + "?" + urllib.parse.urlencode({"q": query}))
-    except Exception:
-        return []
-    try:
-        return _ddg_results(page, limit)
-    except Exception:
-        return []
+    for endpoint in (_SEARCH_URL, _SEARCH_URL_LITE):
+        try:
+            page = _http_get(endpoint + "?" + urllib.parse.urlencode({"q": query}))
+        except Exception:
+            continue
+        try:
+            results = _ddg_results(page, limit)
+        except Exception:
+            results = []
+        if results:
+            return results
+    return []
 
 
 def fetch(url: str, *, max_chars: int = _MAX_PAGE_CHARS) -> str:

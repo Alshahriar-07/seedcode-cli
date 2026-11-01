@@ -103,17 +103,13 @@ def _model_value(config: AppConfig) -> str:
 
 
 def _mode_value(config: AppConfig) -> str:
-    """The user-facing mode, read from real session state (v9.1.0).
+    """The session capability label (v9.2.0: one unified coding agent).
 
-    Chat is shown without the " Mode" suffix so the compact dashboard keeps
-    exactly one ``Mode`` row label (see the design invariant asserted in
-    ``tests/test_dashboard.py``); Agent Mode keeps its full name so the
-    session's capability is unambiguous at a glance.
+    There is no mode system anymore; the row answers what the session can do,
+    read from the real permission level, so the dashboard shows exactly the
+    capability this session is running with.
     """
-    from ..core.modes import Mode, active_mode, mode_title
-
-    mode = active_mode(config)
-    return "Chat" if mode is Mode.CHAT else mode_title(mode)
+    return "Coding Agent"
 
 
 def _status_value(config: AppConfig, ready_mark: str, idle_mark: str) -> Text:

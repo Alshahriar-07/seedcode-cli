@@ -32,6 +32,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from . import events as event_stream
 from .chat import ChatEngine, ChatError
 from .identity import build_system_prompt
 from .intent import Intent, IntentKind, classify
@@ -74,6 +75,11 @@ _CONTINUE_NOTE = (
 )
 
 _TOOL_BLOCK = re.compile(r"```tool\s*\n(.*?)```", re.DOTALL)
+#: A JSON block/object that uses the OpenAI-style ``name`` + ``arguments``
+#: shape. Some local models emit such a call as *text* even when native tools
+#: are offered; executing it is the difference between a real tool loop and a
+#: reply that merely describes the operation.
+_INLINE_JSON_BLOCK = re.compile(r"```(?:json)?\s*([\[{].*?[\]}])\s*```", re.DOTALL)
 
 _AGENT_PREAMBLE = (
     "\n\nYou are in AGENT MODE with access to the user's project at {workspace} "
@@ -145,36 +151,6 @@ _NATIVE_INSTRUCTIONS = (
     "Prefer editing existing files over rewriting them."
 )
 
-_DESKTOP_PROMPT_HEADER = (
-    "\n\nCOMPUTER ENGINE is available: you can control this computer, but you "
-    "are the PLANNER, not the hands. A deterministic engine does the work; you "
-    "only decide WHAT to do. Rules:\n"
-    "1. You NEVER produce coordinates, keystrokes, click sequences, or wait "
-    "loops. You choose a skill (computer_run) or a semantic UI action "
-    "(ui_click, ui_type, …) and describe the target in words — the engine "
-    "resolves it, executes it, verifies the result, and recovers from failures "
-    "on its own.\n"
-    "2. Prefer a named skill from the catalog below; it already knows the full "
-    "procedure. Use the ui_* actions only for UI a skill doesn't cover.\n"
-    "3. BROWSER WORK IS ALWAYS A SKILL, NEVER A CLICK. State the goal once — "
-    "computer_run(youtube_play, {\"query\": \"Love Me Thoda Aur\"}) — and the "
-    "engine performs the whole workflow: opens the page, dismisses cookie / "
-    "translate / sign-in popups, selects the right result, starts playback, "
-    "and verifies it. Do NOT search and then click a result, and do NOT use "
-    "ui_click / ui_type on a browser window — those are refused. When no "
-    "browser skill fits, use open_url with an address you construct.\n"
-    "4. Read computer_state instead of re-inspecting the screen — the engine "
-    "remembers the focused app, pointer, clipboard, terminal directory, "
-    "current project, and recent actions for you.\n"
-    "5. Each tool result already reflects VERIFIED reality (the engine checked "
-    "before reporting). Trust it; never claim success it didn't confirm.\n"
-    "6. Call the engine again only when it reports failure with a replan hint, "
-    "or when computer_see shows unexpected UI. Some actions need the user's "
-    "confirmation and may be denied — respect denials, do not retry them.\n\n"
-    "Available skills:\n"
-)
-
-
 def _inspection_label(call: ToolCall) -> str:
     """A short label for what a read-only tool looked at (v7.1.0).
 
@@ -201,18 +177,6 @@ def _SafeObserver(observer):
         observer(kind, safe_text(detail))
 
     return wrapped
-
-
-def _desktop_prompt_section(max_level) -> str:
-    """The Computer Engine prompt block, including the live skill catalog."""
-    try:
-        from ..computer.skills import REGISTRY
-        from ..computer import catalog as _catalog  # noqa: F401 — populate registry
-
-        manifest = REGISTRY.manifest(max_level=max_level)
-    except Exception:
-        manifest = "(catalog unavailable)"
-    return _DESKTOP_PROMPT_HEADER + (manifest or "(no skills at this level)")
 
 
 @dataclass(slots=True)
@@ -248,6 +212,59 @@ def parse_tool_calls(text: str) -> list[ToolCall]:
         # surrogate in a model-supplied path or body can never reach a file
         # write, a shell command, or an HTTP request.
         calls.append(ToolCall(data["tool"].strip().lower(), clean_values(args)))
+    return calls
+
+
+def parse_inline_tool_calls(text: str) -> list[ToolCall]:
+    """Parse OpenAI-style ``{"name": ..., "arguments": {...}}`` text calls.
+
+    Only an ENTIRE reply that is JSON, or a fenced JSON block inside it, is
+    considered — a JSON example in the middle of prose is never executed. Both
+    a single object and a list of calls are accepted, as are the ``tool`` /
+    ``args`` aliases, so a model that cannot use the native channel still gets
+    a real tool loop instead of printing the call as its answer.
+    """
+    candidates: list[str] = []
+    stripped = (text or "").strip()
+    if stripped.startswith(("{", "[")):
+        candidates.append(stripped)
+    candidates.extend(_INLINE_JSON_BLOCK.findall(stripped))
+    calls: list[ToolCall] = []
+    for raw in candidates:
+        try:
+            data = json.loads(raw)
+        except (TypeError, ValueError):
+            continue
+        entries = data if isinstance(data, list) else [data]
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            # Prose-style shapes are honoured: OpenAI (name/arguments), the
+            # text protocol (tool/args), and models that say "action" and
+            # put every argument flat in the same object
+            # ("{"action": "write_file", "path": ..., "content": ...}).
+            name = entry.get("name") or entry.get("tool") or entry.get("action")
+            args = entry.get("arguments")
+            if args is None:
+                args = entry.get("args", entry.get("parameters", {}))
+            if not isinstance(args, dict):
+                args = {}
+            if (
+                not args
+                and entry.get("action")
+                and not entry.get("name")
+                and not entry.get("tool")
+            ):
+                # Flat action shape: the remaining keys are the arguments.
+                args = {
+                    key: value
+                    for key, value in entry.items()
+                    if key not in ("action", "name", "tool", "arguments", "args", "parameters")
+                }
+            if isinstance(name, str) and name.strip() and isinstance(args, dict):
+                calls.append(
+                    ToolCall(name.strip().lower(), clean_values(args))
+                )
     return calls
 
 
@@ -349,9 +366,6 @@ class AgentEngine(ChatEngine):
 
     def _system_prompt(self) -> str:
         intent = self._intent
-        desktop_section = ""
-        if self._desktop_active():
-            desktop_section = _desktop_prompt_section(self.permissions.level)
 
         # Build Seed Code identity + agent instructions
         base_identity = build_system_prompt(
@@ -389,7 +403,7 @@ class AgentEngine(ChatEngine):
                 manifest=tool_manifest(self._groups())
             )
         project = self._project_context() if self._workspace_allowed() else ""
-        return base_identity + preamble + instructions + desktop_section + project
+        return base_identity + preamble + instructions + project
 
     # --- intent (v9.1.1) ------------------------------------------------------
     def set_intent(self, intent: Intent | None) -> None:
@@ -418,12 +432,6 @@ class AgentEngine(ChatEngine):
         if self._intent is None:
             return True
         return self._intent.needs_workspace
-
-    def _desktop_allowed(self) -> bool:
-        """Whether this turn may be offered the Computer Engine."""
-        if self._intent is None:
-            return True
-        return self._intent.needs_desktop
 
     def _codemode_active(self) -> bool:
         """Code Mode is a session-level toggle read lazily (no import cycle)."""
@@ -519,24 +527,11 @@ class AgentEngine(ChatEngine):
         search.
         """
         groups: list[str] = ["core"]
-        if self._desktop_active():
-            groups.append("desktop")
         extra = self._intent.tool_groups if self._intent is not None else ()
         for group in extra:
             if group not in groups and group != "desktop":
                 groups.append(group)
         return tuple(groups)
-
-    def _desktop_active(self) -> bool:
-        """Desktop tools are advertised only when enabled AND runnable here."""
-        if not self._desktop_allowed():
-            return False
-        desktop = self.permissions.desktop
-        if desktop is None or not desktop.enabled:
-            return False
-        from ..computer import is_available
-
-        return is_available()[0]
 
     def _native_active(self) -> bool:
         """Whether this session should use native tool calling right now."""
@@ -574,6 +569,7 @@ class AgentEngine(ChatEngine):
         if resolved != self._intent:
             self.set_intent(resolved)
         self.add_user(user_text)
+        self._notify("task_started", text=user_text)
         failures = 0
 
         step = 0
@@ -596,10 +592,13 @@ class AgentEngine(ChatEngine):
                 # v7.1.0: the final text is normalized before it leaves the
                 # engine (a lone surrogate must never reach the console, the
                 # history file, or a JSON request).
-                return safe_text(payload) or "Done."
+                final_text = safe_text(payload) or "Done."
+                self._notify("task_completed", text=final_text)
+                return final_text
             failures = failures + 1 if outcome == "failed" else 0
 
         self._on_event("limit", f"step budget ({self.max_steps}) reached")
+        self._notify("task_failed", text=f"step budget ({self.max_steps}) reached")
         self.last_evidence.incomplete = True
         if self._codemode_active():
             # Not a task outcome: the persistent session issues another call.
@@ -713,9 +712,10 @@ class AgentEngine(ChatEngine):
         reply = "".join(text_parts)
 
         if not calls:
-            # Belt-and-braces: some models emit the TEXT protocol even when
-            # given native tools — honour it rather than ending the turn.
-            text_calls = parse_tool_calls(reply)
+            # Belt-and-braces: some models emit the TEXT protocol (or an
+            # OpenAI-style JSON call) even when given native tools — honour it
+            # rather than ending the turn.
+            text_calls = parse_tool_calls(reply) or parse_inline_tool_calls(reply)
             if not text_calls:
                 self._native = True
                 self.add_assistant(reply)
@@ -798,7 +798,7 @@ class AgentEngine(ChatEngine):
             raise
         self.messages = original
 
-        calls = parse_tool_calls(reply)
+        calls = parse_tool_calls(reply) or parse_inline_tool_calls(reply)
         if not calls:
             self.add_assistant(reply)
             final = reply.strip()
@@ -877,40 +877,53 @@ class AgentEngine(ChatEngine):
         return False
 
     def _drain_images(self) -> list[str]:
-        """Pending desktop screenshots — attached only for vision providers.
-
-        Screenshots are queued by desktop_see/desktop_screenshot; when the
-        active provider cannot take images they are simply dropped (the UIA
-        text snapshot in the tool result carries the information instead).
-        """
-        desktop = self.permissions.desktop
-        if desktop is None or not desktop.pending_images:
-            return []
-        images = list(desktop.pending_images)
-        desktop.pending_images.clear()
-        try:
-            from .providers import get_provider
-
-            if get_provider(self.config.provider).supports_images(self.config):
-                return images
-        except Exception:  # provider lookup must never break the loop
-            pass
+        """No image attachments: desktop control was removed in v9.2.0."""
         return []
 
-    def _notify(self, phase: str, **fields: Any) -> None:
-        """Report structured progress to the UI (a UI bug must never break a turn)."""
+    def _current_task_id(self) -> int:
+        """The persistent session's active task id (0 outside a session)."""
         try:
-            self._on_step(
-                {
-                    key: (safe_text(value) if isinstance(value, str) else value)
-                    for key, value in {"phase": phase, **fields}.items()
-                }
+            from . import session as session_mod
+
+            session = session_mod.current_session()
+            graph = getattr(session, "graph", None) if session is not None else None
+            active = graph.active() if graph is not None else None
+            return int(getattr(active, "id", 0) or 0)
+        except Exception:
+            return 0
+
+    def _notify(self, phase: str, **fields: Any) -> None:
+        """Report structured progress to the UI (a UI bug must never break a turn).
+
+        Besides the legacy ``phase``/``name``/``args`` keys, every report now
+        carries a complete :class:`~seedcode.core.events.ActivityEvent`
+        (event id, task id, timestamp, type, message, path, status, diff and
+        line counts) built from this real operation.
+        """
+        try:
+            event = event_stream.build_event(
+                phase=phase,
+                task_id=self._current_task_id(),
+                **fields,
             )
+            payload: dict[str, Any] = {"phase": phase, **fields}
+            payload.update(event.to_dict())
+            self._on_step(payload)
         except Exception:
             _log.exception("step observer failed")
 
     def _execute_one(self, call: ToolCall) -> ToolResult:
-        """Run one tool call through the registry, converting failures."""
+        """Run one tool call through the registry, converting failures.
+
+        Terminal commands get a structured per-line observer for the duration
+        of the call, so ``terminal_output`` events reach the UI while the
+        command is still running instead of only when it exits.
+        """
+        previous = self.permissions.on_activity
+        if call.tool == "run_command":
+            self.permissions.on_activity = lambda line: self._notify(
+                "terminal_output", name="run_command", output=line
+            )
         try:
             return get_tool(call.tool).run(self.permissions, call.args)
         except (ToolError, PermissionError_) as exc:
@@ -918,6 +931,8 @@ class AgentEngine(ChatEngine):
         except Exception as exc:  # a tool bug must not kill the loop
             _log.exception("tool crashed: %s", call.tool)
             return ToolResult(False, f"Tool crashed: {exc}")
+        finally:
+            self.permissions.on_activity = previous
 
     def _execute_calls(self, calls: list[ToolCall]) -> tuple[list[str], bool]:
         """Execute parsed calls; returns (results-for-model, any_failed).
@@ -979,9 +994,15 @@ class AgentEngine(ChatEngine):
                 any_failed = True
             self._record_evidence(call, result)
             self._on_event("result" if result.ok else "error", result.output[:200])
+            path = ""
+            for key in ("path", "source", "destination", "file"):
+                value = call.args.get(key)
+                if value:
+                    path = str(value)
+                    break
             self._notify(
                 "tool_done", name=call.tool, args=call.args, ok=result.ok,
-                output=result.output,
+                output=result.output, diff=result.diff, path=path,
             )
             results.append(f"{call.tool} -> {result.for_model()}")
         return results, any_failed

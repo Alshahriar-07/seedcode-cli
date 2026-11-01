@@ -243,14 +243,18 @@ class AppConfig(BaseModel):
     # Completion-token budget for chat requests. Users may override in
     # config.json; the value is clamped before every request.
     max_tokens: int = DEFAULT_MAX_TOKENS
-    # The runtime mode (v9.1.0): exactly chat | agent. Chat only converses;
-    # Agent is the unified autonomous workspace/coding agent. The former Code
-    # Mode and Assist Mode are capabilities/aliases of Agent Mode (see
-    # seedcode.core.modes); a stored legacy "code"/"assist" value is normalised
-    # to "agent" by the validator below, and the literal keeps accepting it so
-    # an old config never fails to load. ``agent_mode`` stays available as a
-    # derived compatibility property rather than a second stored field.
-    mode: Literal["chat", "code", "agent"] = "chat"
+    # v9.2.0: the single unified agent runtime. The old chat/code/agent mode
+    # field is retired; every legacy spelling ("chat", "code", "assist") is
+    # normalised to "agent" on load so an old config never fails to load and
+    # the field can carry no third mode.
+    mode: Literal["chat", "code", "agent"] = "agent"
+    # v9.2.0: automatic provider failover is now OPT-IN. A user who selected a
+    # provider (especially the local Ollama server) must be able to rely on
+    # Seed Code using exactly that backend: a failed request is reported, not
+    # silently rerouted to another vendor. When the user enables failover
+    # explicitly (config.json or /config), transient failures may fall over to
+    # another *configured* provider as before.
+    auto_failover: bool = False
     # Single hierarchical permission level (see seedcode.tools.permissions):
     # read_only < workspace < desktop < full_system. Desktop automation is a
     # capability of the ``desktop``/``full_system`` levels — there is no
@@ -274,18 +278,14 @@ class AppConfig(BaseModel):
             return data
         data = dict(data)  # never mutate the caller's dict
 
-        # v8.1.0: one canonical mode. A legacy ``agent_mode`` boolean maps onto
-        # it (True -> agent), and the obsolete key is dropped so it can never
-        # resurface as a competing source of truth. Unknown/legacy mode names
-        # (including "assist") resolve through the shared parser, so no fourth
-        # mode can be created by a stored value.
-        from .modes import Mode, parse_mode
-
+        # v9.2.0: the mode system is retired. Whatever a stored config says
+        # ("chat", "code", "assist", "agent"), the session is the unified
+        # agent; the value is normalised so old configs keep loading and the
+        # field can never resurrect a second runtime mode.
         legacy_agent = data.pop("agent_mode", None)
-        data["mode"] = parse_mode(
-            data.get("mode"),
-            default=Mode.AGENT if legacy_agent else Mode.CHAT,
-        ).value
+        data["mode"] = "agent"
+        if legacy_agent is None and isinstance(data.get("mode"), (bool, int)):
+            data.pop("mode", None)  # a corrupt boolean never crashes loading
 
         def norm(pid: str) -> str:
             """Provider id normalisation (OpenRouter is a first-class backend)."""
@@ -362,18 +362,17 @@ class AppConfig(BaseModel):
         ):
             data["active_provider"] = _FALLBACK_PROVIDER
 
-        # vNext: the standalone ``desktop_mode`` flag folded into the unified
-        # permission level. A legacy config with desktop_mode=true elevates a
-        # workspace level to ``desktop``; ``full_access`` renames to
-        # ``full_system``. ``desktop_mode`` is dropped from the model.
-        legacy_desktop = data.pop("desktop_mode", None)
+        # v9.2.0: desktop control is removed. The old ``desktop_mode`` flag and
+        # the ``desktop`` permission level are gone — a legacy config keeps its
+        # file/command capability: "desktop" normalizes to ``workspace`` and
+        # ``full_access`` renames to ``full_system``.
+        data.pop("desktop_mode", None)
         raw_perm = str(data.get("permission_mode", "") or "").strip().lower()
         if raw_perm in ("full_access", "fullaccess", "full", "system"):
             data["permission_mode"] = "full_system"
             raw_perm = "full_system"
-        if legacy_desktop and raw_perm in ("", "read_only", "workspace"):
-            # Desktop was on: grant at least the desktop level.
-            data["permission_mode"] = "desktop"
+        if raw_perm in ("desktop", "computer"):
+            data["permission_mode"] = "workspace"
 
         if providers or "providers" in data:
             data["providers"] = providers
@@ -387,49 +386,20 @@ class AppConfig(BaseModel):
                 self.providers[pid] = ProviderConfig()
         return self
 
-    # --- mode (derived compatibility view over ``mode``) ---------------------
+    # --- mode (v9.2.0 compatibility view) -----------------------------------
     @property
     def agent_mode(self) -> bool:
-        """Whether the model may act on the project (Code or Agent mode).
+        """Always ``True``: the unified coding agent is the only runtime.
 
-        Compatibility shim for the pre-8.1 boolean: the mode is the single
-        source of truth now and this derives from it, so the two can never
-        disagree. Assigning it selects a mode (True -> Agent, False -> Chat).
+        Compatibility property kept for the session engine and command layer,
+        which read it when deciding to act on the project. There is no mode
+        switch any more, so assigning it can change nothing.
         """
-        return self.mode in ("code", "agent")
+        return True
 
     @agent_mode.setter
     def agent_mode(self, value: bool) -> None:
-        if value:
-            if self.mode == "chat":
-                self.mode = "agent"  # type: ignore[assignment]
-        else:
-            self.mode = "chat"  # type: ignore[assignment]
-
-    # --- desktop capability (derived from the permission level) --------------
-    @property
-    def desktop_mode(self) -> bool:
-        """Whether the current permission level allows desktop automation.
-
-        Compatibility shim: desktop is no longer a separate flag but a
-        capability of the ``desktop``/``full_system`` levels. Reads derive from
-        ``permission_mode``; assigning True/False raises or lowers the level so
-        older call sites keep working.
-        """
-        from ..tools.permissions import PermissionLevel
-
-        return PermissionLevel.parse(self.permission_mode).allows_desktop
-
-    @desktop_mode.setter
-    def desktop_mode(self, value: bool) -> None:
-        from ..tools.permissions import PermissionLevel
-
-        current = PermissionLevel.parse(self.permission_mode)
-        if value and not current.allows_desktop:
-            self.permission_mode = "desktop"  # type: ignore[assignment]
-        elif not value and current.allows_desktop:
-            # Drop desktop capability but keep the ability to edit the project.
-            self.permission_mode = "workspace"  # type: ignore[assignment]
+        return None  # a legacy setter: the unified runtime cannot be toggled
 
     # --- active provider/model (compatibility + convenience) ----------------
     @property

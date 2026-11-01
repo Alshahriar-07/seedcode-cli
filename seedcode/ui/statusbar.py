@@ -17,14 +17,8 @@ from .badges import badge_for_status, badge_text
 
 
 def mode_label(config: AppConfig) -> str:
-    """The user-facing mode: Chat Mode / Agent Mode (v9.1.0).
-
-    Delegates to the single mode resolver so this surface can never disagree
-    with the dashboard, the header, ``/mode`` or ``/status``.
-    """
-    from ..core.modes import mode_label as _label
-
-    return _label(config)
+    """The session capability label (v9.2.0: one coding agent, no modes)."""
+    return "Agent"
 
 
 def session_statusbar(console: Console, config: AppConfig) -> None:

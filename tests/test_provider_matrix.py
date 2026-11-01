@@ -35,8 +35,8 @@ PROVIDER_IDS = tuple(PROVIDERS)
 KEYLESS = ("default", "ollama")
 BYOK = tuple(pid for pid in PROVIDER_IDS if pid not in KEYLESS)
 
-MODES = ("chat", "agent")
-_MODE_LABEL = {"chat": "Chat Mode", "agent": "Agent Mode"}
+# v9.2.0: one unified coding agent — there are no per-provider modes anymore.
+_MODE_LABEL = "Agent"
 
 
 @pytest.fixture(autouse=True)
@@ -115,55 +115,46 @@ def test_keyless_providers_never_borrow_a_key(provider_id: str) -> None:
     assert cfg.get_api_key() == ""  # Default/Ollama read their own slot only
 
 
-# --- provider × mode matrix -------------------------------------------------
+# --- provider × dashboard ----------------------------------------------------
 @pytest.mark.parametrize("provider_id", PROVIDER_IDS)
-@pytest.mark.parametrize("mode", MODES)
-def test_every_provider_works_in_every_mode(monkeypatch, provider_id: str, mode: str) -> None:
-    """Every provider renders and labels correctly in every mode."""
+def test_every_provider_renders_a_dashboard(monkeypatch, provider_id: str) -> None:
+    """Every provider renders and labels correctly in the unified agent."""
     import types
 
     from rich.console import Console
 
     from seedcode import codemode_state as cms
-    from seedcode.commands import status as status_cmd
-    from seedcode.commands.status import mode_label
     from seedcode.ui.dashboard import render_dashboard
+    from seedcode.ui.statusbar import mode_label
     from seedcode.ui.theme import SEED_THEME
 
-    # Patch BOTH bindings: status.py imported the accessor by name, while the
-    # dashboard resolves it lazily from the module. The workspace capability
-    # (former Code Mode) is part of Agent Mode, so it reports Agent Mode.
     stub = types.SimpleNamespace(enabled=False, workspace=None, store=None)
     monkeypatch.setattr(cms, "codemode_state", lambda: stub)
-    monkeypatch.setattr(status_cmd, "codemode_state", lambda: stub)
 
     cfg = AppConfig(provider=provider_id, model="test-model")
-    cfg.agent_mode = mode == "agent"
 
-    assert mode_label(cfg) == _MODE_LABEL[mode]
+    assert mode_label(cfg) == _MODE_LABEL
 
     console = Console(theme=SEED_THEME, width=100, force_terminal=True, record=True)
     render_dashboard(console, cfg)  # must never raise
     text = console.export_text()
     assert provider_label(provider_id) in text or "Not configured" in text
-    # The API-key row follows the provider's real requirement, in every mode.
+    # The API-key row follows the provider's real requirement.
     assert ("API Key" in text) is provider_requires_key(provider_id)
 
 
-def test_workspace_capability_reports_agent_mode(monkeypatch) -> None:
-    """The former Code Mode workspace is a capability of Agent Mode."""
+def test_the_workspace_capability_is_part_of_the_unified_agent(monkeypatch) -> None:
+    """The former Code Mode workspace is a capability of the one agent."""
     import types
 
     from seedcode import codemode_state as cms
-    from seedcode.commands import status as status_cmd
-    from seedcode.commands.status import mode_label
+    from seedcode.ui.statusbar import mode_label
 
     stub = types.SimpleNamespace(enabled=True, workspace=None, store=None)
     monkeypatch.setattr(cms, "codemode_state", lambda: stub)
-    monkeypatch.setattr(status_cmd, "codemode_state", lambda: stub)
 
     cfg = AppConfig(provider="default", model="test-model")
-    assert mode_label(cfg) == "Agent Mode"
+    assert mode_label(cfg) == "Agent"
 
 
 def test_switching_provider_does_not_leak_key_or_model() -> None:

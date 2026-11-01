@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from .base import ToolResult, int_arg, register
+from .diffs import make_diff
 from .permissions import CATEGORY_DELETE
 from .textio import TextFile, read_text_file, write_text_file
 from ..utils.text import safe_text
@@ -83,6 +84,11 @@ def _write_file(perm: "PermissionManager", args: dict[str, Any]) -> ToolResult:
     content = safe_text(raw_content)
     repaired = content != raw_content
 
+    existed = path.is_file()
+    try:
+        before = path.read_text(encoding="utf-8", errors="replace") if existed else ""
+    except OSError:
+        before = ""
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
@@ -109,7 +115,11 @@ def _write_file(perm: "PermissionManager", args: dict[str, Any]) -> ToolResult:
         if repaired
         else ""
     )
-    return ToolResult(True, f"Wrote {len(content)} chars to {path} (verified){note}")
+    return ToolResult(
+        True,
+        f"Wrote {len(content)} chars to {path} (verified){note}",
+        diff=make_diff(path, before, content, created=not existed),
+    )
 
 
 @register(
@@ -127,6 +137,10 @@ def _delete_file(perm: "PermissionManager", args: dict[str, Any]) -> ToolResult:
         return ToolResult(False, f"File not found: {path}")
     perm.confirm_action(CATEGORY_DELETE, str(path))
     try:
+        before = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        before = ""
+    try:
         path.unlink()
     except OSError as exc:
         return ToolResult(False, f"Could not delete {path}: {exc}")
@@ -138,7 +152,11 @@ def _delete_file(perm: "PermissionManager", args: dict[str, Any]) -> ToolResult:
             f"Delete command completed but {path} still exists. Possible permission or filesystem issue."
         )
 
-    return ToolResult(True, f"Deleted {path} (verified)")
+    return ToolResult(
+        True,
+        f"Deleted {path} (verified)",
+        diff=make_diff(path, before, "", deleted=True),
+    )
 
 
 @register(
@@ -173,9 +191,11 @@ def _append_file(perm: "PermissionManager", args: dict[str, Any]) -> ToolResult:
     if not content:
         return ToolResult(False, "content is empty; nothing to append.")
 
+    before = ""
     try:
         if path.is_file():
             tf = read_text_file(path)  # preserve encoding + line endings
+            before = tf.text
             tf.text += content.replace("\r\n", "\n")
         else:
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -197,7 +217,11 @@ def _append_file(perm: "PermissionManager", args: dict[str, Any]) -> ToolResult:
             False, f"Append completed but verification failed: could not read {path}: {exc}"
         )
 
-    return ToolResult(True, f"Appended {len(content)} chars to {path} (verified)")
+    return ToolResult(
+        True,
+        f"Appended {len(content)} chars to {path} (verified)",
+        diff=make_diff(path, before, tf.text),
+    )
 
 
 @register(
@@ -219,6 +243,59 @@ def _create_directory(perm: "PermissionManager", args: dict[str, Any]) -> ToolRe
     if not path.is_dir():
         return ToolResult(False, f"mkdir completed but {path} does not exist.")
     return ToolResult(True, f"Directory {'already existed' if existed else 'created'}: {path}")
+
+
+@register(
+    "delete_directory",
+    "Delete a directory (empty by default; recursive requires explicit approval).",
+    {
+        "path": "directory path",
+        "recursive": "(optional) true to delete a non-empty directory and its contents",
+    },
+    mutates=True,
+    types={"recursive": "boolean"},
+)
+def _delete_directory(perm: "PermissionManager", args: dict[str, Any]) -> ToolResult:
+    path = perm.resolve(args["path"])
+    perm.check_write(path)
+    if not path.exists():
+        return ToolResult(False, f"Directory not found: {path}")
+    if not path.is_dir():
+        return ToolResult(False, f"Not a directory: {path}")
+    # Never allow the workspace root (or a parent of it) to be deleted by a
+    # model-supplied relative path such as "." or "..".
+    if path == perm.workspace or path in perm.workspace.parents:
+        return ToolResult(False, f"Refusing to delete the workspace root: {path}")
+    raw_recursive = args.get("recursive")
+    recursive = raw_recursive is True or str(raw_recursive).strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+    try:
+        entries = list(path.iterdir())
+    except OSError as exc:
+        return ToolResult(False, f"Could not inspect {path}: {exc}")
+    if entries and not recursive:
+        return ToolResult(
+            False,
+            f"Directory {path} is not empty ({len(entries)} entr"
+            f"{'y' if len(entries) == 1 else 'ies'}). Pass recursive=true to "
+            "delete it and its contents.",
+        )
+    perm.confirm_action(CATEGORY_DELETE, f"directory {path}")
+    try:
+        if recursive:
+            shutil.rmtree(path)
+        else:
+            path.rmdir()
+    except OSError as exc:
+        return ToolResult(False, f"Could not delete directory {path}: {exc}")
+    if path.exists():
+        return ToolResult(False, f"Delete completed but {path} still exists.")
+    return ToolResult(
+        True,
+        f"Deleted directory {path} ({len(entries)} entr"
+        f"{'y' if len(entries) == 1 else 'ies'} removed, verified)",
+    )
 
 
 @register(

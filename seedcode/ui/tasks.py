@@ -108,13 +108,6 @@ _INSPECT_TOOLS = frozenset(
         "find_files",
         "search_text",
         "project_index",
-        "computer_see",
-        "computer_state",
-        "desktop_screen_info",
-        "desktop_screenshot",
-        "desktop_windows",
-        "ui_assert",
-        "ui_wait_for",
     }
 )
 
@@ -687,9 +680,12 @@ def activity_for(name: str, args: dict[str, Any] | None = None) -> str:
         return f"Running {_clip(command, 52)}" if command else "Running a command"
     if name == "git":
         return f"Running git {_clip(command, 44)}"
-    if name.startswith("computer_") or name.startswith("ui_") or name.startswith("desktop_"):
-        target = str(args.get("target") or args.get("skill") or "the desktop")
-        return f"Controlling {target}"
+    if name == "web_search":
+        query = str(args.get("query") or "").strip()
+        return f"Searching the web for {_clip(query, 60)!r}" if query else "Searching the web"
+    if name == "web_fetch":
+        url = str(args.get("url") or "").strip()
+        return f"Reading {_clip(url, 60)}" if url else "Reading an online source"
     return _describe(name, args)
 
 

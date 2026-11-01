@@ -167,6 +167,7 @@ class OllamaProvider(Provider):
                     detail = response.read().decode("utf-8", "replace")[:300]
                     raise ProviderError(f"Ollama error (HTTP {response.status_code}): {detail}")
                 # NDJSON: one JSON object per line until "done": true.
+                emitted = False
                 for line in response.iter_lines():
                     if not line.strip():
                         continue
@@ -178,9 +179,17 @@ class OllamaProvider(Provider):
                         raise ProviderError(f"Ollama error: {event['error']}")
                     piece = (event.get("message") or {}).get("content")
                     if piece:
+                        emitted = True
                         yield piece
                     if event.get("done"):
-                        return
+                        break
+                if not emitted:
+                    raise ProviderError(
+                        f"Ollama returned an empty response for model "
+                        f"'{config.model}'. The model may still be loading or may "
+                        "not support chat; verify it with: "
+                        f"ollama run {config.model}"
+                    )
         except httpx.TimeoutException as exc:
             raise ProviderError(
                 "Timed out waiting for Ollama. The model may still be loading — try again.",
@@ -236,6 +245,7 @@ class OllamaProvider(Provider):
                 # NDJSON stream; tool calls arrive with arguments already
                 # parsed as objects (no fragment assembly needed). Ollama has
                 # no call ids, so synthesize stable ones.
+                saw_output = False
                 for line in response.iter_lines():
                     if not line.strip():
                         continue
@@ -248,6 +258,7 @@ class OllamaProvider(Provider):
                     message = event.get("message") or {}
                     piece = message.get("content")
                     if piece:
+                        saw_output = True
                         yield TextDelta(piece)
                     for call in message.get("tool_calls") or []:
                         fn = call.get("function") or {}
@@ -255,13 +266,20 @@ class OllamaProvider(Provider):
                         if not isinstance(arguments, dict):
                             arguments = {}
                         call_counter += 1
+                        saw_output = True
                         yield ToolCallEvent(
                             id=f"call_{call_counter}",
                             name=fn.get("name", ""),
                             arguments=arguments,
                         )
                     if event.get("done"):
-                        return
+                        break
+                if not saw_output:
+                    raise ProviderError(
+                        f"Ollama returned no text and no tool call for model "
+                        f"'{config.model}'. Verify it responds with: "
+                        f"ollama run {config.model}"
+                    )
         except httpx.TimeoutException as exc:
             raise ProviderError(
                 "Timed out waiting for Ollama. The model may still be loading — try again.",

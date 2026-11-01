@@ -191,8 +191,7 @@ def _choose_permission(ui, config) -> bool:
     detail = {
         PermissionMode.READ_ONLY: "inspect only — no writes, no commands",
         PermissionMode.WORKSPACE: "edit and run inside this directory only",
-        PermissionMode.DESKTOP: "control this computer (mouse, keyboard, apps)",
-        PermissionMode.FULL_SYSTEM: "no path restriction + sensitive actions (use with care)",
+        PermissionMode.FULL_SYSTEM: "edit and run anywhere (with confirmations)",
     }
     chosen = select(
         [Option(mode.label, mode.value_str, detail=detail[mode]) for mode in PermissionMode],

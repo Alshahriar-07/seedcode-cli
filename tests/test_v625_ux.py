@@ -62,126 +62,43 @@ def _ctx(config: AppConfig | None = None) -> tuple[_StubUI, CommandContext]:
     return ui, CommandContext(ui=ui, config=config or AppConfig(), engine=None)
 
 
-# --- /chat ---------------------------------------------------------------------
+# --- the retired mode commands (v9.2.0) ---------------------------------------
 
 
-def test_chat_on_returns_to_plain_chat(monkeypatch, tmp_path) -> None:
-    """`/chat on` must disable Assist and Code Mode, not just print text."""
-    from seedcode import codemode_state as cms
-    from seedcode.commands import assist as assist_cmd
-    from seedcode.commands import codemode as codemode_cmd
-
-    cms.reset()
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(codemode_cmd, "save_config", lambda config: None)
-    monkeypatch.setattr(assist_cmd, "save_config", lambda config: None)
-    monkeypatch.setattr(assist_cmd, "is_available", lambda: (False, "test"))
-    try:
-        ui, ctx = _ctx()
-        dispatch(ctx, "/codemode on")
-        assert cms.codemode_state().enabled
-        assert ctx.config.agent_mode
-
-        dispatch(ctx, "/chat on")
-
-        assert not cms.codemode_state().enabled
-        assert not ctx.config.agent_mode
-        assert any("Chat Mode ON" in m for m in ui.messages)
-    finally:
-        cms.reset()
-
-
-def test_chat_bare_shows_current_mode() -> None:
+@pytest.mark.parametrize(
+    "command",
+    [
+        "/chat",
+        "/chat on",
+        "/mode",
+        "/mode chat",
+        "/agent on",
+        "/agent off",
+        "/assist on",
+        "/codemode on",
+    ],
+)
+def test_retired_mode_commands_are_gone(command: str) -> None:
+    """v9.2.0 has one unified coding agent: the mode commands were removed."""
     ui, ctx = _ctx()
-    dispatch(ctx, "/chat")
-    assert any(m.startswith("Mode:") for m in ui.messages)
-    assert any("Mode: Chat" in m for m in ui.messages)
+    dispatch(ctx, command)
+    assert any("Unknown command" in message for message in ui.messages)
 
 
-def test_chat_rejects_invalid_argument() -> None:
-    ui, ctx = _ctx()
-    dispatch(ctx, "/chat banana")
-    assert any("[Command Error]" in m for m in ui.messages)
-    assert any("Expected: /chat [on]" in m for m in ui.messages)
-
-
-def test_chat_on_is_idempotent_when_already_in_chat() -> None:
-    ui, ctx = _ctx()
+def test_retired_commands_leave_the_config_alone() -> None:
+    config = AppConfig()
+    before = config.model_dump()
+    ui, ctx = _ctx(config)
     dispatch(ctx, "/chat on")
-    assert any("Chat Mode ON" in m for m in ui.messages)
-
-
-# --- /mode ---------------------------------------------------------------------
-
-
-def test_mode_bare_shows_current_mode() -> None:
-    ui, ctx = _ctx()
-    dispatch(ctx, "/mode")
-    assert any(m.startswith("Mode:") for m in ui.messages)
-
-
-def test_mode_chat_switches_to_chat(monkeypatch, tmp_path) -> None:
-    from seedcode.commands import assist as assist_cmd
-
-    monkeypatch.setattr(assist_cmd, "save_config", lambda config: None)
-    config = AppConfig()
-    config.agent_mode = True
-    ui, ctx = _ctx(config)
-    dispatch(ctx, "/mode chat")
-    assert not config.agent_mode
-    assert any("Chat Mode ON" in m for m in ui.messages)
-
-
-def test_mode_code_routes_into_unified_agent_mode(monkeypatch, tmp_path) -> None:
-    """Code Mode is no longer a separate mode: /mode code selects Agent Mode,
-    which also activates the workspace coding capability."""
-    from seedcode import codemode_state as cms
-    from seedcode.commands import assist as assist_cmd
-    from seedcode.commands import codemode as codemode_cmd
-
-    cms.reset()
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(codemode_cmd, "save_config", lambda config: None)
-    monkeypatch.setattr(assist_cmd, "save_config", lambda config: None)
-    monkeypatch.setattr(assist_cmd, "is_available", lambda: (False, "test"))
-    try:
-        ui, ctx = _ctx()
-        dispatch(ctx, "/mode code")
-        assert ctx.config.agent_mode
-        assert cms.codemode_state().enabled
-        assert any("Agent Mode ON" in m for m in ui.messages)
-        assert any("Code Mode is part of Agent Mode now" in m for m in ui.messages)
-    finally:
-        cms.reset()
-
-
-def test_mode_agent_enables_agent_mode(monkeypatch) -> None:
-    from seedcode.commands import assist as assist_cmd
-
-    monkeypatch.setattr(assist_cmd, "save_config", lambda config: None)
-    monkeypatch.setattr(assist_cmd, "is_available", lambda: (False, "test"))
-    ui, ctx = _ctx()
     dispatch(ctx, "/mode agent")
-    assert ctx.config.agent_mode
-    assert any("Agent Mode ON" in m for m in ui.messages)
+    assert config.model_dump() == before
 
 
-def test_mode_rejects_unknown_mode() -> None:
-    ui, ctx = _ctx()
-    dispatch(ctx, "/mode banana")
-    assert any("[Command Error]" in m for m in ui.messages)
-    assert any("chat|agent" in m for m in ui.messages)
+def test_the_unified_mode_label_is_reported() -> None:
+    """/status and the header share one label: there is one Agent."""
+    from seedcode.ui.statusbar import mode_label
 
-
-def test_status_and_mode_agree_on_the_mode_label() -> None:
-    """One mode label source: /mode and /status must name it identically."""
-    from seedcode.commands.status import mode_label
-
-    config = AppConfig()
-    ui, ctx = _ctx(config)
-    dispatch(ctx, "/mode")
-    label = mode_label(config)
-    assert any(f"Mode: {label}" in m for m in ui.messages)
+    assert mode_label(AppConfig()) == "Agent"
 
 
 # --- /permissions alias ----------------------------------------------------------
@@ -388,4 +305,4 @@ def test_version_flag_prints_machine_readable_version(monkeypatch, capsys) -> No
     cli.main()
     out = capsys.readouterr().out.strip()
     assert out == f"Seed Code CLI {__import__('seedcode').__version__}"
-    assert out.startswith("Seed Code CLI 9.1.1")
+    assert out.startswith("Seed Code CLI 9.2.0")

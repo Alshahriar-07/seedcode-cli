@@ -270,12 +270,6 @@ class UI:
             if live is not None:
                 live.start()
 
-    def confirm_desktop(
-        self, category_label: str, description: str, *, cancel=None
-    ) -> str:
-        """Approve a desktop action; returns 'y', 'a', or 'n'."""
-        return self._confirm("Desktop Control", category_label, description, cancel=cancel)
-
     def confirm_tool_action(
         self, category_label: str, description: str, *, cancel=None
     ) -> str:

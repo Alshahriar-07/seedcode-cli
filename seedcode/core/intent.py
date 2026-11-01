@@ -59,7 +59,9 @@ TOOL_GROUP_FOR_INTENT: dict[IntentKind, tuple[str, ...]] = {
     IntentKind.CONVERSATION: (),
     IntentKind.RESEARCH: ("web",),
     IntentKind.CODING: (),
-    IntentKind.COMPUTER: ("desktop", "web"),
+    # v9.2.0: desktop control is removed; a computer/browser request is
+    # answered without tools (the agent explains it is out of scope).
+    IntentKind.COMPUTER: (),
 }
 
 
@@ -151,6 +153,16 @@ _RESEARCH_SIGNALS = (
     "price", "pricing", "cost", "stock", "weather", "score", "who won",
     "trending", "documentation", "docs for", "api docs", "look up",
     "search the web", "search online", "google", "browse the web", "online",
+)
+
+#: Internet signals that genuinely apply to a coding task. Temporal words
+#: such as "now" or "current" are deliberately excluded: "now run the tests"
+#: is a command, not a request for fresh information, and must not trigger a
+#: web lookup (which also slowed every such turn down).
+_DOC_INTERNET_SIGNALS = (
+    "documentation", "docs for", "api docs", "release notes", "changelog",
+    "look up", "search the web", "search online", "web search",
+    "latest version", "up to date", "up-to-date", "on the internet",
 )
 
 _FILE_RE = re.compile(
@@ -275,7 +287,9 @@ def classify(text: str) -> Intent:
             IntentKind.CODING,
             needs_workspace=True,
             needs_terminal=bool(terminal or coding_verb in ("run", "test", "build")),
-            needs_internet=bool(research or explicit_web),
+            needs_internet=bool(
+                explicit_web or _has_word(lowered, _DOC_INTERNET_SIGNALS)
+            ),
             executes=True,
             reason=(
                 f"coding task: {coding_verb or 'file'} "

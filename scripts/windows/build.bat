@@ -111,10 +111,9 @@ if errorlevel 1 (
     )
 )
 echo [STEP] Ensuring project dependencies are installed...
-REM [desktop] pulls in the Computer Engine AND the OCR/CV detection tiers. The
-REM frozen exe must carry them: someone who installs SeedCodeSetup.exe never
-REM runs pip, so whatever is missing here is missing forever on their machine.
-%PY_CMD% -m pip install -e "%REPO_ROOT%[desktop]" >> "%LOG_FILE%" 2>&1
+REM v9.2.0: the desktop/OCR/browser extras were removed with the Computer
+REM Engine, so the frozen exe needs only the core dependencies.
+%PY_CMD% -m pip install -e "%REPO_ROOT%" >> "%LOG_FILE%" 2>&1
 if errorlevel 1 (
     echo [ERROR] Dependency installation failed. See "%LOG_FILE%".
     exit /b 1
@@ -140,11 +139,13 @@ if errorlevel 1 (
 echo [OK] All tests passed.
 
 REM --- Clean previous outputs so nothing stale can survive into this build --
-REM dist\ is deleted BEFORE building: if seedcode.exe exists after PyInstaller
-REM runs, it was provably created by THIS run.
-echo [STEP] Cleaning previous build outputs ^(build\, dist\, *.spec^)...
+REM Only BUILD outputs are removed: dist\release\ holds the published artifacts
+REM of earlier releases and must never be deleted by a build. The executable
+REM is removed BEFORE building, so if dist\seedcode.exe exists afterwards it
+REM was provably created by THIS run.
+echo [STEP] Cleaning previous build outputs ^(build\, dist\seedcode.exe, *.spec^)...
 if exist "%REPO_ROOT%\build" rmdir /s /q "%REPO_ROOT%\build" >nul 2>&1
-if exist "%REPO_ROOT%\dist" rmdir /s /q "%REPO_ROOT%\dist" >nul 2>&1
+if exist "%REPO_ROOT%\dist\seedcode.exe" del /f /q "%REPO_ROOT%\dist\seedcode.exe" >nul 2>&1
 del /f /q "%REPO_ROOT%\*.spec" >nul 2>&1
 del /f /q "%~dp0*.spec" >nul 2>&1
 if exist "%REPO_ROOT%\dist\seedcode.exe" (
@@ -163,25 +164,6 @@ REM PyInstaller cache so no previously-compiled module can leak in.
 REM --icon + --version-file brand the exe: Explorer, taskbar, and every
 REM shortcut resolve their icon from the exe's own resources, so the default
 REM Python icon can never appear.
-REM --- Locate the Tesseract OCR engine to bundle -----------------------------
-REM The engine is a native binary, so pip cannot supply it. Prefer a copy
-REM vendored in the repo (reproducible builds); fall back to a system install.
-REM Missing is a WARNING, not an error: the exe still builds, it just ships
-REM without the OCR tier, and /doctor will say so on the user's machine.
-set "TESSDIR="
-if exist "%REPO_ROOT%\vendor\tesseract\tesseract.exe" set "TESSDIR=%REPO_ROOT%\vendor\tesseract"
-if not defined TESSDIR if exist "%ProgramFiles%\Tesseract-OCR\tesseract.exe" set "TESSDIR=%ProgramFiles%\Tesseract-OCR"
-if not defined TESSDIR if exist "%ProgramFiles(x86)%\Tesseract-OCR\tesseract.exe" set "TESSDIR=%ProgramFiles(x86)%\Tesseract-OCR"
-set "TESS_ARGS="
-if defined TESSDIR (
-    echo [INFO] Bundling the OCR engine from: !TESSDIR!
-    set "TESS_ARGS=--add-binary "!TESSDIR!\tesseract.exe;tesseract" --add-data "!TESSDIR!\tessdata;tesseract\tessdata""
-    echo [INFO] bundling tesseract from !TESSDIR! >> "%LOG_FILE%"
-) else (
-    echo [WARN] Tesseract was not found - the exe will ship WITHOUT the OCR tier.
-    echo        Vendor it at vendor\tesseract\ or install Tesseract-OCR, then rebuild.
-    echo [WARN] tesseract missing at build time >> "%LOG_FILE%"
-)
 
 REM The generated key module is optional: a build without the embedded key
 REM (no .env entry) must still succeed, so the --add-data for it is added
@@ -208,14 +190,6 @@ echo [STEP] Running PyInstaller ^(this can take a few minutes^)...
     --collect-submodules pydantic ^
     --collect-submodules openai ^
     --collect-submodules seedcode ^
-    --hidden-import uiautomation ^
-    --hidden-import pytesseract ^
-    --hidden-import mss ^
-    --hidden-import pyautogui ^
-    --hidden-import pygetwindow ^
-    --hidden-import PIL ^
-    --hidden-import psutil ^
-    !TESS_ARGS! ^
     "%REPO_ROOT%\seedcode\__main__.py" >> "%LOG_FILE%" 2>&1
 if errorlevel 1 (
     echo [ERROR] PyInstaller build failed. See "%LOG_FILE%".

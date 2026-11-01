@@ -15,9 +15,11 @@ Everything locked in here is behaviour a user can observe:
   there is no second toolbar repeating them;
 * Up/Down move the cursor inside a multiline message and only walk the input
   history at the edges;
-* an animated ``AI > ◌ Thinking…`` indicator shows before the answer and is
-  replaced by real output without ever blocking the turn;
-* assistant output and live activity are attributed with ``AI >``;
+* an animated ``◌ <current operation>`` indicator shows before the answer and
+  is replaced by real output without ever blocking the turn;
+* activity is prefix-free (indented under the turn); the streamed answer alone
+  keeps the ``AI >`` attribution;
+
 * ``Enter`` sends, ``Ctrl+J`` inserts a newline, ``↑``/``↓`` walk the input
   history, ``Ctrl+C`` cancels a running turn and ``Ctrl+D`` exits;
 * a command hands control back for one dispatch, then the session resumes;
@@ -87,7 +89,7 @@ def _configured() -> AppConfig:
 
 # --- the version --------------------------------------------------------------
 def test_header_reports_the_release_version() -> None:
-    assert __version__ == "9.1.1"
+    assert __version__ == "9.2.0"
     out = header_text(AppState(provider="OpenRouter", model="m", mode="Chat"), 80)
     assert f"v{__version__}" in out
 
@@ -108,7 +110,10 @@ def test_state_syncs_from_live_config_only() -> None:
     state = AppState.from_config(_configured(), workspace="/tmp/project")
     assert state.provider == "OpenRouter"
     assert state.model == "cohere/north-mini-code:free"
-    assert state.mode == "Chat Mode"
+    # v9.2.0 is a single-mode agent product: from_config normalises any
+    # persisted mode to Agent instead of faking a Chat mode the app no
+    # longer has.
+    assert state.mode == "Agent"
     assert state.workspace == "/tmp/project"
     assert state.context_limit > 0
 
@@ -198,43 +203,53 @@ def test_status_marks_and_labels_are_truthful() -> None:
 
 
 # --- branding -----------------------------------------------------------------
-def test_header_keeps_the_ascii_logo_as_primary_branding() -> None:
-    """The block logo is the product identity: it is never replaced by text."""
+def test_header_keeps_the_compact_wordmark_as_branding() -> None:
+    """v9.2.0: a small one-line brand instead of a huge framed ASCII logo.
+
+    The block logo moved to the startup dashboard only; the fixed header is
+    reclaimed vertical space (the compact bar), so it stays present but small
+    and the box glyphs, borders and logo are gone from the chat interface.
+    """
     from seedcode.ui.dashboard import LOGO_LINES
 
     out = header_text(AppState(provider="OpenRouter", model="m", mode="Chat"), 80)
+    lines = out.splitlines()
+    assert "Seed Code CLI v" + __version__ in out  # branding, one line
+    assert len(lines) <= 2  # compact: identity + optional status bar
     for line in LOGO_LINES:
-        assert line in out, line  # exact spacing, not a whitespace-collapsed copy
-    assert "Plant ideas. Grow code." in out
+        assert line not in out, line  # no block art in the header any more
+    assert "\u256d" not in out and "\u256e" not in out  # no box borders
 
 
-def test_logo_appears_as_soon_as_it_can_be_drawn_unclipped() -> None:
-    from seedcode.ui.dashboard import LOGO_LINES
-    from seedcode.ui.header import _LOGO_MIN_WIDTH
+def test_header_height_is_bounded_at_every_width() -> None:
+    """The compact bar never grows beyond two rows at any terminal size."""
+    state = AppState(
+        provider="OpenRouter",
+        model="nex-agi/nex-n2.5-mini:free",
+        mode="Agent",
+        workspace="D:/my-project",
+        context_limit=16384,
+        key_required=True,
+        api_key="sk-or-v1...e031",
+    )
+    for width in (20, 24, 30, 40, 52, 80, 96, 120, 200):
+        lines = header_lines(state, width)
+        assert len(lines) <= 2, width
 
+
+def test_narrow_headers_clip_values_instead_of_overflowing() -> None:
+    """Narrow widths keep the brand readable and never overflow the line."""
     state = AppState(provider="OpenRouter", model="m", mode="Chat")
-    out = header_text(state, _LOGO_MIN_WIDTH)
-    for line in LOGO_LINES:
-        assert line in out, line
-    # One column narrower and the block art is omitted whole rather than cut.
-    narrower = header_text(state, _LOGO_MIN_WIDTH - 1)
-    for line in LOGO_LINES:
-        assert line not in narrower, line
-
-
-def test_narrow_headers_never_truncate_the_logo() -> None:
-    from seedcode.ui.dashboard import LOGO_LINES
-    from seedcode.ui.header import _LOGO_MIN_WIDTH
-
-    for width in range(20, _LOGO_MIN_WIDTH):
-        out = header_text(AppState(provider="OpenRouter", model="m", mode="Chat"), width)
-        # Below the logo's minimum width the branding is omitted whole — a
-        # clipped logo would be worse than none.
-        for logo in LOGO_LINES:
-            assert logo not in out, width
-        # The essentials survive the fallback; the branding is never clipped.
-        assert f"v{__version__}" in out
-        if width >= 40:
+    for width in range(20, 40):
+        out = header_text(state, width)
+        for line in out.splitlines():
+            assert len(line) <= width, (width, line)
+        # The version survives wherever it can actually fit (>= 21 columns).
+        if width >= 21:
+            assert f"v{__version__}" in out, width
+        # The essentials survive the fallback; the branding is never clipped
+        # into noise: provider/model stay on the >= 24 two-line form.
+        if width >= 24:
             assert "OpenRouter" in out, width
 
 
@@ -253,13 +268,37 @@ def test_thinking_indicator_animates_before_any_output() -> None:
     with _session() as (tui, _state, _pipe):
         tui.start_thinking("Thinking")
         first = plain_text(tui.buffer.lines())
-        assert "AI > \u25cc Thinking." in first
+        # Clean design: no ``AI >`` on the activity line, spinner + label only.
+        assert "Thinking" in first
+        assert "AI >" not in first
+        assert first.strip().startswith("\u280b")  # the animated spinner frame
         time.sleep(_THINK_INTERVAL_S * 2.5)
         animated = plain_text(tui.buffer.lines())
         assert animated != first  # the indicator really animated
-        assert "AI > \u25cc Thinking" in animated
+        assert "Thinking" in animated
+        assert "AI >" not in animated
         tui.stop_thinking()
         assert "Thinking" not in plain_text(tui.buffer.lines())
+
+
+def test_the_spinner_shows_the_real_current_operation() -> None:
+    """The spinner line follows the operation the backend published.
+
+    ``state.operation`` is written by real tool events ("Reading README.md",
+    "waiting for the model response"); the spinner must show that, not a
+    generic "Working" that hides what the agent is doing.
+    """
+    with _session() as (tui, state, _pipe):
+        state.set_status(Status.EXECUTING, "reading README.md")
+        tui.start_thinking("Working")
+        line = plain_text(tui.buffer.lines())
+        assert "Reading README.md..." in line
+        assert "AI >" not in line
+        state.set_status(Status.WORKING, "waiting for the model response")
+        tui._render_thinking()
+        line = plain_text(tui.buffer.lines())
+        assert "Waiting for the model response..." in line
+        tui.stop_thinking()
 
 
 def test_real_output_replaces_the_thinking_indicator() -> None:
@@ -358,14 +397,29 @@ def test_multiline_message_keeps_its_continuation_aligned() -> None:
     assert "      second line" in content
 
 
-def test_activity_lines_are_attributed_to_the_assistant() -> None:
+def test_activity_lines_bear_no_ai_prefix() -> None:
+    """Activity is indented under the turn — the ``AI >`` prefix is gone.
+
+    Only real operations are displayed, each with its own marker: ⚙ started,
+    ✓ succeeded, ✗ failed. User input keeps ``You >``; activity is clean.
+    """
     with _session() as (tui, _state, _pipe):
         tui.append_activity("action", "Reading package.json")
         tui.append_activity("success", "Tests passed")
+        tui.append_activity("error", "Reading config.json — Permission denied")
+        tui.append_activity("note", "Analyzing the task...")
     content = plain_text(tui.buffer.lines())
-    assert "AI > " in content
-    assert "Reading package.json" in content
-    assert "Tests passed" in content
+    assert "AI > " not in content  # the repeated prefix is gone for good
+    assert "\u2699 Reading package.json" in content
+    assert "\u2713 Tests passed" in content
+    assert "\u2715 Reading config.json" in content
+    assert "\u2139 Analyzing the task..." in content
+    # Consistent two-space indent for every activity line (visual hierarchy
+    # under the ``You > `` prompt).
+    for line in content.splitlines():
+        for mark in ("\u2699 ", "\u2713 ", "\u2715 ", "\u2139 "):
+            if mark in line:
+                assert line.startswith("  "), repr(line)
 
 
 # --- scrolling hint ------------------------------------------------------------
@@ -558,7 +612,8 @@ def test_permission_prompt_is_answered_inline() -> None:
         _schedule(pipe, [(0.4, "go"), (0.45, "\r"), (1.2, "y\r"), (2.2, "\x04")])
         tui.run_once()
         assert answers.get("answer") == "y"
-        assert state.status is Status.READY
+        # The unified agent turn finished, so the live status reports it.
+        assert state.status is Status.COMPLETED
 
 
 def test_permission_prompt_denies_on_escape() -> None:
@@ -628,17 +683,23 @@ def test_persistent_entry_point_exists() -> None:
 
 
 # --- mode switching stays inside one application -------------------------------
-def test_mode_switch_command_runs_in_place() -> None:
-    """`/agent on` is handled inside the running application (no exit/rebuild)."""
+def test_state_command_runs_in_place() -> None:
+    """`/status` (an in-place state command) never tears the application down.
+
+    v9.2.0 removed the `/chat` `/agent` `/code` mode switches; the invariant
+    this test pins is the retained one: selected state transitions run inside
+    the running application (no exit, no rebuild) while everything else hands
+    control back for one dispatch.
+    """
     with _session() as (tui, _state, pipe):
         seen: list[str] = []
         tui.on_command = seen.append
-        _schedule(pipe, [(0.3, "/agent on"), (0.35, "\r"), (0.9, "\x04")])
+        _schedule(pipe, [(0.3, "/status"), (0.35, "\r"), (0.9, "\x04")])
         result = tui.run_once()
         time.sleep(0.1)
-        # The mode command never handed control back for a separate dispatch.
+        # The state command never handed control back for a separate dispatch.
         assert result == ("exit", None)
-        assert seen == ["/agent on"]
+        assert seen == ["/status"]
 
 
 def test_non_mode_command_still_hands_control_back() -> None:

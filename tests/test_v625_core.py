@@ -60,7 +60,7 @@ def _ctx(config: AppConfig | None = None) -> tuple[_StubUI, CommandContext]:
 
 def test_version_is_current_release() -> None:
     # v7.1.0: the canonical version lives only in seedcode/__init__.py.
-    assert __version__ == "9.1.1"
+    assert __version__ == "9.2.0"
 
 
 # --- authoritative defaults --------------------------------------------------
@@ -228,77 +228,29 @@ def test_unknown_command_reports_an_error() -> None:
     assert any("Run /help" in m for m in ui.messages)
 
 
-def test_invalid_mode_argument_reports_syntax_error() -> None:
+def test_retired_mode_commands_are_unknown_now() -> None:
+    """v9.2.0 removed the mode commands: they are reported, never dispatched."""
     ui, ctx = _ctx()
-    dispatch(ctx, "/codemode maybe")
-    assert any("Invalid syntax" in m for m in ui.messages)
-
-
-# --- Code Mode actually activates (root-cause regression) --------------------
-
-def test_codemode_on_actually_enables_code_mode(monkeypatch, tmp_path: Path) -> None:
-    """`/codemode on` must flip real state, not just print text.
-
-    Regression: the command called the *module* ``codemode_state`` as if it
-    were the accessor function, so every enable crashed with TypeError and the
-    agent silently fell back to no workspace context.
-    """
-    from seedcode import codemode_state as cms
-    from seedcode.commands import assist as assist_cmd
-    from seedcode.commands import codemode as codemode_cmd
-
-    cms.reset()
-    monkeypatch.chdir(tmp_path)
-    # Keep the test hermetic: no real config writes, no desktop probing.
-    monkeypatch.setattr(codemode_cmd, "save_config", lambda config: None)
-    monkeypatch.setattr(assist_cmd, "save_config", lambda config: None)
-    monkeypatch.setattr(assist_cmd, "is_available", lambda: (False, "test"))
-    try:
-        ui, ctx = _ctx()
-        dispatch(ctx, "/codemode on")
-        state = cms.codemode_state()
-        assert state.enabled
-        assert state.workspace == tmp_path.resolve()
-
-        # The agent must now see Code Mode as active (the fix in agent.py).
-        from seedcode.core.agent import AgentEngine
-
-        assert AgentEngine._codemode_active(None) is True
-
-        dispatch(ctx, "/codemode off")
-        assert not cms.codemode_state().enabled
-    finally:
-        cms.reset()
+    for command in ("/codemode maybe", "/codemode on", "/chat on", "/mode agent"):
+        dispatch(ctx, command)
+    assert any("[Command Error] Unknown command: /codemode" in m for m in ui.messages)
 
 
 # --- UI reflects real runtime state ------------------------------------------
 
-def test_dashboard_shows_agent_mode_for_the_workspace_capability(monkeypatch, tmp_path: Path) -> None:
+def test_dashboard_reports_the_unified_agent() -> None:
     from rich.console import Console
 
-    from seedcode import codemode_state as cms
-    from seedcode.commands import assist as assist_cmd
-    from seedcode.commands import codemode as codemode_cmd
     from seedcode.ui.dashboard import render_dashboard
     from seedcode.ui.theme import SEED_THEME
 
-    cms.reset()
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(codemode_cmd, "save_config", lambda config: None)
-    monkeypatch.setattr(assist_cmd, "save_config", lambda config: None)
-    monkeypatch.setattr(assist_cmd, "is_available", lambda: (False, "test"))
-    try:
-        ui, ctx = _ctx()
-        dispatch(ctx, "/codemode on")
-        console = Console(
-            theme=SEED_THEME, width=100, force_terminal=True, record=True
-        )
-        render_dashboard(console, ctx.config)
-        # The workspace capability is part of Agent Mode: the mode row names
-        # Agent Mode, never a separate Code Mode.
-        assert "Agent Mode" in console.export_text()
-    finally:
-        cms.reset()
+    ui, ctx = _ctx()
+    console = Console(theme=SEED_THEME, width=100, force_terminal=True, record=True)
+    render_dashboard(console, ctx.config)
+    # One unified agent: the mode row names Agent, never a separate Code Mode.
+    text = console.export_text()
+    assert "Agent" in text
+    assert "Code Mode" not in text
 
 
 def test_is_command_detection() -> None:

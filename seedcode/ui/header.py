@@ -1,21 +1,19 @@
-"""Responsive header rendering for the persistent TUI (v9.1.0).
+"""Compact responsive header for the persistent TUI (v9.2.0).
 
-The header is the fixed top region of the interface. It is rendered from the
-live :class:`~seedcode.ui.state.AppState` on every frame, so a provider, model,
-mode or status change is visible immediately, and it adapts to the terminal
-width:
+v9.1.0 framed a huge ASCII logo inside the fixed header; v9.2.0 reclaims the
+vertical space: the header is now a **compact two-row bar** with no box art
+and no block logo — the big logo lives only on the startup dashboard — while
+branding stays present as the wordmark:
 
-* **wide** (>= :data:`_LOGO_MIN_WIDTH`, 76 columns) — a bordered reference
-  panel: the fixed Seed Code **ASCII logo** and tagline, then ``Provider``/
-  ``Model``, ``Mode``/``Status`` and (when the data exists) ``Workspace``/
-  ``Context`` rows. The branding is never replaced by plain text;
-* **medium** (>= 40) — a three-line panel with the status line beside the mode;
-* **narrow** (< 40) — one or two plain lines with only the essentials.
+* row 1 — the identity line: ``Seed Code CLI v9.2.0 · Provider · Model ·
+  Mode · Status`` (bold brand, dim separators, live status fragment);
+* row 2 (only when the data exists and the bar fits) — the compact status
+  bar: ``Workspace … · Context … · API Key …``.
 
-The logo is branding, not generated art, and it is never dropped for
-cosmetics: below :data:`_LOGO_MIN_WIDTH` the block glyphs genuinely cannot be
-drawn without clipping, so the compact layouts carry the same information
-without them.
+Adaptation to the terminal width is retained:
+
+* **wide** (>= 40 columns) — the two-row compact bar;
+* **narrow** (< 40) — a single line with only the essentials.
 
 Two invariants hold at every width: **no line is ever wider than the terminal**
 (every value is truncated before it reaches the frame) and **no value is
@@ -27,32 +25,31 @@ the same shape prompt_toolkit consumes and the same shape the tests assert on.
 
 from __future__ import annotations
 
-from .. import APP_NAME, TAGLINE, __version__
-from .dashboard import LOGO_LINES, LOGO_WIDTH
+from .. import APP_NAME, __version__
+from .dashboard import LOGO_LINES  # the startup dashboard keeps the big logo
 from .state import AppState, status_fragment
 
-__all__ = ["header_lines", "header_text", "MAX_PANEL_WIDTH"]
+__all__ = [
+    "LOGO_LINES",
+    "MAX_PANEL_WIDTH",
+    "header_lines",
+    "header_text",
+]
 
 _PLAIN_WIDTH = 40
-_MIN_WIDTH = 24
+#: Below this even mode/status drop off the single narrow line.
+_MODE_MIN_WIDTH = 24
+#: The status row only shows in the two-row (>= 40 columns) layout; below
+#: that its values would be three clipped fragments of noise.
+_BAR_STATUS_MIN_WIDTH = _PLAIN_WIDTH
+#: Kept for the legacy console bound (the compact bar never exceeds it
+#: either — a bar capped at the terminal width is always <= 96 cells).
 MAX_PANEL_WIDTH = 96
 
-_LABEL_WIDTH = 9
-_COLUMN_GAP = 3
+_TEST = " \u00b7 "
+_ASCII_TEST = "  -  "
+_BRAND = f"{APP_NAME} CLI v{__version__}"
 _WORDMARK = APP_NAME.upper()  # SEED CODE (legacy-console fallback only)
-
-#: The fixed branding, indented exactly like the startup dashboard.
-_LOGO_INDENT = "   "
-#: Below this the block logo cannot be drawn un-clipped: the compact (metadata
-#: only) layouts are used instead. The logo itself is never truncated.
-_LOGO_MIN_WIDTH = LOGO_WIDTH + len(_LOGO_INDENT) + 3
-
-_ROUND = {"tl": "\u256d", "tr": "\u256e", "bl": "\u2570", "br": "\u256f", "h": "\u2500", "v": "\u2502", "d": "\u00b7"}
-_ASCII = {"tl": "+", "tr": "+", "bl": "+", "br": "+", "h": "-", "v": "|", "d": "-"}
-
-
-def _box(legacy: bool) -> dict[str, str]:
-    return _ASCII if legacy else _ROUND
 
 
 def _color(role: str) -> str:
@@ -86,26 +83,8 @@ def _len(fragments: list[tuple[str, str]]) -> int:
     return sum(len(text) for _, text in fragments)
 
 
-def _cell(label: str, value, width: int) -> list[tuple[str, str]]:
-    """A ``Label     value`` cell of at most ``width`` cells.
-
-    ``value`` is a string or a styled-fragment list (the status cell).
-    """
-    if width <= 0:
-        return []
-    label_text = _clip(label, max(1, min(_LABEL_WIDTH, max(1, width - 1))))
-    pad = " " * max(0, _LABEL_WIDTH - len(label_text))
-    fragments: list[tuple[str, str]] = [(_dim(), label_text + pad + " ")]
-    used = _len(fragments)
-    room = max(1, width - used)
-    if isinstance(value, list):
-        fragments.extend(value)
-    else:
-        fragments.append(("", _clip(value, room)))
-    return _hard_clip(fragments, width)
-
-
 def _hard_clip(fragments: list[tuple[str, str]], width: int) -> list[tuple[str, str]]:
+    """Never let a rendered line exceed ``width`` cells."""
     out: list[tuple[str, str]] = []
     used = 0
     for style, text in fragments:
@@ -120,69 +99,21 @@ def _hard_clip(fragments: list[tuple[str, str]], width: int) -> list[tuple[str, 
     return out
 
 
-def _pair(
-    left: list[tuple[str, str]],
-    right: list[tuple[str, str]] | None,
-    inner: int,
-) -> list[tuple[str, str]]:
-    """Left-aligned content with an optional right-aligned cell on one row.
-
-    This is the compact single-line form: the identity line puts ``Provider ·
-    Model · Mode`` on the left and the live status on the right, so each value
-    is rendered exactly once (there is no second toolbar repeating them).
-    """
-    inner = max(0, inner)
-    right = right or []
-    rlen = _len(right)
-    if rlen and rlen + 1 < inner:
-        left = _hard_clip(left, inner - rlen - 1)
-        gap = inner - _len(left) - rlen
-        out = list(left)
-        if gap > 0:
-            out.append(("", " " * gap))
-        out.extend(right)
-        return _hard_clip(out, inner)
-    out = _hard_clip(left, inner)
-    pad = inner - _len(out)
-    if pad > 0:
-        out.append(("", " " * pad))
+def _join(test: str, groups: list[list[tuple[str, str]]]) -> list[tuple[str, str]]:
+    """Join fragment groups with the separator ``test`` (empty groups dropped)."""
+    out: list[tuple[str, str]] = []
+    for group in groups:
+        group = [frag for frag in group if frag[1]]
+        if not group:
+            continue
+        if out:
+            out.append((_dim(), test))
+        out.extend(group)
     return out
 
 
-def _row2(left: tuple[str, object], right: tuple[str, object] | None, inner: int) -> list[tuple[str, str]]:
-    """Two label/value cells laid out across ``inner`` cells."""
-    if right is None:
-        return _cell(left[0], left[1], inner)
-    col = (inner - _COLUMN_GAP) // 2
-    fragments = _cell(left[0], left[1], col)
-    fragments.append(("", " " * max(0, col - _len(fragments))))
-    tail = inner - col - _COLUMN_GAP
-    if tail > 0:
-        fragments.append(("", " " * _COLUMN_GAP))
-        fragments.extend(_cell(right[0], right[1], tail))
-    pad = inner - _len(fragments)
-    if pad > 0:
-        fragments.append(("", " " * pad))
-    return _hard_clip(fragments, inner)
-
-
-def _framed(body: list[tuple[str, str]], inner: int, box: dict[str, str]) -> list[tuple[str, str]]:
-    """One ``│ body │`` row: one column of breathing room, padded to ``inner``."""
-    bar = _dim()
-    padded: list[tuple[str, str]] = [("", " ")] + list(body)
-    pad = inner - _len(padded)
-    if pad > 0:
-        padded.append(("", " " * pad))
-    return [(bar, box["v"])] + _hard_clip(padded, inner) + [(bar, box["v"])]
-
-
-def _border(title: str, width: int, box: dict[str, str], top: bool) -> list[tuple[str, str]]:
-    left = box["tl"] if top else box["bl"]
-    right = box["tr"] if top else box["br"]
-    if not top:
-        return [(_dim(), left + box["h"] * max(0, width - 2) + right)]
-    fill = max(0, width - 2 - len(title) - 1)
-    return [(_dim(), left + box["h"] + title + box["h"] * fill + right)]
+def _seg(style: str, value: str) -> tuple[str, str]:
+    return (style, value)
 
 
 # --- value formatting (real state only; empty when unavailable) ---------------
@@ -202,121 +133,87 @@ def _key(state: AppState) -> str:
     return (state.api_key or "not set") if state.key_required else ""
 
 
-def _status_cell(state: AppState, legacy: bool) -> tuple[str, list[tuple[str, str]]]:
+def _status_cell(state: AppState, legacy: bool) -> list[tuple[str, str]]:
     style, text = status_fragment(state.status, legacy=legacy)
-    return text, [(style, text)]
+    return [(style, text)]
 
 
-def _identity_fragments(state: AppState) -> list[tuple[str, str]]:
-    """``Provider · Model · Mode`` on one line — the single source of truth."""
-    return [
-        (_role("primary"), _provider(state)),
-        (_dim(), " \u00b7 "),
-        ("", _model(state)),
-        (_dim(), " \u00b7 "),
-        (_role("accent"), state.mode or "Chat"),
+def _brand(legacy: bool) -> str:
+    """The one-line branding: the wordmark, smaller than the framed logo."""
+    return _WORDMARK + f" CLI v{__version__}" if legacy else _BRAND
+
+
+def _identity_fragments(state: AppState, legacy: bool, *, detail: bool = True) -> list[tuple[str, str]]:
+    """``Seed Code CLI v9.2.0 · Provider · Model · Mode``.
+
+    The live status is deliberately NOT on this row: the branding line must
+    not churn while the agent works (it re-renders every frame). ``detail=``
+    False (narrow widths) renders only the brand; provider/model/mode move
+    to the second line.
+    """
+    test = _ASCII_TEST if legacy else _TEST
+    groups: list[list[tuple[str, str]]] = [
+        [(_role("primary", bold=True), _brand(legacy))],
     ]
+    if detail:
+        groups.append([(_seg(_role("primary"), _provider(state)))])
+        groups.append([(_seg("", _model(state)))])
+        if state.mode:
+            groups.append([_seg(_role("accent"), state.mode)])
+    return _join(test, groups)
 
 
-# --- layouts ------------------------------------------------------------------
-def _panel_lines(state: AppState, width: int, legacy: bool) -> list[list[tuple[str, str]]]:
-    box = _box(legacy)
-    panel_w = min(width, MAX_PANEL_WIDTH)
-    inner = max(panel_w - 2, 8)
-    title = f" {APP_NAME} CLI v{__version__} "
+def _status_bar_fragments(state: AppState, legacy: bool) -> list[tuple[str, str]]:
+    """``Status ... · Workspace ... · Context ... · API Key ...`` (real values only).
 
-    lines: list[list[tuple[str, str]]] = [_border(title, panel_w, box, True)]
-    if legacy:
-        # A console that cannot encode the block glyphs still gets branding —
-        # the wordmark form — rather than mojibake or an empty header.
-        lines.append(
-            _framed([(_role("primary", bold=True), _LOGO_INDENT + _WORDMARK)], inner, box)
-        )
-    else:
-        # The exact Seed Code ASCII logo is primary branding. It is written
-        # verbatim (never whitespace-collapsed) so the art keeps its shape, and
-        # only reaches this layout when it provably fits (see _LOGO_MIN_WIDTH).
-        for logo_line in LOGO_LINES:
-            lines.append(_framed([(_role("primary"), _LOGO_INDENT + logo_line)], inner, box))
-        lines.append(_framed([(_dim(), _LOGO_INDENT + TAGLINE)], inner, box))
-    _, status_cell = _status_cell(state, legacy)
-    # ``_pair`` fills its row edge to edge; ``_framed`` then adds one leading
-    # cell, so the row is built one column narrower to keep the status intact.
-    lines.append(
-        _framed(_pair(_identity_fragments(state), status_cell, inner - 2), inner, box)
-    )
-
-    workspace = state.workspace or ""
+    The status leads the bar so it survives even when the rest clips.
+    """
+    test = _ASCII_TEST if legacy else _TEST
+    groups: list[list[tuple[str, str]]] = [_status_cell(state, legacy)]
+    if state.workspace:
+        groups.append([_seg("", f"Workspace {_clip(state.workspace, 60)}")])
     context = _context(state)
-    if workspace or context:
-        left = ("Workspace", workspace) if workspace else ("", "")
-        right = ("Context", context) if context else None
-        lines.append(_framed(_row2(left, right, inner), inner, box))
-
+    if context:
+        groups.append([_seg("", f"Context {context} tokens")])
     key = _key(state)
-    connection = state.connection or ""
-    if key or connection:
-        left = ("API Key", key) if key else ("", "")
-        right = ("Link", connection) if connection else None
-        lines.append(_framed(_row2(left, right, inner), inner, box))
-
-    lines.append(_border(title, panel_w, box, False))
-    return lines
-
-
-def _compact_lines(state: AppState, width: int, legacy: bool) -> list[list[tuple[str, str]]]:
-    box = _box(legacy)
-    panel_w = max(width, 8)
-    inner = max(panel_w - 2, 6)
-    title = f" {APP_NAME} CLI v{__version__} "
-
-    lines = [_border(title, panel_w, box, True)]
-
-    _, status_cell = _status_cell(state, legacy)
-    head: list[tuple[str, str]] = list(status_cell)
-    head.append((_dim(), "  " + box["d"] + "  "))
-    room = max(4, inner - _len(head))
-    head.append((_role("accent"), _clip(state.mode, room)))
-    lines.append(_framed(head, inner, box))
-
-    info: list[tuple[str, str]] = [(_role("primary"), _clip(_provider(state), 20))]
-    info.append((_dim(), "  " + box["d"] + "  "))
-    room = max(4, inner - _len(info))
-    info.append(("", _clip(_model(state), room)))
-    lines.append(_framed(info, inner, box))
-
-    lines.append(_border(title, panel_w, box, False))
-    return lines
-
-
-def _plain_lines(state: AppState, width: int, legacy: bool) -> list[list[tuple[str, str]]]:
-    _, status_cell = _status_cell(state, legacy)
-    brand: list[tuple[str, str]] = [
-        (_role("primary", bold=True), APP_NAME),
-        (_dim(), f" v{__version__}  "),
-    ]
-    brand.extend(status_cell)
-    lines = [_hard_clip(brand, width)]
-    if width >= _MIN_WIDTH:
-        info: list[tuple[str, str]] = [(_role("primary"), _clip(_provider(state), 18))]
-        info.append((_dim(), "  \u00b7  "))
-        room = max(4, width - _len(info))
-        info.append(("", _clip(_model(state), room)))
-        lines.append(_hard_clip(info, width))
-    return lines
+    if key:
+        groups.append([_seg("", f"API Key {key}")])
+    return _join(test, groups)
 
 
 # --- public API ---------------------------------------------------------------
 def header_lines(state: AppState, width: int, *, ascii_only: bool = False) -> list[list[tuple[str, str]]]:
-    """Render the header for ``state`` at ``width`` columns."""
+    """Render the compact header for ``state`` at ``width`` columns."""
     width = max(1, int(width or 80))
-    if width >= _LOGO_MIN_WIDTH:
-        lines = _panel_lines(state, width, ascii_only)
-    elif width >= _PLAIN_WIDTH:
-        lines = _compact_lines(state, width, ascii_only)
-    else:
-        lines = _plain_lines(state, width, ascii_only)
+
+    identity = _hard_clip(
+        _identity_fragments(state, ascii_only, detail=width >= _PLAIN_WIDTH), width
+    )
+    lines = [identity]
+    if width < _PLAIN_WIDTH:
+        # Narrow (but >= 24): the second line carries status/provider/model/mode
+        # so the essentials never fight the truncated brand for cells.
+        if width >= _MODE_MIN_WIDTH:
+            lines.append(_hard_clip(_status_line(state, ascii_only), width))
+        return [_hard_clip(line, width) for line in lines]
+
+    # Two-row compact bar: churn-free branding above, live status bar below.
+    bar = _hard_clip(_status_bar_fragments(state, ascii_only), width)
+    lines.append(bar)
     return [_hard_clip(line, width) for line in lines]
+
+
+def _status_line(state: AppState, legacy: bool) -> list[tuple[str, str]]:
+    """The narrow second line: ``Status · Provider · Model · Mode``."""
+    test = _ASCII_TEST if legacy else _TEST
+    groups: list[list[tuple[str, str]]] = [
+        _status_cell(state, legacy),
+        [(_role("primary"), _clip(_provider(state), 16))],
+        [(_seg("", _model(state)))],
+    ]
+    if state.mode:
+        groups.append([_seg(_role("accent"), state.mode)])
+    return _join(test, groups)
 
 
 def header_text(state: AppState, width: int, *, ascii_only: bool = False) -> str:

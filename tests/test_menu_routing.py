@@ -58,42 +58,29 @@ def test_main_menu_has_reference_items_and_shortcuts(monkeypatch) -> None:
     _main_menu(AppConfig())
 
     by_value = {item.value: item for item in captured["items"]}
-    assert by_value["agent"].shortcut == "1"
+    # v9.2.0: the session starts in the one agent; the project workspace is a
+    # first-class menu item, and no mode item exists.
+    assert by_value["chat"].shortcut == "1"
     assert by_value["memory"].shortcut == "2"
     assert by_value["settings"].shortcut == "3"
     assert by_value["exit"].shortcut == "4"
-    # Code Mode is no longer a separate mode or menu entry; its workspace
-    # capability lives inside Agent Mode.
+    assert "agent" not in by_value
     assert "codemode" not in by_value
     assert "assist" not in by_value
-    # Start Chat stays reachable so the menu is never a dead end.
+    # Start Coding Session stays reachable so the menu is never a dead end.
     assert "chat" in by_value
     assert "Seed Code v" in captured["kwargs"]["title"]
 
 
 # --- menu -> router -> handler -> runtime state ------------------------------
 
-def test_menu_codemode_action_reaches_the_real_handler(tmp_path: Path, monkeypatch) -> None:
-    from seedcode import codemode_state as cms
-    from seedcode.commands import assist as assist_cmd
-    from seedcode.commands import codemode as codemode_cmd
-
-    cms.reset()
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(codemode_cmd, "save_config", lambda config: None)
-    monkeypatch.setattr(assist_cmd, "save_config", lambda config: None)
-    monkeypatch.setattr(assist_cmd, "is_available", lambda: (False, "test"))
-    try:
-        ui = _StubUI()
-        config = AppConfig()
-        # The workspace capability is now reached through /agent on (which also
-        # selects Agent Mode) and directly through /codemode on.
-        _dispatch_command(ui, config, None, "/agent on")
-        assert config.agent_mode
-        assert cms.codemode_state().enabled
-        assert cms.codemode_state().workspace == tmp_path.resolve()
-    finally:
-        cms.reset()
+def test_the_removed_mode_commands_are_reported_not_routed() -> None:
+    """v9.2.0: the mode commands are gone; the router says so, cleanly."""
+    ui = _StubUI()
+    config = AppConfig()
+    for command in ("/agent on", "/codemode on", "/chat on", "/mode agent"):
+        _dispatch_command(ui, config, None, command)
+    assert any("Unknown command" in message for message in ui.messages)
 
 
 # --- command error UX --------------------------------------------------------

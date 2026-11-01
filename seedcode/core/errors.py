@@ -174,13 +174,13 @@ class SecurityError(OperatorError):
 
 
 # --- historical aliases (existing modules keep their exception names) ---------------
-# These subclass the structured base so both worlds interoperate.
-from ..computer.controller import ComputerError as _ComputerError  # noqa: E402
-from ..computer.browser import BrowserError as _BrowserError  # noqa: E402
+# v9.2.0: the Computer Engine is gone from the product; the two legacy alias
+# classes remain as stand-alone OperatorError subclasses so any surviving
+# reference keeps a stable exception type.
 
 
-class ComputerError(OperatorError, _ComputerError):  # type: ignore[misc]
-    """Structured-compatible alias of the controller error."""
+class ComputerError(OperatorError):
+    """Structured-compatible alias of the retired Computer Engine error."""
 
     def __init__(self, message: str = "", **kw: Any) -> None:
         OperatorError.__init__(
@@ -189,8 +189,8 @@ class ComputerError(OperatorError, _ComputerError):  # type: ignore[misc]
         Exception.__init__(self, self.message)
 
 
-class BrowserError(OperatorError, _BrowserError):  # type: ignore[misc]
-    """Structured-compatible alias of the browser driver error."""
+class BrowserError(OperatorError):
+    """Structured-compatible alias of the retired browser driver error."""
 
     def __init__(self, message: str = "", **kw: Any) -> None:
         OperatorError.__init__(

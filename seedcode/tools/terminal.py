@@ -177,11 +177,17 @@ def run_command(
             if collected < MAX_OUTPUT_CHARS:
                 chunks.append(line)
                 collected += len(line)
+            plain = line.rstrip("\r\n")
             if on_line is not None:
                 try:
-                    on_line(line.rstrip("\r\n"))
+                    on_line(plain)
                 except Exception:
                     pass  # a UI echo bug must never kill the command
+            if perm.on_activity is not None:
+                try:
+                    perm.on_activity(plain)
+                except Exception:
+                    pass  # an event-observer bug must never kill the command
     except KeyboardInterrupt:
         # Ctrl+C cancels THIS command, not the agent turn.
         _kill_tree(proc)

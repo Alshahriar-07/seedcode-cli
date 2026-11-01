@@ -22,6 +22,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from .base import ToolResult, register
+from .diffs import make_diff
 from .textio import read_text_file, write_text_file
 
 if TYPE_CHECKING:
@@ -70,6 +71,7 @@ def _edit_file(perm: "PermissionManager", args: dict[str, Any]) -> ToolResult:
             "lines so it matches exactly once.",
         )
 
+    before = tf.text
     tf.text = tf.text.replace(old, new, 1)
     expected = tf.text
     try:
@@ -95,7 +97,11 @@ def _edit_file(perm: "PermissionManager", args: dict[str, Any]) -> ToolResult:
             f"Edit completed but verification failed: could not read back {path}: {exc}"
         )
 
-    return ToolResult(True, f"Edited {path} (1 replacement, verified).")
+    return ToolResult(
+        True,
+        f"Edited {path} (1 replacement, verified).",
+        diff=make_diff(path, before, expected),
+    )
 
 
 @register(
@@ -145,6 +151,7 @@ def _insert_in_file(perm: "PermissionManager", args: dict[str, Any]) -> ToolResu
             "lines so it matches exactly once.",
         )
 
+    before = tf.text
     replacement = block + anchor if position == "before" else anchor + block
     tf.text = tf.text.replace(anchor, replacement, 1)
     try:
@@ -167,4 +174,8 @@ def _insert_in_file(perm: "PermissionManager", args: dict[str, Any]) -> ToolResu
             f"Insert completed but verification failed: could not read back {path}: {exc}"
         )
 
-    return ToolResult(True, f"Inserted {len(block)} chars {position} the anchor in {path} (verified).")
+    return ToolResult(
+        True,
+        f"Inserted {len(block)} chars {position} the anchor in {path} (verified).",
+        diff=make_diff(path, before, tf.text),
+    )

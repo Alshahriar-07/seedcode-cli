@@ -149,16 +149,23 @@ def _hermetic_agent_mode(monkeypatch, tmp_path):
     the real behaviour where they are testing it.
     """
     import seedcode.app as app_mod
-    import seedcode.commands.agent as agent_mod
-    import seedcode.commands.assist as assist_mod
-    import seedcode.commands.codemode as codemode_mod
     from seedcode.codemode_state import reset
 
+    # v9.2.0 removed the /chat /agent /code commands (and their
+    # modules); their patches are skipped so the retained UI
+    # invariants stay runnable instead of erroring on a stale import.
     reset()
     monkeypatch.chdir(tmp_path)
-    for module in (assist_mod, codemode_mod, agent_mod):
-        monkeypatch.setattr(module, "save_config", lambda config: None)
     monkeypatch.setattr(app_mod, "HistoryStore", _StubHistory)
+    try:
+        import seedcode.commands.assist as assist_mod
+        import seedcode.commands.codemode as codemode_mod
+    except ModuleNotFoundError:
+        yield
+        reset()
+        return
+    for module in (assist_mod, codemode_mod):
+        monkeypatch.setattr(module, "save_config", lambda config: None)
     monkeypatch.setattr(assist_mod, "is_available", lambda: (False, "test build"))
     monkeypatch.setattr(assist_mod, "_ensure_workspace", lambda **kwargs: True)
     yield
@@ -188,194 +195,9 @@ def _blocking_workspace(release: threading.Event, *, honour_cancel: bool = False
     return workspace
 
 
-# --- 1/2/3: the mode transition state machine ----------------------------------
-
-
-class TestModeSwitchStateMachine:
-    def test_chat_to_agent_returns_immediately(self, assist_module) -> None:
-        """Chat -> Agent must hand control back to the UI at once."""
-        release = threading.Event()
-        assist_module._ensure_workspace = _blocking_workspace(release)
-        try:
-            with _session() as (tui, _pipe, _out):
-                controller, _ui = _controller(tui)
-
-                started = time.monotonic()
-                controller._mode_transition("/agent on")
-                elapsed = time.monotonic() - started
-
-                # The switch itself is immediate: the session *is* in Agent Mode
-                # and the header says so, while the preparation continues.
-                assert elapsed < 0.5, elapsed
-                assert controller.config.mode == "agent"
-                assert controller.config.agent_mode is True
-                assert tui.state.mode == "Agent Mode"
-                assert tui.state.agent_initializing is True
-                assert tui.state.status is Status.INITIALIZING
-                assert "Agent Mode" in plain_text(tui.buffer.lines())
-                assert "Initializing" in plain_text(tui.buffer.lines())
-        finally:
-            release.set()
-            controller.switcher.cancel(wait=3)
-
-    def test_agent_to_chat_is_immediate_and_cancels_initialization(
-        self, assist_module
-    ) -> None:
-        """Agent -> Chat is cheap, immediate, and stops the background work."""
-        release = threading.Event()
-        assist_module._ensure_workspace = _blocking_workspace(release)
-        try:
-            with _session() as (tui, _pipe, _out):
-                controller, _ui = _controller(tui)
-                controller._mode_transition("/agent on")
-                assert tui.state.agent_initializing is True
-
-                started = time.monotonic()
-                controller._mode_transition("/chat on")
-                elapsed = time.monotonic() - started
-
-                assert elapsed < 0.5, elapsed
-                assert controller.config.mode == "chat"
-                assert tui.state.mode == "Chat Mode"
-                assert tui.state.agent_initializing is False
-                assert tui.state.status is Status.READY
-        finally:
-            release.set()
-            controller.switcher.cancel(wait=3)
-
-    def test_repeated_switching_leaves_no_stale_or_duplicate_worker(
-        self, assist_module
-    ) -> None:
-        """Chat -> Agent -> Chat -> Agent must not fork or leak workers."""
-        release = threading.Event()
-        # This stand-in polls the probe, which is what a real switch does.
-        assist_module._ensure_workspace = _blocking_workspace(
-            release, honour_cancel=True
-        )
-        try:
-            with _session() as (tui, _pipe, _out):
-                controller, _ui = _controller(tui)
-                for _ in range(4):
-                    controller._mode_transition("/agent on")
-                    controller._mode_transition("/chat on")
-                    # Only one initialization is ever *running*: a new switch
-                    # waits for the superseded one to stop before starting.
-                    assert controller.switcher.working_workers() <= 1
-                controller._mode_transition("/agent on")
-                # `run()` only *starts* the worker; the worker registers itself
-                # as "working" a moment later (after letting any superseded
-                # worker stop). Poll briefly instead of sampling a single
-                # instant, so this asserts the real guarantee - exactly one
-                # worker is doing the work - rather than whether the scheduler
-                # happened to run the thread before the next line. The stand-in
-                # work blocks until `release` is set, so once the count reaches
-                # 1 it stays there until the finally block.
-                deadline = time.monotonic() + 5
-                while (
-                    controller.switcher.working_workers() != 1
-                    and time.monotonic() < deadline
-                ):
-                    time.sleep(0.01)
-                assert controller.switcher.working_workers() == 1
-        finally:
-            release.set()
-            assert controller.switcher.wait(timeout=8)
-        # Nothing is left running once the switches are cancelled and settled.
-        assert controller.switcher.live_workers() == 0
-        leaked = [
-            thread.name
-            for thread in threading.enumerate()
-            if thread.name.startswith("seedcode-mode")
-        ]
-        assert leaked == [], leaked
-
-    def test_the_switch_work_never_runs_on_the_calling_thread(self, monkeypatch) -> None:
-        """The command is dispatched off the event-loop thread, always."""
-        import seedcode.app as app_mod
-
-        seen: list[str] = []
-        real_dispatch = app_mod.dispatch
-
-        def recording_dispatch(ctx, text):
-            seen.append(threading.current_thread().name)
-            return real_dispatch(ctx, text)
-
-        monkeypatch.setattr(app_mod, "dispatch", recording_dispatch)
-        with _session() as (tui, _pipe, _out):
-            controller, _ui = _controller(tui)
-            controller._mode_transition("/agent on")
-            assert controller.switcher.wait(timeout=5)
-        assert seen, "the switch command was never dispatched"
-        assert threading.main_thread().name not in seen, seen
-        assert all(name.startswith("seedcode-mode") for name in seen), seen
-
-    def test_switch_while_initialization_is_running(self, assist_module) -> None:
-        """Switching again mid-initialization is safe and ends in one state."""
-        release = threading.Event()
-        assist_module._ensure_workspace = _blocking_workspace(release, honour_cancel=True)
-        try:
-            with _session() as (tui, _pipe, _out):
-                controller, _ui = _controller(tui)
-                controller._mode_transition("/agent on")
-                controller._mode_transition("/mode agent")
-                controller._mode_transition("/chat on")
-                controller._mode_transition("/agent on")
-                assert tui.state.agent_initializing is True
-        finally:
-            release.set()
-            assert controller.switcher.wait(timeout=5)
-        assert controller.config.mode == "agent"
-        assert tui.state.mode == "Agent Mode"
-        assert tui.state.agent_initializing is False
-
-    def test_a_failed_preparation_is_reported_not_a_freeze(self) -> None:
-        """An initialization exception lands on screen and leaves Chat usable."""
-
-        def explode(_cancel):
-            raise RuntimeError("the index could not be written")
-
-        with _session() as (tui, _pipe, _out):
-            controller, _ui = _controller(tui)
-            controller.tui.begin_initialization("Agent Mode")
-            controller.switcher.run("agent", explode)
-            assert controller.switcher.wait(timeout=5)
-
-            # Rich wraps the line to the terminal width, so compare on the
-            # whitespace-normalised text.
-            content = " ".join(plain_text(tui.buffer.lines()).split())
-            assert "the index could not be written" in content
-            assert "Chat Mode is unaffected" in content
-            assert tui.state.status is Status.ERROR
-            assert tui.state.agent_initializing is False
-            # Still completely usable: leaving Agent Mode is immediate.
-            controller._mode_transition("/chat on")
-            assert controller.config.mode == "chat"
-            assert tui.state.mode == "Chat Mode"
-
-    def test_a_command_layer_failure_is_reported_and_recoverable(
-        self, monkeypatch
-    ) -> None:
-        """A raising mode command is reported, and the interface keeps working."""
-        import seedcode.app as app_mod
-
-        def explode(_ctx, _text):
-            raise RuntimeError("the index could not be written")
-
-        monkeypatch.setattr(app_mod, "dispatch", explode)
-        with _session() as (tui, _pipe, _out):
-            controller, _ui = _controller(tui)
-            controller._mode_transition("/agent on")
-            assert controller.switcher.wait(timeout=5)
-            reported = " ".join(plain_text(tui.buffer.lines()).split())
-            assert "the index could not be written" in reported
-            assert tui.state.agent_initializing is False
-
-        monkeypatch.undo()
-        with _session() as (tui, _pipe, _out):
-            controller, _ui = _controller(tui)
-            controller._mode_transition("/chat on")
-            assert controller.config.mode == "chat"
-            assert tui.state.mode == "Chat Mode"
+# --- permission guards (the retained half of the old mode-switch file) --------
+# v9.2.0 removed /chat /agent /code mode switching and its state machine;
+# these guard tests are the still-current behaviour and are kept verbatim.
 
     def test_confirm_on_the_interface_thread_is_refused_not_awaited(self) -> None:
         """The permission panel can never wait for an answer from itself."""
@@ -515,63 +337,51 @@ class TestModeSwitcher:
 
 
 class TestInterfaceStaysResponsive:
-    def test_a_mode_switch_mid_stream_keeps_the_answer(self, assist_module) -> None:
-        """Switching while the model streams must not disturb the stream."""
-        release = threading.Event()
-        assist_module._ensure_workspace = _blocking_workspace(release)
-        try:
-            with _session() as (tui, pipe, _out):
-                controller, ui = _controller(tui)
+    def test_background_work_mid_stream_keeps_the_answer(self) -> None:
+        """A background preparation while the model streams must not disturb it."""
+        with _session() as (tui, pipe, _out):
+            ui = TuiUI(tui)
 
-                def on_submit(_text: str) -> None:
-                    with ui.streaming() as renderer:
-                        renderer.feed("streamed ")
-                        controller._mode_transition("/agent on")
-                        renderer.feed("answer")
-                    ui.info("(done)")
+            def on_submit(_text: str) -> None:
+                with ui.streaming() as renderer:
+                    renderer.feed("streamed ")
+                    tui.begin_initialization("Agent Mode")  # background UI state
+                    renderer.feed("answer")
 
-                tui.on_submit = on_submit
-                _schedule(pipe, [(0.3, "go"), (0.35, "\r"), (1.5, "\x04")])
-                tui.run_once()
+            tui.on_submit = on_submit
+            _schedule(pipe, [(0.3, "go"), (0.35, "\r"), (1.5, "\x04")])
+            tui.run_once()
 
-                content = plain_text(tui.buffer.lines())
-                assert "streamed answer" in content
-        finally:
-            release.set()
-            controller.switcher.cancel(wait=3)
+            content = plain_text(tui.buffer.lines())
+            assert "streamed answer" in content
+            # The stream was never disturbed, and the background state stays
+            # owned by its own worker (cleared by its callback, not the turn).
+            assert tui.state.agent_initializing is True
 
-    def test_typing_works_while_agent_initializes(self, assist_module) -> None:
-        """The event loop keeps delivering input during initialization."""
-        release = threading.Event()
-        assist_module._ensure_workspace = _blocking_workspace(release)
-        try:
-            with _session() as (tui, pipe, _out):
-                controller, _ui = _controller(tui)
-                # Match the production composer path: the mode command arrives
-                # while the application owns the screen.
-                _schedule(
-                    pipe,
-                    [
-                        (0.3, "/agent on"),
-                        (0.35, "\r"),
-                        (0.8, "hello"),
-                        (1.3, "\x04"),
-                    ],
-                )
-                started = time.monotonic()
-                result = tui.run_once()
-                elapsed = time.monotonic() - started
+    def test_typing_works_while_agent_initializes(self) -> None:
+        """The event loop keeps delivering input during background work."""
+        with _session() as (tui, pipe, _out):
+            tui.begin_initialization("Agent Mode")
+            _schedule(
+                pipe,
+                [
+                    (0.5, "hello"),
+                    (0.9, "\x04"),
+                ],
+            )
+            started = time.monotonic()
+            result = tui.run_once()
+            elapsed = time.monotonic() - started
 
-                assert result == ("exit", None)
-                assert elapsed < 8, elapsed  # never blocked on the preparation
-                assert tui._input.text == "hello"  # typed text really arrived
-                assert tui.state.mode == "Agent Mode"
-                assert tui.state.agent_initializing is True
-                hint = "".join(text for _, text in tui._composer_bottom())
-                assert "Initializing" in hint
-        finally:
-            release.set()
-            controller.switcher.cancel(wait=3)
+            tui.end_initialization()
+
+            assert result == ("exit", None)
+            assert elapsed < 8, elapsed  # never blocked on the initialization
+            assert tui._input.text == "hello"  # typed text really arrived
+            # Shutdown — the app's exit path — cleans the state up even
+            # while a preparation is still in flight.
+            tui.shutdown()
+            assert tui.state.agent_initializing is False
 
     def test_streaming_updates_only_the_conversation_region(self) -> None:
         """Tokens repaint the answer; the header and composer stay stable."""
@@ -586,9 +396,9 @@ class TestInterfaceStaysResponsive:
                 tui._hint_window,
             )
             header_before = header_lines(tui.state, tui._width)
-            # The branding block: the border, the three ASCII logo rows and the
-            # tagline. The identity row below it carries the live status.
-            branding = header_before[:5]
+            # The compact v9.2.0 branding: row 1 is the churn-free line (the
+            # live status moved into the status bar below it).
+            branding = header_before[:1]
             with ui.streaming() as renderer:
                 for chunk in ("one ", "two ", "three"):
                     renderer.feed(chunk)
@@ -602,7 +412,9 @@ class TestInterfaceStaysResponsive:
                         tui._permission_window,
                         tui._hint_window,
                     ) == widgets
-                    assert header_lines(tui.state, tui._width)[:5] == branding
+                    # Only the branding row is compared mid-stream: the status
+                    # bar below it legitimately tracks the live status.
+                    assert header_lines(tui.state, tui._width)[: len(branding)] == branding
             content = plain_text(tui.buffer.lines())
             assert "one two three" in content
             # Committed exactly once — a live block is never duplicated into
@@ -612,6 +424,7 @@ class TestInterfaceStaysResponsive:
             # Nothing else about the header drifted: back to Ready and the
             # whole header is byte-for-byte what it was.
             tui.state.set_status(Status.READY, "")
+            tui.state.operation = ""
             assert header_lines(tui.state, tui._width) == header_before
 
     def test_streaming_writes_nothing_outside_the_managed_regions(self, capsys) -> None:
@@ -633,32 +446,25 @@ class TestInterfaceStaysResponsive:
         assert captured.out == ""
         assert captured.err == ""
 
-    def test_resize_during_initialization_is_safe(self, assist_module) -> None:
-        release = threading.Event()
-        assist_module._ensure_workspace = _blocking_workspace(release)
-        try:
-            with _session(rows=24, columns=80) as (tui, pipe, output):
-                controller, _ui = _controller(tui)
+    def test_resize_during_initialization_is_safe(self) -> None:
+        with _session(rows=24, columns=80) as (tui, pipe, output):
+            def scripted() -> None:
+                time.sleep(0.3)
+                tui.begin_initialization("Agent Mode")
+                time.sleep(0.3)
+                output.resize(50, 200)  # grow
+                tui._invalidate()
+                time.sleep(0.3)
+                output.resize(8, 46)  # and shrink hard
+                tui._invalidate()
+                time.sleep(0.3)
+                pipe.send_text("\x04")
 
-                def scripted() -> None:
-                    time.sleep(0.3)
-                    pipe.send_text("/agent on\r")
-                    time.sleep(0.4)
-                    output.resize(50, 200)  # grow
-                    tui._invalidate()
-                    time.sleep(0.3)
-                    output.resize(8, 46)  # and shrink hard
-                    tui._invalidate()
-                    time.sleep(0.3)
-                    pipe.send_text("\x04")
-
-                threading.Thread(target=scripted, daemon=True).start()
-                assert tui.run_once() == ("exit", None)
-                assert tui.state.agent_initializing is True
-                assert tui.min_layout_rows() <= tui._rows
-        finally:
-            release.set()
-            controller.switcher.cancel(wait=3)
+            threading.Thread(target=scripted, daemon=True).start()
+            assert tui.run_once() == ("exit", None)
+            tui.shutdown()  # the app's exit path
+            assert tui.state.agent_initializing is False  # cleaned up on exit
+            assert tui.min_layout_rows() <= tui._rows
 
 
 # --- 6-13: terminal resizing ---------------------------------------------------
@@ -751,12 +557,14 @@ class TestResizeResponsiveness:
         with _session() as (tui, _pipe, _out):
             app = tui._build_app()
             root = app.layout.container
-            # The top level carries exactly the five regions, in order.
+            # The top level carries exactly the six regions, in order
+            # (v9.2.0 adds the slash-autocomplete row).
             assert root.get_children() == [
                 tui._header_window,
                 tui._content_window,
+                tui._autocomplete_window,
                 tui._permission_window,
-                root.get_children()[3],  # the composer frame
+                root.get_children()[4],  # the composer frame
                 tui._hint_window,
             ]
             nodes = list(_walk_tree(root))

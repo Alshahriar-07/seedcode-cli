@@ -101,7 +101,11 @@ def dispatch(ctx: CommandContext, text: str) -> CommandResult:
 
 # Import handler modules for their registration side effects. Deferred to the
 # bottom so ``command`` / ``_REGISTRY`` already exist when the handlers load.
-from . import about, agent, assist, chat, clear, codemode, desktop, doctor, help, history, mode, palette, provider, session, status, theme  # noqa: E402,F401
+# v9.2.0: the retired mode modules (/chat, /agent, /mode, /assist, /codemode,
+# /desktop) and the non-coding /play & /youtube commands are gone; the unified
+# workspace/capability module registers /workspace, /permission, /index,
+# /tools and /memory instead.
+from . import about, clear, doctor, help, history, palette, provider, session, status, theme, workspace  # noqa: E402,F401
 
 __all__ = [
     "CommandContext",

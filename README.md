@@ -5,67 +5,81 @@
 > ### Faster. Smaller. Smarter. Workspace-aware.
 > *Plant ideas. Grow code.*
 
-Seed Code is a premium terminal-based AI coding assistant and task runner.
-v9.1.1 exposes exactly **two modes** — **Chat Mode** and **Agent Mode** — over a
-multi-provider, multi-model engine, behind the Seed Code startup logo and a
-compact block of live session state.
+Seed Code is a premium terminal-based **AI coding agent** that runs directly
+inside your terminal. One unified agent — not a chat bot with a mode switch —
+reads your project, plans the work, writes and edits real files, runs real
+commands, reads their output, searches the web for documentation, fixes what
+fails, and reports honestly on what it actually did.
 
-| Mode | What it does |
-| --- | --- |
-| **Chat Mode** | Conversation: questions, explanations, brainstorming. Never acts on your project. |
-| **Agent Mode** | The unified autonomous workspace/coding agent: inspect, plan, edit, run, verify and keep working until the task is verified, using every available tool. |
+`seedcode --version` → `Seed Code CLI 9.2.0`
 
-The retired **Code Mode** and **Assist Mode** are no longer separate modes;
-their capabilities now belong to Agent Mode. Agent Mode automatically activates
-the workspace coding capability (`.seedcode` project memory + index, the
-plan → execute → verify session loop). `/codemode`, `/assist` and `/desktop`
-remain accepted aliases, but nothing in the UI presents a third mode.
+---
 
-- **Providers:** choose **OpenRouter**, **Ollama** (started automatically when
-  you select it), or any number of your own **Custom** OpenAI-compatible
-  providers with `/provider`. Custom configurations are saved without limit,
-  each with its own name, base URL, key and model.
-- **Reliable by design:** provider health is tracked, a failing request fails
-  over to the next healthy provider without restarting the task, and a lost
-  connection pauses the session instead of failing it.
-- **Seed Code ASCII logo, preserved:** the fixed header leads with the exact
-  Seed Code block logo and tagline, followed by the live Provider / Model /
-  Mode / Status / Workspace / Context / key state. The header is never
-  reprinted — every value updates in place the moment it changes — and the
-  branding is never replaced by plain text or clipped to fit.
-- **Professional message composer:** the fixed bottom region carries the
-  `You >` prompt, which is display only and never part of the message itself.
-  Multiline input keeps its continuations aligned under the prompt, `Enter`
-  sends, `Shift+Enter` inserts a newline, and history, paste, long prompts,
-  Unicode and terminal resize all work.
-- **`AI > ◌ Thinking…` before every answer:** a lightweight animated indicator
-  appears the instant you send a message and is replaced by streaming output.
-  It is a UI state only — it never blocks or delays the agent.
-- **Live activity, no checklist:** Agent Mode decides its own execution
-  sequence and shows an activity stream (`AI > ⚙ Running pytest`,
-  `AI > ✓ Tests passed`) whose lines appear only when the underlying operation
-  really starts. There is no manual to-do list to create or manage, and
-  completing a task never closes the application.
-- **Intent-driven, not tool-eager:** every turn is classified (conversation,
-  research, coding, computer) before anything runs, and only the capability
-  that intent actually needs is offered to the model. A question never reads
-  your project; a coding task never sees the browser tools.
-- **Chat → Agent escalation, and back:** a request sent in Chat Mode that has
-  to *execute* something runs with the agent engine and then returns to Chat
-  Mode. An explicit `/agent on` stays on until you turn it off.
-- **Internet access when it is actually needed:** a research request can search
-  and read current sources in both Chat and Agent Mode — keyless search,
-  URL-attributed and character-budgeted context, and
-  `SEEDCODE_DISABLE_INTERNET=1` to turn it off. Progress is shown while it
-  works.
-- **Permissions that stick:** the permission panel offers Allow, Allow Session
-  and Allow All, and an approved scope is no longer forgotten when a new agent
-  engine is created.
-- **Version:** 9.1.1 (`seedcode --version`)
+## What you get
+
+- **One unified agent.** There are no Chat/Agent/Code modes: every request is
+  one agent turn. The engine decides from the request itself (conversation,
+  research, coding) which tools it needs, so a question does not read your
+  project and a coding task does not fetch the web unless it must.
+- **A live, honest execution view.** While the agent works you see the actual
+  operation and the actual tool results — never a fabricated progress bar:
+
+  ```text
+  You > read README.md
+
+    ℹ Analyzing the task and inspecting the workspace...
+    ⚙ Reading README.md
+    ✓ Read README.md
+    ⚙ Running python -m pytest -q
+    ✓ Tests passed · Exit code: 0
+    ⚙ Searching the web for 'python fastapi docs'
+    ✓ Searched online for 'python fastapi docs'
+    ⚙ Editing app.py
+    ✓ Updated app.py — +12/-5 lines (lines 1–18)
+      @@ -1,5 +1,6 @@
+       import sys
+      -print("old")
+      +print("new")
+  ```
+
+  Activity lines carry no `AI >` prefix: they are indented under your turn,
+  with a marker for the real state — `⚙` started, `✓` succeeded, `✗` failed,
+  `ℹ` informational. User input keeps its `You >` label.
+- **A real thinking indicator.** A small animated spinner sits beside the
+  *current operation* with a live elapsed timer, e.g. `⠹ Reading README.md……
+  · 12s`. The label is read from backend state (`state.operation`), so it says
+  what the agent is doing, not just "Working".
+- **Real file operations and diffs.** File reads, creations, updates and
+  deletions are reported with the path, the line counts, the affected line
+  range and a bounded unified-diff preview; `Ctrl+E` expands the last diff.
+- **Real terminal execution.** Commands show the command, the working
+  directory, live output, the exit code and the duration; `Ctrl+T` expands the
+  last command's full output. Windows PowerShell and POSIX shells both work.
+- **Real internet research.** When a task needs current documentation the
+  agent searches keyless and reads the pages it found; the search query, the
+  source URL and the retrieved information are surfaced as real events.
+- **A final report that matches reality.** When the turn ends you get a
+  report of the files created/modified/deleted, commands run, tests run and
+  their results — built only from operations that really happened.
+- **Permissions that are asked, not assumed.** Dangerous actions (shell
+  commands, deletes, git mutations, writes outside the workspace) ask first:
+  Allow once / Always (session) / Allow All (session) / Deny. Grants live for
+  the session only and are never written to disk.
+- **Providers and models.** Default (built in, no key), OpenRouter, FreeModel
+  Claude, FreeModel Codex, AeroLink and **Ollama** (started automatically when
+  you select it). Custom OpenAI-compatible providers can be added without
+  limit, each with its own name, base URL, key and model. Selecting a provider
+  never copies another provider's key or model, and a failed request is
+  reported rather than silently rerouted (automatic failover is opt-in).
+- **Compact, responsive header.** A two-row bar — branding, provider, model and
+  mode on the first row; live status, workspace, context budget and the masked
+  key on the second — that never clips at any terminal width.
+
+---
 
 ## Installation
 
-After any installation method, **`seedcode` is the primary command**:
+After any installation method, `seedcode` is the primary command:
 
 ```bash
 seedcode
@@ -80,13 +94,7 @@ pip install seedcode-cli
 Requires **Python 3.10 or newer**. The wheel exposes the `seedcode` console
 script; `python -m seedcode` also works as a developer fallback.
 
-Seed Code CLI is also distributed through the official IRM installer system and
-[GitHub Releases](https://github.com/Alshahriar-07/seedcode-cli/releases).
-The installers download the official release artifact for your platform,
-verify its SHA256 against the release's `SHA256SUMS.txt`, and then verify the
-installed command.
-
-### Windows
+### Windows — remote installer (recommended)
 
 PowerShell 5.1 or newer:
 
@@ -96,49 +104,37 @@ irm https://seedcode-cli.vercel.app/install.ps1 | iex
 
 Installs for the current user (no administrator rights, no Python) into
 `%LOCALAPPDATA%\Programs\SeedCode`, adds `seedcode` to your user `PATH`, and
-prints the verified version when it finishes.
+verifies the installed binary reports exactly the requested version. It
+downloads the official `SeedCode-CLI-9.2.0-windows-x64.exe` and the release's
+`SHA256SUMS.txt`, and **refuses to install** if the checksum entry is missing,
+the checksum file is unreachable, or the digest does not match.
 
-### Linux
+### Windows — Setup installer
+
+Download `SeedCode-CLI-Setup-9.2.0.exe` from the
+[Releases page](https://github.com/Alshahriar-07/seedcode-cli/releases/tag/v9.2.0)
+and run it. The wizard installs Seed Code, adds it to `PATH`, creates a Start
+Menu shortcut, verifies that the installed `seedcode.exe` reports the
+installer's own version, and ships an uninstaller that never deletes your
+project data silently.
+
+### Windows — portable executable
+
+Download `SeedCode-CLI-9.2.0-windows-x64.exe` and run it directly. It is fully
+self-contained (no Python, no installation, no `PATH` changes).
+
+### Linux / macOS — remote installer
 
 ```bash
 curl -fsSL https://seedcode-cli.vercel.app/install.sh | bash
 ```
 
-Installs for the current user. No prebuilt Linux/macOS binary is published in
-this release: `install.sh` installs the official Python wheel from the same
-release with `pip install --user`, so it needs **Python 3.10 or newer (with
-pip)** on the machine. If a prebuilt binary for your platform is ever
-published, it is used directly instead. Either way `install.sh` installs only
-what it can verify against the release's `SHA256SUMS.txt` — a missing
-checksum entry, a mismatching digest, or a host with no SHA256 tool makes it
-stop instead of installing unverified code.
-
-### Windows installer (GUI alternative)
-
-The release publishes two Windows binaries; both are fully self-contained (no
-Python required) and both run the same CLI:
-
-| Download | What it is |
-| --- | --- |
-| `SeedCode-CLI-Setup-9.1.1.exe` | **Setup installer (recommended).** A wizard that installs to Program Files, adds Seed Code to the system `PATH`, creates a Start Menu shortcut with an optional desktop shortcut, verifies the installation before reporting success, and ships a clean uninstaller that never deletes your project data silently. |
-| `SeedCode-CLI-9.1.1-windows-x64.exe` | **Standalone executable.** A single portable `seedcode.exe` — no installation and no admin rights. The Windows IRM installer above downloads exactly this file. Run it directly from wherever you put it. |
-
-Both are published on the
-[Releases page](https://github.com/Alshahriar-07/seedcode-cli/releases) with
-their SHA256 in `SHA256SUMS.txt`.
-
-After installing by any route:
-
-```bash
-seedcode --version    # -> Seed Code CLI 9.1.1
-```
-
-> **`seedcode` not recognized?** Open a *new* terminal. `PATH` changes only
-> apply to fresh sessions; the installers verify this before they finish.
+Installs for the current user and verifies the downloaded artifact against the
+release's `SHA256SUMS.txt` before anything is installed. This release publishes
+no prebuilt Linux/macOS binary, so the installer uses the official Python wheel
+(requires **Python 3.10+ with pip**, or pipx when available).
 
 ### From source (development)
-
-Requires **Python 3.10 or newer**:
 
 ```bash
 git clone https://github.com/Alshahriar-07/seedcode-cli.git
@@ -147,19 +143,26 @@ python -m pip install -e ".[dev]"
 seedcode
 ```
 
-## First run
+After installing by any route:
 
 ```bash
-seedcode
+seedcode --version    # -> Seed Code CLI 9.2.0
 ```
+
+> **`seedcode` not recognized?** Open a *new* terminal. `PATH` changes only
+> apply to fresh sessions; the installers verify this before they finish.
+
+---
+
+## First run
 
 On first launch Seed Code asks where it may work:
 
 ```text
   Select Workspace
   --------------------------------------------------------------
-  Where should Seed Code work? Agent Mode reads, writes, indexes and
-  runs commands only inside the folder you pick.
+  Where should Seed Code work? It reads, writes, indexes and runs
+  commands only inside the folder you pick.
 
     1  Current Folder    D:\Projects\my-site
     2  Choose a Folder   browse this PC and pick any directory
@@ -167,544 +170,189 @@ On first launch Seed Code asks where it may work:
   Select [1] >
 ```
 
-`Current Folder` keeps the directory you launched from. `Choose a Folder` opens
-your operating system's native folder picker and makes the chosen directory the
-**workspace** — the single root for Agent Mode, file reads and writes, project
-indexing, the `.seedcode` context and `plan.md`, terminal commands and
-verification. Nothing outside that root is touched without permission.
+`Current Folder` keeps the directory you launched from; `Choose a Folder` opens
+your operating system's native folder picker. The chosen directory becomes the
+**workspace** — the single root for file reads and writes, project indexing,
+`.seedcode` project memory, terminal commands and verification. Nothing outside
+it is touched without permission.
 
 Automation is never blocked: `SEEDCODE_WORKSPACE=<dir>` selects the workspace
-directly, and `SEEDCODE_NO_WORKSPACE_PROMPT=1` (or a non-interactive host) keeps
-the launch directory.
+directly, and `SEEDCODE_NO_WORKSPACE_PROMPT=1` (or a non-interactive host)
+keeps the launch directory.
 
-You land in the persistent Seed Code workspace: a fixed header carrying the
-Seed Code ASCII logo, a scrolling conversation region and a fixed message
-composer. The header is a live dashboard — it never scrolls away, and its
-values (provider, model, mode, status, workspace, context budget and the masked
-API key) update in place the moment they change.
+You then land in the persistent interface:
 
 ```text
-╭─ Seed Code CLI v9.1.1 ───────────────────────────────────────────────────────────────────────╮
-│    ▄█████ ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄    ▄█████  ▄▄▄  ▄▄▄▄  ▄▄▄▄▄   ▄█████ ██     ██                    │
-│    ▀▀▀▄▄▄ ██▄▄  ██▄▄  ██▀██   ██     ██▀██ ██▀██ ██▄▄    ██     ██     ██                    │
-│    █████▀ ██▄▄▄ ██▄▄▄ ████▀   ▀█████ ▀███▀ ████▀ ██▄▄▄   ▀█████ ██████ ██                    │
-│    Plant ideas. Grow code.                                                                   │
-│ OpenRouter · cohere/north-mini-code:free · Agent Mode                             ◌ Thinking │
-│ Workspace D:\my-project                         Context   16,384                             │
-│ API Key   sk-or-v1...e031                                                                    │
-╰──────────────────────────────────────────────────────────────────────────────────────────────╯
-──────────────────────────────────── Conversation ────────────────────────────────────────────
-You > Build the authentication system.
+Seed Code CLI v9.2.0 · Ollama · qwen3:4b · Agent
+● Ready · Workspace D:\Projects\demo · Context 16,384 tokens
 
-AI > ◌ Thinking...
+You > read README.md
 
-AI > I found the issue in the authentication middleware.
+  ℹ Analyzing the task and inspecting the workspace...
+  ⚙ Reading README.md
+  ✓ Read README.md
+  ⠹ Inspecting project structure...  · 4s
 
-┌─────────────────────────────────────────| Message |──────────────────────────────────────────┐
-│ › Build a login system using the existing authentication architecture.                       │
-│                                                                                              │
-└──────────────────────────────────────────────────────────────────────────────────────────────┘
-  Enter ↵ send  ·  Shift+Enter newline
+╭─ Message ──────────────────────────────────────────────────────────────────╮
+│ › read README.md                                                           │
+╰────────────────────────────────────────────────────────────────────────────╯
+  Enter ↵ send  ·  Shift+Enter newline  ·  / commands  ·  Ctrl+C cancel
 ```
 
-The header adapts to the terminal: wide terminals get the full panel with the
-logo; below 76 columns — where the 70-column block art cannot be drawn without
-clipping — the *metadata* re-flows into a compact panel and then into plain
-lines. The logo is omitted whole rather than truncated, and no line is ever
-wider than the screen. A console that cannot encode the block glyphs gets the
-wordmark form of the same layout.
+The header is fixed: it never scrolls away and every value updates in place the
+moment it changes. Only the conversation scrolls; the composer stays at the
+bottom.
 
-The composer is a real, bounded multiline text editor: prompt_toolkit draws its
-`┌─ Message ─┐` frame around the text buffer, so typed text can never escape the
-border. Long lines wrap inside it and taller content scrolls internally. It has
-**no** prompt prefix of its own — the message you type is exactly the message
-that is sent (the `You >` in the conversation is only the history label).
-`Enter` sends, `Shift+Enter` inserts a newline, and `↑`/`↓` move the cursor
-inside a multiline message (walking the input history only at the edges). The
-conversation follows the bottom until you scroll up — at which point the footer
-shows `↓ n new` instead of pulling you back down.
+### Composer and keys
 
-Provider, model, mode and status are shown exactly once, in the header
-dashboard itself — there is no second toolbar repeating them. Switch provider,
-model or mode with `/provider`, `/model`, `/mode` or the `Ctrl+K` command
-palette.
-
-Below is the rendering used when the persistent interface is not available — a
-piped host, `SEEDCODE_NO_TUI=1`, or a console that cannot draw it:
-
-```text
-╭─ Seed Code CLI v9.1.1 ───────────────────────────────────────────────────────────────────────╮
-│    ▄█████ ▄▄▄▄▄ ▄▄▄▄▄ ▄▄▄▄    ▄█████  ▄▄▄  ▄▄▄▄  ▄▄▄▄▄   ▄█████ ██     ██                    │
-│    ▀▀▀▄▄▄ ██▄▄  ██▄▄  ██▀██   ██     ██▀██ ██▀██ ██▄▄    ██     ██     ██                    │
-│    █████▀ ██▄▄▄ ██▄▄▄ ████▀   ▀█████ ▀███▀ ████▀ ██▄▄▄   ▀█████ ██████ ██                    │
-│                                                                                              │
-│ Seed Code CLI v9.1.1                                                                         │
-│ Plant ideas. Grow code.                                                                      │
-│ Provider   OpenRouter                                                                        │
-│ Model      cohere/north-mini-code:free                                                       │
-│ Mode       Chat                                                                              │
-│ Status     ● Ready                                                                           │
-│ API Key    **********                                                                        │
-╰──────────────────────────────────────────────────────────────────────────────────────────────╯
-Commands  /help  /status  /codemode  /agent  /provider  /model
-You >
-```
-
-The panel is 96 columns wide on a wide terminal — wide enough that the whole
-`cohere/north-mini-code:free` model name fits without clipping. Below 78
-columns the block logo cannot be drawn un-clipped, so the dashboard switches
-to the text wordmark; below 64 columns it becomes a compact one-row panel, and
-below 40 columns plain lines. Consoles that cannot draw (or encode) the glyphs
-get the same layout in ASCII.
-
-The `API Key` row appears **only** for providers that actually require a key,
-so Default and Ollama never show one. `cohere/north-mini-code:free` is the
-ships-with default for **Default only**; every other provider keeps its own
-model, and switching providers never copies one model onto another.
-
-### Default provider (no API key)
-
-**Default** is Seed Code's built-in API connection and the provider the app
-ships with. It is a first-class provider of its own — separate from
-OpenRouter everywhere: its own entry in `/provider`, its own saved model, its
-own status, and its own credential slot. It resolves its credential itself,
-in this order:
-
-1. a key stored in Default's own slot (advanced/manual use);
-2. the embedded Seed Code release credential — carried by the Windows
-   standalone EXE and the Setup installer only. The wheel and sdist
-   deliberately never carry it: the build refuses to package the generated
-   credential module, so a `pip install` is always a credential-free build;
-3. `OPENROUTER_API_KEY` / `SEEDCODE_DEFAULT_API_KEY` in the environment.
-
-It never reads or writes another provider's configuration, and no other
-provider inherits Default's credential. If a build carries no built-in
-credential (a source checkout or a `pip install`), Default says so plainly
-instead of failing with an authentication error — pick OpenRouter and add your
-own key. On the Windows EXE and Setup installer the credential is present, so
-a fresh install is usable on the Default provider immediately.
-
-### Your own API key
-
-Use `/apikey` (view / replace / remove / validate) or set an environment
-variable:
-
-```bash
-export OPENROUTER_API_KEY="sk-or-..."      # PowerShell: $env:OPENROUTER_API_KEY = "..."
-export FREEMODEL_API_KEY="fe_oa_..."
-export AEROLINK_API_KEY="..."
-```
-
-Keys are validated with a real authenticated request before they are saved.
-They are stored per provider in `~/.seedcode/config.json`, never in any
-project directory, and never printed, logged, or included in an error
-message.
-
-### Providers
-
-Every provider is fully independent: its own API key, model, settings, and
-connection status. Switching providers never touches another one's
-configuration.
-
-| Provider | API key | Best for |
-| --- | --- | --- |
-| **Default** | not required | Working immediately on a Windows EXE/Setup install (`cohere/north-mini-code:free`) |
-| [OpenRouter](https://openrouter.ai) | required | A broad catalogue of free and paid models |
-| FreeModel Claude | required | Claude-family models through FreeModel |
-| FreeModel Codex | required | GPT/Codex models through FreeModel |
-| [AeroLink](https://aerolink.lat) | required | Anthropic-compatible gateway access |
-| [Ollama](https://ollama.com) | not required | Local, key-free models |
-
-Switch with `/provider` — the picker groups choices by what they need
-(*Built-in · no API key*, *Your own API key*, *Local*) and shows each
-provider's backend, current model, and key state. Pick models with `/model`
-(OpenRouter filters `free` vs `pro` models; FreeModel offers Auto mode).
-
-## Agent Mode and permissions
-
-Agent Mode lets the model act on your project through the tool engine: a
-multi-step task that uses real tools, verifies what it did, and reports what
-actually happened instead of claiming success:
-
-```text
-/agent on
-```
-
-Permission modes (view/set with `/permission`):
-
-| Mode | Behavior |
-| --- | --- |
-| `read_only` | Inspect files, screens, windows, and state without mutations |
-| `workspace` | Allow approved changes inside the active workspace |
-| `desktop` | Add desktop automation capability after confirmation |
-| `full_system` | Allow broader computer and filesystem actions after confirmation |
-
-### Permission scopes
-
-The permission panel is a bounded TUI component shown between the conversation
-and the composer, inside the same application (never a nested prompt):
-
-```text
-╭─ Agent Action ───────────────────────────────────────────────╮
-│ Agent wants to run:                                          │
-│ npm install                                                  │
-│ Reason: Run command                                          │
-│   ❯ Allow Once       approve this action only                │
-│     Always Allow     this action type, this session          │
-│     Allow All        every action type, this session         │
-│     Deny             block this action                       │
-│   Enter allow · a allow session · A allow all · d deny        │
-╰──────────────────────────────────────────────────────────────╯
-```
-
-- **Allow Once** approves the single action.
-- **Always Allow** approves that action type until you exit.
-- **Allow All** approves every action type until you exit.
-
-Both broader scopes are in-memory session grants: they are never written to
-`config.json`, and closing Seed Code clears them. Only the agent turn waits —
-the event loop, the header and the composer stay live while you decide.
-Harmless read operations (reading project files, listing directories, searching
-sources, inspecting structure) do not prompt; consequential actions do.
-
-## Intent and capability selection
-
-Before a turn runs, Seed Code classifies it — deterministically, without calling
-the model:
-
-| Intent | Example | What it may reach for |
-| --- | --- | --- |
-| conversation | "How do I fix the provider switching bug?" | nothing; it answers |
-| research | "What changed in the latest Node.js release?" | web search and fetch |
-| coding | "Fix the provider switching bug." | project files, terminal |
-| computer | "Play this song on YouTube." | browser/desktop, web |
-
-The classification decides which tools are advertised (the **minimum-tool
-principle**), whether project context is loaded, and whether the workspace and
-desktop capabilities are available at all. Two consequences matter in practice:
-
-- **No unnecessary file access.** A question never causes your project to be
-  read; the project index and workspace context are only loaded for a turn that
-  is actually about the project.
-- **No unnecessary escalation.** A research question is answered in Chat Mode —
-  it does not turn into an agent task.
-
-When a Chat Mode request is one that executes something, that single turn is
-handed to the agent engine and control is handed back afterwards:
-
-```text
-You > Fix the provider switching bug in src/providers.py
-
-AI > [Agent assist - the request asks for a change to the project]
-     ··· the agent inspects, edits and verifies ···
-AI > [Temporary agent task finished - back to Chat Mode]
-```
-
-## Internet access
-
-Seed Code can retrieve current external information when a turn's intent needs
-it, in **both** modes:
-
-- **Chat Mode** retrieves sources before answering and shows its progress
-  (`[Accessing internet...]`, `[Reading relevant sources...]`).
-- **Agent Mode** exposes `web_search` and `web_fetch` as read-only tools to
-  research and computer turns only. A coding turn never sees them.
-
-Retrieval is keyless (no search API key is required or asked for), the retrieved
-text is attributed by URL and capped to a character budget before it reaches the
-prompt, and every failure path degrades to "no results" instead of an error.
-`SEEDCODE_DISABLE_INTERNET=1` disables the capability for a session.
-
-## Workspace coding (part of Agent Mode)
-
-Agent Mode is a real coding agent for the current project. Your working
-directory becomes the **workspace**:
-
-```text
-/agent on           # enable Agent Mode; the workspace capability is automatic
-/codemode on        # explicitly (re)activate the workspace capability
-/codemode off       # deactivate it (memory stays on disk)
-/codemode status    # workspace, memory, and index state
-```
-
-In Agent Mode the agent consults the project index, finds relevant files with
-targeted searches, reads only what it needs, plans, edits, runs a relevant
-command or test, and reports what changed. File operations stay inside the
-workspace root.
-
-### Persistent task execution
-
-Agent Mode is a **long-running agent**, not one model call. A request becomes a
-plan (a task graph with dependencies and acceptance criteria), and the session
-runs task after task until each one is *verified*:
-
-```text
-Plan (3 tasks) → Task 1 → verify → Task 2 → verify → Task 3 → verify
-              → final verification → project complete
-```
-
-- **A response is not completion.** A task is only `COMPLETED` when its
-  acceptance criteria are satisfied by real evidence — files that exist, a
-  command that ran and exited 0, tests that passed, no unresolved error. A
-  model that says “done” while the tests fail is sent back to fix them.
-- **A task is a unit of work, not a model call.** Each task may take many
-  model/tool cycles: analyse → inspect → implement → run → fail → fix → re-run
-  → verify.
-- **Limits do not end a task.** An output/context limit continues the task with
-  another call; a temporary provider error retries with backoff; a repeated
-  identical failure stops with an explicit blocker instead of looping.
-- **State survives.** Every transition is checkpointed to
-  `.seedcode/checkpoints/`, so a pause, a crash or an API failure resumes from
-  the current task.
-
-```text
-/session   # the detailed view: session state + one row per task record
-/pause     # stop at the next safe boundary, keeping plan + files
-/resume    # continue from the checkpoint (current task, not from zero)
-/stop      # safely end the autonomous session
-```
-
-Ctrl+C stops the session the same way; nothing here closes an application or
-rolls back your files. A stopped session is **not** lost: the CLI says so and
-`/resume` continues from the checkpoint.
-
-Every task also keeps its own execution record — files inspected and affected,
-commands run with their outcome, tool calls, test results, errors, retries,
-timestamps and the verification result — and it is stored per task in
-`.seedcode/plan.json`, so a resume continues with the full per-task history.
-`/session` renders that record:
-
-```text
-State            RUNNING
-Progress         1/3 tasks verified
-Current task     2. Create database
-Action           Running pytest tests/db
-Model calls      12
-Tool calls       31
-Tests            passed (pytest -q)
-Commands         1/1 ok
-Files changed    1
-Files inspected  2
-Checkpoint       saved on pause/stop (see /resume)
-
-✓ 1  Setup project    verified 2 criteria  1 inspected; 1 file(s); 1/1 cmd ok; tests passed
-● 2  Create database  —                    no tool activity recorded
-○ 3  Add tests        —                    not started
-```
-
-`/status` carries the same state in one line
-(`Session   RUNNING (1/3 verified) — Task 2`), and a stopped one reports that it
-is resumable. A task row only ever shows what was observed — a task that did
-nothing reads `no tool activity recorded`, never a success.
-
-### `.seedcode` project memory
-
-Enabling the workspace capability (`/agent on` or `/codemode on`) creates a `.seedcode/` directory in the project root:
-
-```text
-my-project/
-├── .seedcode/
-│   ├── memory/       durable project knowledge (architecture, decisions…)
-│   ├── index/        per-file summaries + a file map (incremental, hashed)
-│   ├── context/      reusable project context (conventions, snippets)
-│   ├── sessions/     compact per-session summaries (never raw transcripts)
-│   ├── checkpoints/  resumable agent session state
-│   ├── plan.json     the current task graph
-│   └── config.json   safe project configuration
-├── src/
-└── ...
-```
-
-- **Incremental indexing** — every indexed file is hashed; only changed files
-  are re-summarized on the next run.
-- **Secrets never land here** — writes pass a secret-key filter; API keys,
-  tokens, and passwords are rejected at write time.
-- **Not source code** — `.seedcode/` is excluded from workspace search,
-  indexing, and the agent's project view.
-
-## Task flow (Agent Mode)
-
-Every Agent Mode task is shown as a live flow, and each line appears only when
-the work behind it really happened. In the persistent interface the header
-carries the status and the conversation carries the activity stream; in the
-sequential console Agent Mode additionally shows the plan as a checklist. Both
-reflect what the agent really did:
-
-```text
-╭─ SEEDCODE 9.1.1 • AGENT MODE ───────────────╮
-│ ● RUNNING   Task 3/8   Build authentication │
-│   ████████████░░░░  72% • 4m 32s • 18 calls │
-│ → Running: pytest tests/auth                │
-╰─────────────────────────────────────────────╯
-✓ Setup project
-✓ Create database
-● Implement authentication
-○ Build dashboard
-○ Add tests
-```
-
-The action line is a real phase, not decoration: it shows the tool actually
-running (reading a file, editing one, running a command), and it switches to
-`Verifying acceptance criteria` / `Verifying the project (tests / build)` when
-the session moves into those phases. The panel re-fits itself on every refresh,
-so resizing the terminal mid-session cannot leave a panel wider than the
-screen — it degrades to a single status line when the space runs out.
-
-Agent Mode keeps the event-driven step flow:
-
-```text
-Task  ·  Agent Mode
-Fix authentication persistence
-✓ Analyze project  request understood
-✓ Inspect files  read_file seedcode/config.py
-✓ Plan implementation  I'll patch the persistence layer…
-● Implement changes  edit_file seedcode/config.py
-○ Run tests
-○ Verify result
-  Working…
-```
-
-The five states are `pending`, `running`, `completed`, `failed` and
-`skipped`. A step the task never needed is reported as **skipped** — “Run
-tests” is never marked done unless a recognised test command actually ran, and
-a failing run is shown as failed, showing what failed instead of a passing
-count:
-
-```text
-✓ Task completed
-  2 file(s) changed: seedcode/config.py, seedcode/providers.py
-  Tests: 898 passed — pytest tests -q
-Ready for next task.
-```
-
-A whole agent project closes with the evidence that verified it, not a
-restatement of the model's replies:
-
-```text
-✓ Project completed — 3/3 tasks verified
-  ✓ Verification: accepted
-  ✓ Tests: passed
-  ✓ Files: 4 affected
-  ✓ Commands: 7/7 ok
-  • Inspected: 12 item(s)
-Ready for next task.
-```
-
-```text
-✗ Task failed  —  tests failed
-  1 step(s) failed: Run tests
-Ready for another task.
-```
-
-A task never closes the CLI: success, failure and `Ctrl+C` all return to the
-prompt (or the menu) so you can inspect the result, run another task, switch
-mode or provider, or `/exit` yourself. Plain Chat Mode is unaffected — it
-answers with the ordinary spinner.
-
-## Terminal execution
-
-The agent runs commands through the tool engine's `run_command` tool:
-
-- output streams line-by-line **while the command is still running**, so long
-  builds and test runs stay visible instead of blocking. The live view is
-  compact: the first few lines of each command are echoed, then one summary
-  line. The agent and `~/.seedcode/logs/seedcode.log` still receive the full
-  output, and failures are never hidden;
-- `stderr` is captured along with `stdout`, in order;
-- the exit code is reported, and a non-zero exit is an explicit failure the
-  model can react to;
-- commands have a bounded timeout (default 60s, up to 300s) and a timeout
-  kills the whole process tree;
-- `Ctrl+C` cancels the running command — its process tree is terminated — and
-  the agent turn continues with the cancellation reported as a failed result;
-- shells: `cmd`, `powershell`, `pwsh`, `bash`, or `auto` (the shell you are
-  actually in), on Windows and Linux.
-
-## Command reference
-
-| Command | Purpose |
-| --- | --- |
-| `/help` | Search available commands |
-| `/provider` | Switch the active AI provider |
-| `/apikey` | Add, replace, remove, or validate a provider key |
-| `/model` | Browse and select the provider's model catalogue |
-| `/mode` | Show or switch the mode: `chat` / `agent` (`code` is an alias for Agent) |
-| `/chat` | Switch to plain Chat Mode (`/chat on`) |
-| `/agent` | Select Agent Mode (`on` / `off`; aliases `/assist`, `/desktop`) |
-| `/codemode` | Agent Mode workspace capability (`on` / `off` / `status`) |
-| `/workspace` | Show the active Agent Mode workspace |
-| `/session` | Inspect the agent session: state, evidence, per-task records |
-| `/pause` | Pause the running agent session (state is kept) |
-| `/resume` | Resume a paused session from its checkpoint |
-| `/stop` | Safely stop the running agent session |
-| `/permission` | View or set the Agent Mode permission level (alias `/permissions`) |
-| `/computer` | Show Computer Engine status and permissions |
-| `/screenshot` | Capture a screenshot |
-| `/windows` | List open windows |
-| `/tools` | List the tools available to the agent modes |
-| `/index` | Show a compact project tree |
-| `/files` | Search project files |
-| `/history` | Browse saved sessions |
-| `/doctor` | Diagnose configuration, network, and provider health |
-| `/theme` | Change the terminal theme |
-| `/shortcuts` | Show keyboard shortcuts |
-| `/reset` | Forget the current conversation context |
-| `/clear` | Clear the screen |
-| `/version` | Show the Seed Code version |
-| `/exit` | Leave the current chat (opens the main menu) |
-
-### Persistent interface (TUI)
-
-Running `seedcode` on an interactive console opens the persistent workspace.
-The three regions are fixed: the header never scrolls away, only the
-conversation scrolls, and the composer stays at the bottom.
+The composer is a real bounded multiline editor with no prefix of its own — the
+message you type is exactly the message that is sent.
 
 | Key | Action |
 | --- | --- |
 | `Enter` | Send the message |
 | `Shift+Enter` (or `Ctrl+J` / `Alt+Enter`) | Insert a newline without sending |
-| `↑` / `↓` | Walk the input history |
+| `↑` / `↓` | Move inside a multiline message; walk history at the edges |
+| `/` at the start of a line | Slash-command autocomplete (filter, arrows, Enter, Esc, mouse) |
 | `Ctrl+C` | Cancel the running turn (or clear the composer when idle) |
-| `Esc` | Clear the composer / deny a pending permission prompt |
-| `Ctrl+K` | Command palette |
-| `Ctrl+P` | Project file search |
-| `Ctrl+R` | Saved session history |
-| `Ctrl+,` | Settings |
-| `Ctrl+/` | Shortcut reference |
-| `Ctrl+L` | Clear the conversation |
+| `Esc` | Dismiss suggestions / deny a pending permission prompt |
+| `Ctrl+E` | Expand the last file diff |
+| `Ctrl+T` | Expand the last command's output |
 | `PageUp` / `PageDown`, `Ctrl+Home` / `Ctrl+End` | Scroll the conversation |
 | Mouse wheel | Scroll the conversation |
 | `Ctrl+D` | Exit |
 
-Only the conversation scrolls, and output is repainted incrementally: there is
-no clear-screen-and-redraw loop, so the header and composer stay stable while a
-model streams, the thinking indicator animates, commands run, tool events
-appear, or the terminal is resized.
+Set `SEEDCODE_NO_TUI=1` (or `SEEDCODE_PLAIN=1`) to use the sequential console
+instead — piped hosts do this automatically.
 
-Set `SEEDCODE_NO_TUI=1` to use the sequential console instead (as the
-`SEEDCODE_PLAIN` mode and piped hosts do automatically).
+---
 
-All exit paths are clean: `/exit` → menu, menu → Exit, `Ctrl+C` (cancels a
-response or the current line), and `Ctrl+D`/EOF. No traceback appears on
-normal exit.
+## Providers and models
 
-## Desktop control
+| Provider | Key required | Notes |
+| --- | --- | --- |
+| **Default** | No | Seed Code's built-in connection; ships pointed at a free coding model. Also reads `OPENROUTER_API_KEY` / `SEEDCODE_DEFAULT_API_KEY` from the environment. |
+| **OpenRouter** | Yes | Bring your own OpenRouter key. |
+| **FreeModel Claude** | Yes | FreeModel backend, Claude models. |
+| **FreeModel Codex** | Yes | FreeModel backend, Codex models. |
+| **AeroLink** | Yes | AeroLink backend. |
+| **Ollama** | No | Local models. Selecting Ollama starts `ollama serve` automatically when it is not already running. |
+| **Custom** | Depends | Any OpenAI-compatible endpoint: name, base URL, key, model. |
 
-With the `desktop`/`full_system` permission level, Seed Code can inspect
-windows, resolve UI elements semantically (accessibility tree, OCR, and image
-refinement — no brittle coordinates), launch and focus applications, and
-drive keyboard/mouse with per-action verification. Waits are state-based:
-`open_app` polls for real window evidence instead of sleeping, verification
-pauses are short because state is re-read live, and screenshots are taken
-only when information is genuinely needed.
+Every provider keeps its **own** key and model: switching providers never copies
+one provider's credentials or model onto another.
 
-**Applications stay open.** When Seed Code opens an application or a browser
-to do something for you ("play *this* song"), the app remains open when the
-task finishes. Closing is only ever done on an explicit request
-(`close_app` / `browser_close`); no teardown, retry, or cleanup path may close
-a window, a browser, or a tab behind your back. Internal cleanup (releasing
-mouse/keyboard control, closing DevTools sockets, dropping cached drivers) is
-unchanged, and Seed Code never closes its own terminal — `/exit` does that.
+### Ollama
+
+1. Install Ollama from <https://ollama.com> and pull a model, e.g.
+   `ollama pull qwen3:4b`.
+2. In Seed Code run `/provider` and choose **Ollama**, then `/model` and pick
+   the model you pulled.
+
+If the server is not running, Seed Code starts `ollama serve` for you and waits
+for it to become reachable. The default host is `http://localhost:11434`. A
+request that fails is reported as a failure — Seed Code never silently switches
+to a cloud provider when you selected Ollama (automatic failover is off unless
+you enable `auto_failover`).
+
+---
+
+## How a task runs
+
+1. **Your request** is classified by a deterministic, model-free classifier
+   (`seedcode/core/intent.py`): conversation, research or coding.
+2. **The engine selects tools** for that intent — filesystem, terminal, git and
+   search for coding; the web tools for research. Nothing else is offered.
+3. **Every tool call performs a real operation.** A read reads, a write writes,
+   a command runs in the workspace shell; the result (including its error) is
+   returned to the model, which continues from the real output.
+4. **The loop continues** until the task is complete or genuinely blocked —
+   bounded so it can never spin forever, streamed so the UI never freezes, and
+   cancellable at any moment with `Ctrl+C`.
+5. **A report is produced** from the operations that actually happened: files
+   created/modified/deleted, commands executed with exit codes, tests run and
+   their results, and anything still incomplete.
+
+### Project memory and sessions
+
+An active workspace gets a `.seedcode/` directory with a project index, memory
+notes and the session checkpoint. A long task is checkpointed, so `/pause`
+followed by `/resume` continues from the current task instead of starting over.
+`/session` shows the live session's plan and per-task records; `/memory` shows
+the project memory.
+
+---
+
+## Command reference
+
+Every command is real and reachable; typing `/` at the start of a line shows
+them with descriptions and filters as you type.
+
+| Command | Purpose |
+| --- | --- |
+| `/help` | Show available commands |
+| `/status` | Show the live runtime status |
+| `/provider` | Select the active provider |
+| `/model` | Browse and select a model for the active provider |
+| `/custom` | Manage custom providers (add, edit, test, reorder, enable, delete) |
+| `/apikey` | View, replace, remove, or validate the active provider's key |
+| `/workspace` | Show the active project, or select a different folder |
+| `/permission` | Show or set the tool permission level (alias `/permissions`) |
+| `/session` | Show agent session state and per-task records |
+| `/pause` / `/resume` / `/stop` | Pause, resume or stop the running agent session |
+| `/memory` | Show the `.seedcode` project memory and recent session notes |
+| `/index` | Show a compact tree of the current project |
+| `/files` | Search project files (`Ctrl+P`) |
+| `/tools` | List the tools available to the coding agent |
+| `/history` | Browse the active provider's saved sessions |
+| `/doctor` | Diagnose configuration, network and provider health |
+| `/settings` | Open interactive settings (or `/settings <name> <value>`) |
+| `/theme` | Pick a colour theme |
+| `/palette` | Open the command palette (`Ctrl+K`) |
+| `/shortcuts` | Show keyboard shortcuts |
+| `/reset` | Forget the current conversation context |
+| `/clear` | Clear the screen |
+| `/config` | Show the current configuration |
+| `/about` / `/version` | About / version |
+| `/exit` | Leave the session (back to the main menu) |
+
+Aliases: `quit`, `q`, `menu` → `/exit`; `keys` → `/shortcuts`; `commands` →
+`/palette`; `search` → `/files`; `providers`/`custom-providers` → `/custom`;
+`key` → `/apikey`; `project`/`folder`/`ws` → `/workspace`; `perm` →
+`/permission`.
+
+---
+
+## Permissions
+
+Seed Code uses a single hierarchical permission level:
+
+| Level | May do |
+| --- | --- |
+| `read_only` | Inspect only: no writes, no commands, no git mutations. |
+| `workspace` | Read anywhere, mutate only inside the workspace (the default). |
+| `full_system` | No path restriction on mutations (still confirmed per action). |
+
+On top of the level, *dangerous* actions ask for confirmation: shell commands,
+file deletes, git mutations and writes outside the workspace. Answers are
+`Allow once`, `Always` (this category, this session), `Allow All` (everything,
+this session) or `Deny`. Nothing is persisted; a denial is reported to the
+model as a real tool failure, not hidden.
+
+Set the level with `/permission workspace` (or `read_only`, `full_system`).
+
+---
+
+## Internet access
+
+Research requests can search and read current sources keylessly: a DuckDuckGo
+HTML search, page fetching with boilerplate stripped, and a
+character-budgeted, URL-attributed context block. Every failure degrades to
+"no results" instead of crashing the turn. Set
+`SEEDCODE_DISABLE_INTERNET=1` to turn it off for a session, and
+`SEEDCODE_MAX_RETRIES` to bound provider retries.
+
+---
 
 ## Configuration and local data
 
@@ -716,34 +364,18 @@ unchanged, and Seed Code never closes its own terminal — `/exit` does that.
 └── logs/             rotating diagnostic logs
 ```
 
-`config.json` keeps **one isolated entry per provider**:
+`config.json` keeps one isolated entry per provider. Upgrades preserve it: your
+settings, keys and history live outside the install directory and are never
+deleted by an installer. `default_api`/`OPENROUTER_API_KEY` environment
+variables are honoured for the Default provider.
 
-```text
-config.json
-├── active_provider
-├── providers
-│   ├── default          { api_key(unused), model }
-│   ├── openrouter       { api_key, model }
-│   ├── freemodel_claude { api_key, model }
-│   ├── freemodel_codex  { api_key, model }
-│   ├── aerolink         { api_key, model }
-│   └── ollama           { api_key(unused), model }
-```
+Environment variables: `SEEDCODE_WORKSPACE`, `SEEDCODE_NO_WORKSPACE_PROMPT`,
+`SEEDCODE_NO_TUI`, `SEEDCODE_PLAIN`, `SEEDCODE_PROVIDER`, `SEEDCODE_MODEL`,
+`SEEDCODE_SHELL`, `SEEDCODE_DISABLE_INTERNET`, `SEEDCODE_MAX_RETRIES`,
+`SEEDCODE_DIRNAME`, `SEEDCODE_DEBUG`, `SEEDCODE_DISABLE_DOTENV`,
+`SEEDCODE_DOTENV`, `SEEDCODE_DEFAULT_API_KEY`, `OPENROUTER_API_KEY`.
 
-Switching providers loads that provider's own key and model, and saving one
-provider never overwrites another's. Credentials stay local; environment
-variables take precedence over stored keys. Logs never record API keys or
-message content. `/doctor` checks configuration, connectivity, and provider
-health.
-
-## Platform support
-
-- **Windows:** full experience — desktop control, one-click installer,
-  standalone EXE. Primary platform.
-- **Linux / macOS:** terminal chat, providers, project tools, Agent Mode workspace.
-  Install with the `install.sh` command above — it installs the official
-  Python wheel, so **Python 3.10+ (with pip)** is required. No prebuilt
-  Linux/macOS binary is published in this release.
+---
 
 ## Building from source
 
@@ -751,107 +383,80 @@ health.
 
 ```bash
 python -m pip install build twine
-python -m build          # wheel + sdist, version read from seedcode/__init__.py
+python -m build                     # dist/seedcode_cli-9.2.0-*.whl and *.tar.gz
 python -m twine check dist/*
 ```
 
-### Windows EXE + installer
+### Windows executable + installer
 
 ```bat
 scripts\windows\build.bat
 ```
 
-Stage 0 generates the branding assets (icon, wizard art, exe version
-resource). Stage 0b embeds the default API configuration from a local `.env`
-(git-ignored; skipped when absent — never printed or committed). Stage 1
-builds the self-contained `dist\seedcode.exe` with PyInstaller (icon +
-version resource embedded) and verifies it. Stage 2 compiles the Inno Setup
-installer and verifies it. Stage 3 stages everything into
-`dist\release\<version>\` and writes `SHA256SUMS.txt` with real hashes. Every
-stage fails loudly on a version mismatch, so a stale binary can never ship.
+The pipeline runs the test suite as a release gate, builds the standalone
+`dist\seedcode.exe` with PyInstaller (icon and version resource embedded,
+`--version` verified against the source version), compiles the Inno Setup
+installer, and stages the release directory with real SHA-256 checksums.
+Requirements: Python 3.10+, PyInstaller, Inno Setup 6 or 7.
 
-Details: [`scripts/windows/README.md`](scripts/windows/README.md).
+---
 
-### Release artifacts (v9.1.1)
+## Release artifacts (v9.2.0)
 
-Release: [v9.1.1](https://github.com/Alshahriar-07/seedcode-cli/releases/tag/v9.1.1)
+Release: [v9.2.0](https://github.com/Alshahriar-07/seedcode-cli/releases/tag/v9.2.0)
 
-| Artifact | Purpose |
+| File | What it is |
 | --- | --- |
-| `SeedCode-CLI-Setup-9.1.1.exe` | Windows installer (Inno Setup) |
-| `SeedCode-CLI-9.1.1-windows-x64.exe` | Standalone Windows EXE — downloaded by the Windows IRM installer |
-| `seedcode_cli-9.1.1-py3-none-any.whl` | Python wheel — downloaded by the Linux IRM installer |
-| `seedcode_cli-9.1.1.tar.gz` | Python source distribution |
-| `SHA256SUMS.txt` | SHA256 checksums; verified by both installers |
+| `SeedCode-CLI-Setup-9.2.0.exe` | Windows Setup installer (Inno Setup; uninstaller, Start Menu entry). |
+| `SeedCode-CLI-9.2.0-windows-x64.exe` | Standalone Windows executable — downloaded by the Windows IRM installer. |
+| `seedcode_cli-9.2.0-py3-none-any.whl` | Python wheel — downloaded by the Linux IRM installer. |
+| `seedcode_cli-9.2.0.tar.gz` | Python source distribution. |
+| `seedcode-cli-9.2.0.tgz` | npm package tarball (launcher that downloads the official binary). |
+| `SHA256SUMS.txt` | SHA-256 of every artifact above. |
 
-Built artifacts are collected in `dist/release/9.1.1/` during a release
-build. Publishing (GitHub Release) is a separate step; the remote installers
-read the release named `v9.1.1`.
+Verify a download before using it:
 
-### The remote installers
+```bash
+sha256sum -c SHA256SUMS.txt              # Linux / macOS
+Get-FileHash <file> -Algorithm SHA256    # Windows PowerShell
+```
 
-[`IRM_INSTALL/`](IRM_INSTALL/) is the source of the scripts served at
-`https://seedcode-cli.vercel.app`:
+All release artifacts are staged in `dist/release/9.2.0/` by the build pipeline;
+digests are computed from the final files, never copied from an older release.
 
-| File | Served at |
-| --- | --- |
-| `install.ps1` | `/install.ps1` (Windows) |
-| `install.sh` | `/install.sh` (Linux) |
-| `RELEASE_INFO.txt` | Official installation summary |
+---
 
 ## Troubleshooting
 
-- **`seedcode` is not recognized** — open a *new* terminal after installing;
-  `PATH` changes only apply to fresh sessions. The installer verifies this
-  before it finishes.
-- **"Setup needed" on the header** — the active provider is not usable yet.
-  Run `/provider`. Default needs a built-in credential (release builds have
-  one); OpenRouter/FreeModel/AeroLink need your own key.
-- **Default says the built-in connection is unavailable** — this build has no
-  embedded credential. The Windows EXE and Setup installer carry one; the
-  wheel and sdist deliberately do not. Run `/provider` and choose OpenRouter,
-  or set `OPENROUTER_API_KEY` (or `SEEDCODE_DEFAULT_API_KEY`).
-- **401/403 errors** — your key is invalid or lacks access; `/apikey` to
-  replace it, `/doctor` for diagnostics.
-- **402 errors** — the model needs credits; `/model` and pick a free model
-  (Default ships with `cohere/north-mini-code:free`).
-- **Rate limits (429)** — wait and retry; Seed Code honors the provider's
-  `Retry-After` hint. Consider a different provider.
-- **Desktop actions fail** — check `/permission` (desktop requires the
-  `desktop` level) and `/computer` for engine status.
-- **Reset everything** — delete `~/.seedcode/` (settings, keys, history);
-  `.seedcode/` project memory lives in each project and is separate.
+| Symptom | Fix |
+| --- | --- |
+| `seedcode` not found after install | Open a new terminal (`PATH` applies to new sessions). |
+| "No model selected" | Run `/model` (and `/provider` first if needed). |
+| Ollama errors | Make sure Ollama is installed; Seed Code starts `ollama serve` automatically. `ollama list` shows pulled models. |
+| Provider needs a key | `/apikey` for the active provider, or `/provider` to switch. |
+| A command was blocked | Approve it at the permission prompt, or set `/permission full_system` for path-unrestricted writes. |
+| Diagnostics | `/doctor` reports configuration, connection and provider health. |
+| Corporate proxy / offline | Set `SEEDCODE_DISABLE_INTERNET=1`; cloud providers still need network access. |
+
+Logs live in `~/.seedcode/logs/`.
+
+---
 
 ## Security model
 
-- Credentials stay local and **provider-scoped**. Saving or switching one
-  provider never reads or writes another provider's key slot, so a key cannot
-  leak between Default, OpenRouter, FreeModel, AeroLink and Ollama.
-- The built-in Default credential is resolved per request and is never copied
-  into another provider's stored configuration.
-- Keys are shown masked (`sk-or-••••••••`) or not at all — never in full,
-  never in logs, never in error messages, never in a release artifact.
-- Computer actions pass permission checks, verification, and retry limits.
-- Internet retrieval is keyless, URL-attributed, character-budgeted, and
-  disableable with `SEEDCODE_DISABLE_INTERNET=1`; it never caches retrieved
-  pages to disk.
-- Permission scope grants (Allow Session / Allow All) are in-memory only and are
-  never persisted to `config.json`.
-- The built-in Default credential's state is reported as available / missing /
-  invalid / unavailable — never as a value.
-- `.seedcode/` memory refuses secret-looking fields at write time.
-- The release build consumes the local `.env` only during packaging; the
-  secret never enters source control, logs, manifests, or package metadata.
+- API keys are stored in your user configuration directory, never in the repo,
+  never in shell history, and are always masked in the UI (`sk-or-v1...e031`).
+- The workspace boundary is enforced by the permission manager, not by prompt
+  wording: tools ask before any privileged operation.
+- Release installers verify SHA-256 against the published `SHA256SUMS.txt` and
+  abort on a missing entry or a mismatch; verification is never bypassed.
 
-Review permissions before enabling Agent Mode — especially in unfamiliar
-projects or with sensitive applications.
+---
 
 ## Credits
 
-- **Created by:** Al Shahriar Sowan — <https://alshahriarsayon.vercel.app/>
-- **Studio:** Eagox Studio — <https://eagoxstudio.vercel.app/>
-- **Contact:** seedcode.ai@gmail.com
+Built by **Al Shahriar Sowan** (Eagox Studio).
 
 ## License
 
-Seed Code CLI is licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE) (`PolyForm-Noncommercial-1.0.0`) — free for personal learning and other noncommercial use; commercial use is not permitted. See [`LICENSE`](LICENSE) for the full terms.
+PolyForm Noncommercial License 1.0.0 — see [LICENSE](LICENSE).

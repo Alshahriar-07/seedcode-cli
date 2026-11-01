@@ -333,40 +333,21 @@ def test_cancelled_and_failed_flows_show_their_state() -> None:
         assert ("Task cancelled" if outcome == "cancelled" else "Task failed") in out
 
 
-def test_enabling_workspace_does_not_print_a_duplicate_mode_banner(monkeypatch, tmp_path) -> None:
-    """`/codemode on` activates the Agent Mode workspace capability only.
-
-    The separate tall Code Mode banner is gone: the unified header already
-    carries the mode, and no element may be rendered twice.
-    """
-    from seedcode import codemode_state as cms
+def test_a_removed_command_prints_one_clean_error(monkeypatch, tmp_path) -> None:
+    """v9.2.0 removed the mode commands; one error line, no duplicate banner."""
     from seedcode.commands import CommandContext, dispatch
-    from seedcode.commands import assist as assist_cmd
-    from seedcode.commands import codemode as codemode_cmd
     from seedcode.core.models import AppConfig
     from seedcode.ui import UI
 
-    cms.reset()
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(codemode_cmd, "save_config", lambda config: None)
-    monkeypatch.setattr(assist_cmd, "save_config", lambda config: None)
-    monkeypatch.setattr(assist_cmd, "is_available", lambda: (False, "test"))
-    try:
-        ui = UI(plain=True)
-        ui.console = _console()
-        config = AppConfig()
-        dispatch(CommandContext(ui=ui, config=config, engine=None), "/codemode on")
-        out = ui.console.export_text()
-        assert "Agent Mode ON" in out
-        assert "Workspace ON" in out
-        # No separate Code Mode mode/banner is drawn anywhere.
-        assert "CODE MODE" not in out
-        assert "Code Mode" not in out
-        assert config.agent_mode
-        assert cms.codemode_state().enabled
-    finally:
-        cms.reset()
-
+    ui = UI(plain=True)
+    ui.console = _console()
+    config = AppConfig()
+    dispatch(CommandContext(ui=ui, config=config, engine=None), "/codemode on")
+    out = ui.console.export_text()
+    assert "Unknown command" in out
+    assert "Agent Mode ON" not in out
+    assert "CODE MODE" not in out
+    assert "Code Mode" not in out
 
 def test_header_refits_when_the_terminal_is_resized() -> None:
     """A resize mid-session re-fits the header instead of overflowing it."""
