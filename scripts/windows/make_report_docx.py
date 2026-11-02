@@ -1,4 +1,4 @@
-"""Generate docs/reports/SeedCode-CLI-v9.2.0-Technical-Report.docx."""
+"""Generate docs/reports/SeedCode-CLI-v9.2.1-Technical-Report.docx."""
 from __future__ import annotations
 
 import json
@@ -10,9 +10,9 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Pt, RGBColor
 
 ROOT = Path(__file__).resolve().parents[2]
-SRC = ROOT / "docs" / "reports" / "SeedCode-CLI-v9.2.0-Technical-Report.md"
-OUT = ROOT / "docs" / "reports" / "SeedCode-CLI-v9.2.0-Technical-Report.docx"
-MANIFEST = ROOT / "dist" / "release" / "9.2.0" / "BUILD-MANIFEST.json"
+SRC = ROOT / "docs" / "reports" / "SeedCode-CLI-v9.2.1-Technical-Report.md"
+OUT = ROOT / "docs" / "reports" / "SeedCode-CLI-v9.2.1-Technical-Report.docx"
+MANIFEST = ROOT / "dist" / "release" / "9.2.1" / "BUILD-MANIFEST.json"
 
 
 def _add_runs(paragraph, text: str, *, base_bold: bool = False) -> None:
@@ -69,14 +69,14 @@ def main() -> int:
 
     title = doc.add_paragraph()
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run = title.add_run("Seed Code CLI v9.2.0 — Technical Report")
+    run = title.add_run("Seed Code CLI v9.2.1 — Technical Report")
     run.bold = True
     run.font.size = Pt(20)
     run.font.color.rgb = RGBColor(0x0B, 0x66, 0x23)
 
     subtitle = doc.add_paragraph()
     subtitle.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run = subtitle.add_run("Version 9.2.0 · Tag v9.2.0 · Built 2026-11-02 · Windows 11 x64\n"
+    run = subtitle.add_run("Version 9.2.1 · Tag v9.2.1 · Built 2026-11-02 · Windows 11 x64\n"
                            "github.com/Alshahriar-07/seedcode-cli")
     run.font.size = Pt(10)
     run.font.color.rgb = RGBColor(0x55, 0x55, 0x55)
@@ -89,8 +89,9 @@ def main() -> int:
     heading("1. Project Overview")
     _p(doc, "Seed Code CLI is an autonomous AI coding agent for the terminal. The user types a "
             "task; the agent analyses it, inspects the workspace, builds a plan, executes it through "
-            "real tool calls, verifies each result and reports the outcome honestly. v9.2.0 completes "
-            "the single-agent pivot and adds the model-thinking panel and the right-side task plan panel.")
+            "real tool calls, verifies each result and reports the outcome honestly. v9.2.1 completes "
+            "the promised tool surface (create_file, copy_file, run_tests and the command-inspection "
+            "tools) and shows real cloud reasoning, not only Ollama thinking.")
 
     heading("2. Architecture Overview")
     flow = (
@@ -110,18 +111,19 @@ def main() -> int:
             "to the model; bounded iteration limits; tool failures surfaced as failures; UI driven "
             "only by real orchestrator events.")
 
-    heading("3. Major Bugs Fixed")
-    _table(doc, ["Bug", "Fix"], [
-        ("NameError: name 'active_workspace' is not defined",
-         "Permission manager constructed with the selected workspace."),
-        ("ImportError: AgentEngine entry-point drift",
-         "Import surface consolidated on seedcode.core.agent.AgentEngine."),
-        ("Ollama connected but no thinking visible",
-         "Capability detection via GET /api/show; think flag for capable models; ThinkingDelta emitted, relayed, rendered."),
-        ("Installer rejected the displayed version banner",
-         "Robust semantic-version extraction; regression-tested."),
-        ("False completion reports",
-         "Evidence-based verification: files re-read, exit codes parsed, tests inspected."),
+    heading("3. Major Fixes")
+    _table(doc, ["Gap found in the v9.2.0 audit", "Fix in v9.2.1"], [
+        ("Contract tools create_file, copy_file, run_tests, get_command_output, "
+         "check_exit_code, inspect_process were never registered",
+         "Implemented for real; a model asking for one is no longer told the tool is unknown."),
+        ("list_directory / search_files / search_content names were missing",
+         "Registered as exact aliases sharing the target runner and schema (register_alias)."),
+        ("Command output and exit status were only display text",
+         "Session command registry + ToolResult.exit_code carry the real values."),
+        ("Thinking was Ollama-only",
+         "OpenAI-compatible reasoning / reasoning_content / reasoning_details become ThinkingDelta."),
+        ("Version drift risk across consumers",
+         "9.2.1 synchronised in package, wheel/sdist, npm launcher, installer and docs."),
     ])
 
     heading("4. Agent Orchestration Design")
@@ -132,13 +134,14 @@ def main() -> int:
 
     heading("5. Tool Calling Improvements")
     _table(doc, ["Tool", "Verified behaviour"], [
-        ("run_command", "stdout/stderr/exit code/duration/cwd; PowerShell + POSIX; timeouts"),
-        ("read_file", "encoding-aware reads with line numbers"),
-        ("write_file / edit_file", "create/update with post-write verification"),
-        ("list_dir / make_dir / move / copy / delete / exists", "workspace-boundary validated"),
-        ("search", "code + filename search; caches excluded"),
-        ("research / web_search", "keyless search; query and sources surfaced as real events"),
-        ("inspect_project", "structure, languages, dependencies, entry points"),
+        ("read_file / write_file / edit_file", "real content, read-back verification, unified diff"),
+        ("create_file / copy_file", "new-file creation that refuses to clobber; byte-verified copy"),
+        ("list_dir / list_directory / find_files / search_files", "real directory entries and glob matches"),
+        ("search_text / search_content", "regex content search returning file:line"),
+        ("run_command", "foreground and background; real output and exit code; shell choice"),
+        ("run_tests", "detects pytest / npm / cargo / go; returns the real suite result"),
+        ("get_command_output / check_exit_code / inspect_process", "read the session command registry truthfully"),
+        ("git / web_search / web_fetch", "real subprocess and HTTP tools"),
     ])
     _p(doc, "Parameter validation happens before dispatch; dispatch errors return the real error to the "
             "model. Workspace permissions prevent writes outside the workspace; dangerous actions ask first.")
@@ -192,7 +195,9 @@ def main() -> int:
         ("Passed", tests["passed"]),
         ("Failed", tests["failed"]),
         ("Skipped", tests["skipped"]),
-        ("New regression tests", "40 (thinking stream, task panel, installer version, terminal title)"),
+        ("New regression tests", tests.get("new_regression_tests", 0)),
+        ("Live Ollama tool calling", manifest["ollama_test_status"]["live_tool_calling"]),
+        ("Live Ollama thinking", manifest["ollama_test_status"]["live_thinking"]),
     ])
 
     heading("12. Build Results")

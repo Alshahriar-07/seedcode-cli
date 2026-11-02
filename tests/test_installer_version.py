@@ -1,24 +1,24 @@
-"""Installer version-verification regression tests (v9.2.0).
+"""Installer version-verification regression tests (v9.2.1).
 
 All three installation verifiers must accept the CLI's real output —
-``Seed Code CLI 9.2.0`` — while still rejecting anything that is not the
+``Seed Code CLI 9.2.1`` — while still rejecting anything that is not the
 requested version. The one historical bug this locks down:
 
 * ``setup.iss`` required a literal ``v`` in the output
   (``Pos('v{#MyAppVersion}', Reported) > 0``), so a correctly installed
-  ``seedcode.exe`` reporting ``Seed Code CLI 9.2.0`` FAILED verification with
-  "The installed seedcode.exe did not report version 9.2.0 (it said: 'Seed Code
-  CLI 9.2.0')" — the exact report that shipped in the wild.
+  ``seedcode.exe`` reporting ``Seed Code CLI 9.2.1`` FAILED verification with
+  "The installed seedcode.exe did not report version 9.2.1 (it said: 'Seed Code
+  CLI 9.2.1')" — the exact report that shipped in the wild.
 
 The three verifiers share one contract, implemented per language
 (``version_ok`` in ``install.sh``, ``Test-InstalledVersion`` in
 ``install.ps1``, ``VersionInOutput`` in ``setup.iss``):
 
 * the version must appear at a token boundary — never directly after a digit
-  (``19.2.0`` does not pass for ``9.2.0``), never directly before a digit or a
-  dot (``9.2.01`` / ``9.2.0.1`` do not pass for ``9.2.0``);
-* a lone ``v``/``V`` version marker is accepted (``v9.2.0``); a marker inside a
-  longer word is not (``rev9.2.0`` is refused);
+  (``19.2.1`` does not pass for ``9.2.1``), never directly before a digit or a
+  dot (``9.2.11`` / ``9.2.1.1`` do not pass for ``9.2.1``);
+* a lone ``v``/``V`` version marker is accepted (``v9.2.1``); a marker inside a
+  longer word is not (``rev9.2.1`` is refused);
 * an empty or malformed output is always refused.
 
 The bash and PowerShell matchers are executed here in full; the Inno Pascal
@@ -47,21 +47,21 @@ POWERSHELL = shutil.which("pwsh") or shutil.which("powershell") or shutil.which(
     "powershell.exe"
 )
 
-VERSION = "9.2.0"
+VERSION = "9.2.1"
 
 # (reported output, should the expected version count as verified?)
 BOUNDARY_CASES: list[tuple[str, bool]] = [
-    ("Seed Code CLI 9.2.0", True),  # the CLI's actual --version output
-    ("Seed Code CLI v9.2.0", True),  # v-marker variant
-    ("v9.2.0", True),  # bare version with marker
-    ("Seed Code CLI 9.2.0 (build 123)", True),  # trailing extra text
-    ("9.2.0", True),  # bare version, no marker
-    ("Seed Code CLI 19.2.0", False),  # longer build number
-    ("Seed Code CLI 9.2.01", False),
-    ("Seed Code CLI 9.2.0.1", False),
-    ("SeedCodeCLI9.2.0", False),  # no boundary at all
-    ("rev9.2.0", False),  # v-marker inside a longer word
-    ("9.2.0RC1", True),  # pre-release suffix is still version 9.2.0
+    ("Seed Code CLI 9.2.1", True),  # the CLI's actual --version output
+    ("Seed Code CLI v9.2.1", True),  # v-marker variant
+    ("v9.2.1", True),  # bare version with marker
+    ("Seed Code CLI 9.2.1 (build 123)", True),  # trailing extra text
+    ("9.2.1", True),  # bare version, no marker
+    ("Seed Code CLI 19.2.1", False),  # longer build number
+    ("Seed Code CLI 9.2.11", False),
+    ("Seed Code CLI 9.2.1.1", False),
+    ("SeedCodeCLI9.2.1", False),  # no boundary at all
+    ("rev9.2.1", False),  # v-marker inside a longer word
+    ("9.2.1RC1", True),  # pre-release suffix is still version 9.2.1
     ("", False),  # missing output
     ("(no output)", False),
     ("unrelated error text", False),
@@ -279,7 +279,7 @@ def test_setup_iss_version_matcher_contract() -> None:
 
     Historically the verification was ``Pos('v{#MyAppVersion}', Reported) > 0``
     — the exact bug that rejected a correctly installed binary that reported
-    ``Seed Code CLI 9.2.0``.
+    ``Seed Code CLI 9.2.1``.
     """
     text = ISS_INSTALLER.read_text(encoding="utf-8")
     assert "Pos('v{#MyAppVersion}'" not in text, (

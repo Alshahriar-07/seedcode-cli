@@ -4,6 +4,44 @@ All notable changes to Seed Code CLI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [9.2.1] — 2026-11-02
+
+**The tool surface the agent contract promises now exists and really runs.**
+
+v9.2.0's execution loop already worked (native + text tool calling, real file
+and shell tools, model-exposed thinking, verified TODO graph), but several tool
+names the agent contract requires were absent, so a model asking for
+`run_tests`, `copy_file` or `get_command_output` was told the tool did not
+exist. v9.2.1 closes that gap without duplicating an implementation:
+
+- **New real tools** — `create_file` (creates, refuses to clobber an existing
+  file), `copy_file` (byte-verified copy), and the terminal suite
+  `run_tests` (detects pytest / npm / cargo / go and returns the real suite
+  result), `get_command_output`, `check_exit_code` and `inspect_process`.
+- **Command registry** — every command a session runs is recorded with its
+  actual output and exit status; `run_command` gains `background: true` for
+  long-running processes, tracked in the same registry so output and exit code
+  stay truthful.
+- **Contract aliases** — `list_directory`, `search_files` and `search_content`
+  are exact aliases of `list_dir`, `find_files` and `search_text` (the runner
+  and schema are reused, so an alias cannot drift).
+- **Cloud reasoning display** — OpenAI-compatible providers now relay the
+  provider's own `reasoning` / `reasoning_content` / `reasoning_details`
+  deltas as `ThinkingDelta`, so the thinking panel shows real model reasoning
+  on OpenRouter-compatible backends, not only Ollama. A model with no
+  reasoning channel still produces none — nothing is invented.
+- **Exit codes are structured** — `ToolResult.exit_code` carries the real
+  process status from `run_command`/`run_tests` instead of being parsed out of
+  display text.
+- **Desktop shortcuts on every Windows channel.** `install.ps1` installs the
+  exe but created no shortcut, and `pip install` has no post-install hook, so
+  neither left a desktop icon. The IRM installer now creates Desktop + Start
+  Menu shortcuts (with `-NoShortcuts` to opt out), the Setup installer's
+  Desktop shortcut is checked by default, and a pip install creates them on
+  the first interactive launch. `seedcode --install-shortcuts` recreates them
+  at any time.
+- **Version 9.2.1** across package metadata, npm launcher, installer and docs.
+
 ## [9.2.0] — 2026-11-01
 
 The dedicated coding-agent release: one unified agent, a clean and honest live

@@ -123,6 +123,71 @@ def _write_file(perm: "PermissionManager", args: dict[str, Any]) -> ToolResult:
 
 
 @register(
+    "create_file",
+    "Create a NEW file in the workspace and write the given content into it. "
+    "Fails if the file already exists (use edit_file or write_file for an "
+    "existing file).",
+    {"path": "file path", "content": "the new file's full content"},
+    mutates=True,
+)
+def _create_file(perm: "PermissionManager", args: dict[str, Any]) -> ToolResult:
+    path = perm.resolve(args["path"])
+    perm.check_write(path)
+    if path.exists():
+        return ToolResult(
+            False,
+            f"{path} already exists. Use edit_file to change it, or write_file "
+            "to overwrite it deliberately.",
+        )
+    return _write_file(perm, args)
+
+
+@register(
+    "copy_file",
+    "Copy a real file inside the workspace; the copy is verified against the "
+    "source before success is reported.",
+    {
+        "source": "existing file path",
+        "destination": "new file path",
+        "overwrite": "(optional) true to replace an existing destination",
+    },
+    mutates=True,
+    types={"overwrite": "boolean"},
+)
+def _copy_file(perm: "PermissionManager", args: dict[str, Any]) -> ToolResult:
+    source = perm.resolve(args["source"])
+    destination = perm.resolve(args["destination"])
+    perm.check_read(source)
+    perm.check_write(destination)
+    if not source.is_file():
+        return ToolResult(False, f"Source file not found: {source}")
+    overwrite = args.get("overwrite")
+    if isinstance(overwrite, str):
+        overwrite = overwrite.strip().lower() in ("1", "true", "yes", "on")
+    if destination.exists() and not overwrite:
+        return ToolResult(
+            False,
+            f"Destination already exists: {destination}. Pass overwrite=true to "
+            "replace it.",
+        )
+    try:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
+        same = source.read_bytes() == destination.read_bytes()
+    except OSError as exc:
+        return ToolResult(False, f"Could not copy {source} to {destination}: {exc}")
+    if not same:
+        return ToolResult(
+            False, f"Verification failed: {destination} does not match {source}."
+        )
+    return ToolResult(
+        True,
+        f"Copied {source} to {destination} "
+        f"({destination.stat().st_size} bytes, verified).",
+    )
+
+
+@register(
     "delete_file",
     "Delete a single file (never a directory).",
     {"path": "file path"},

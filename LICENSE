@@ -1,38 +1,35 @@
-﻿  Product           Seed Code CLI
-  Version           9.2.0
+  Product           Seed Code CLI
+  Version           9.2.1
   Author            Al Shahriar Sowan
   Studio            Eagox Studio
   License           PolyForm Noncommercial License 1.0.0
   Terms             https://polyformproject.org/licenses/noncommercial/1.0.0
 
-────────────────────────────────────────────────────────────────────────────
   COPYRIGHT NOTICE
-────────────────────────────────────────────────────────────────────────────
 
-  Copyright © 2026 Al Shahriar Sowan.
+  Copyright (c) 2026 Al Shahriar Sowan.
 
-  Required Notice: Copyright © 2026 Al Shahriar Sowan.
+  Required Notice: Copyright (c) 2026 Al Shahriar Sowan.
 
-────────────────────────────────────────────────────────────────────────────
-  QUICK SUMMARY   ·   informational only — the terms below are the law
-────────────────────────────────────────────────────────────────────────────
+  QUICK SUMMARY - informational only; the terms below are the law
 
-  ✓  You MAY use Seed Code for personal, educational, research,
-     hobby and other noncommercial purposes.
-  ✓  You MAY modify the source and build new works from it.
-  ✓  You MAY share copies with others, as long as they also receive
-     these terms and the Required Notice above.
+  You MAY use Seed Code for personal, educational, research,
+  hobby and other noncommercial purposes.
 
-  ✗  You MAY NOT use Seed Code for commercial purposes.
-  ✗  You MAY NOT remove these license terms from any copy you share.
+  You MAY modify the source and build new works from it.
+
+  You MAY share copies with others, as long as they also receive
+  these terms and the Required Notice above.
+
+  You MAY NOT use Seed Code for commercial purposes.
+
+  You MAY NOT remove these license terms from any copy you share.
 
   Need a commercial license or have questions about these terms?
-  Contact the author: Al Shahriar Sowan · https://github.com/Alshahriar-07
+  Contact the author: Al Shahriar Sowan - https://github.com/Alshahriar-07
 
-────────────────────────────────────────────────────────────────────────────
   PolyForm Noncommercial License 1.0.0
   https://polyformproject.org/licenses/noncommercial/1.0.0
-────────────────────────────────────────────────────────────────────────────
 
   Acceptance
 
@@ -148,9 +145,7 @@
   Use means anything you do with the software requiring one of your
   licenses.
 
-────────────────────────────────────────────────────────────────────────────
   END OF LICENSE
-────────────────────────────────────────────────────────────────────────────
 
-  Copyright © 2026 Al Shahriar Sowan · Eagox Studio
-  Seed Code CLI v9.2.0 — https://github.com/Alshahriar-07/seedcode-cli
+  Copyright (c) 2026 Al Shahriar Sowan - Eagox Studio
+  Seed Code CLI v9.2.1 - https://github.com/Alshahriar-07/seedcode-cli

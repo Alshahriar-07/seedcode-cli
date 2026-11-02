@@ -48,6 +48,10 @@ class ToolResult:
     output: str
     #: Unified diff of the real file change (empty for non-mutating tools).
     diff: str = ""
+    #: The real process exit status, when the tool ran a command (v9.2.1).
+    #: None for tools that do not execute a process, or whose process never
+    #: exited (timeout/cancel) — never guessed.
+    exit_code: int | None = None
 
     def __post_init__(self) -> None:
         # v7.1.0: a tool's output may contain a lone surrogate (a command that
@@ -132,6 +136,34 @@ def register(
         return runner
 
     return wrap
+
+
+def register_alias(
+    name: str,
+    description: str,
+    target: str,
+    *,
+    group: str | None = None,
+) -> None:
+    """Register ``name`` as an exact alias of an already-registered tool.
+
+    The alias reuses the target's runner, arguments, JSON-schema types and
+    mutation flag, so it can never drift from the implementation it names.
+    Used for the equivalent tool names the agent contract promises (e.g.
+    ``list_directory`` for ``list_dir``); the description states the mapping
+    so the model knows both names do the same real work.
+    """
+    tool = TOOL_REGISTRY.get(target)
+    if tool is None:  # pragma: no cover - registration-order bug
+        raise KeyError(f"Cannot alias '{name}': unknown tool '{target}'.")
+    register(
+        name,
+        f"{description} (same tool as {target})",
+        dict(tool.args),
+        mutates=tool.mutates,
+        group=group or tool.group,
+        types=dict(tool.types),
+    )(tool.runner)
 
 
 def get_tool(name: str) -> Tool:

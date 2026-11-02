@@ -28,6 +28,7 @@ from .base import (
     ProviderError,
     StreamEvent,
     TextDelta,
+    ThinkingDelta,
     ToolCallEvent,
     ToolSpec,
     ValidationResult,
@@ -381,6 +382,14 @@ def _iter_tool_stream(stream: Any) -> Iterator[StreamEvent]:
         if not choices:
             continue
         delta = choices[0].delta
+        # Model-exposed reasoning (v9.2.1): OpenRouter-compatible backends
+        # stream a reasoning channel as ``delta.reasoning`` (and some
+        # OpenAI-compatible servers use ``reasoning_content``). It is its own
+        # event kind, never answer text; a model with no such channel simply
+        # never produces one, so nothing is fabricated.
+        reasoning = _reasoning_text(delta)
+        if reasoning:
+            yield ThinkingDelta(reasoning)
         if getattr(delta, "content", None):
             yield TextDelta(delta.content)
         for fragment in getattr(delta, "tool_calls", None) or []:
@@ -408,6 +417,29 @@ def _iter_tool_stream(stream: Any) -> Iterator[StreamEvent]:
                 id=slot["id"], name=slot["name"], arguments={},
                 error=f"Tool call arguments were not valid JSON: {exc}",
             )
+
+
+def _reasoning_text(delta: Any) -> str:
+    """The reasoning fragment a stream delta exposes, if any (v9.2.1).
+
+    Only fields the provider actually sends are read: ``reasoning``
+    (OpenRouter), ``reasoning_content`` (DeepSeek-style compatible servers),
+    and the ``reasoning_details`` list's ``text`` entries. Anything else —
+    including a plain model with no reasoning channel — yields "".
+    """
+    for attr in ("reasoning", "reasoning_content"):
+        value = getattr(delta, attr, None)
+        if isinstance(value, str) and value:
+            return value
+    details = getattr(delta, "reasoning_details", None)
+    if isinstance(details, list):
+        parts = [
+            str(entry.get("text") or "")
+            for entry in details
+            if isinstance(entry, dict)
+        ]
+        return "".join(parts)
+    return ""
 
 
 def _friendly_api_error(exc: Any, model: str, label: str = "OpenRouter") -> ProviderError:

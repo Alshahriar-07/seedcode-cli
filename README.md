@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![Release](https://img.shields.io/badge/release-v9.2.0-0b6623?style=flat-square)
+![Release](https://img.shields.io/badge/release-v9.2.1-0b6623?style=flat-square)
 ![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey?style=flat-square)
 ![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-informational?style=flat-square)
@@ -32,7 +32,7 @@ reads your project, plans the work, writes and edits real files, runs real
 commands, reads their output, searches the web for documentation, fixes what
 fails, and reports honestly on what it actually did.
 
-`seedcode --version` → `Seed Code CLI 9.2.0`
+`seedcode --version` → `Seed Code CLI 9.2.1`
 
 ---
 
@@ -42,6 +42,15 @@ fails, and reports honestly on what it actually did.
   one agent turn. The engine decides from the request itself (conversation,
   research, coding) which tools it needs, so a question does not read your
   project and a coding task does not fetch the web unless it must.
+- **Real tools, not descriptions.** The agent acts through a registry of 27
+  tools with strict schemas: `read_file`, `write_file`, `create_file`,
+  `edit_file`, `append_file`, `insert_in_file`, `delete_file`, `rename_file`,
+  `move_file`, `copy_file`, `list_dir`/`list_directory`, `create_directory`,
+  `delete_directory`, `project_index`, `find_files`/`search_files`,
+  `search_text`/`search_content`, `run_command` (foreground or background),
+  `run_tests`, `get_command_output`, `check_exit_code`, `inspect_process`,
+  `git`, `web_search` and `web_fetch`. Every call performs the real operation
+  and its real result is returned to the model.
 - **A live, honest execution view.** While the agent works you see the actual
   operation and the actual tool results — never a fabricated progress bar:
 
@@ -135,24 +144,26 @@ irm https://seedcode-cli.vercel.app/install.ps1 | iex
 ```
 
 Installs for the current user (no administrator rights, no Python) into
-`%LOCALAPPDATA%\Programs\SeedCode`, adds `seedcode` to your user `PATH`, and
+`%LOCALAPPDATA%\Programs\SeedCode`, adds `seedcode` to your user `PATH`,
+creates Desktop and Start Menu shortcuts (`seedcode --install-shortcuts`
+recreates them at any time; `-NoShortcuts` skips them), and
 verifies the installed binary reports exactly the requested version. It
-downloads the official `SeedCode-CLI-9.2.0-windows-x64.exe` and the release's
+downloads the official `SeedCode-CLI-9.2.1-windows-x64.exe` and the release's
 `SHA256SUMS.txt`, and **refuses to install** if the checksum entry is missing,
 the checksum file is unreachable, or the digest does not match.
 
 ### Windows — Setup installer
 
-Download `SeedCode-CLI-Setup-9.2.0.exe` from the
-[Releases page](https://github.com/Alshahriar-07/seedcode-cli/releases/tag/v9.2.0)
+Download `SeedCode-CLI-Setup-9.2.1.exe` from the
+[Releases page](https://github.com/Alshahriar-07/seedcode-cli/releases/tag/v9.2.1)
 and run it. The wizard installs Seed Code, adds it to `PATH`, creates a Start
-Menu shortcut, verifies that the installed `seedcode.exe` reports the
-installer's own version, and ships an uninstaller that never deletes your
-project data silently.
+Menu shortcut, creates a Desktop shortcut (checked by default), verifies that
+the installed `seedcode.exe` reports the installer's own version, and ships an
+uninstaller that never deletes your project data silently.
 
 ### Windows — portable executable
 
-Download `SeedCode-CLI-9.2.0-windows-x64.exe` and run it directly. It is fully
+Download `SeedCode-CLI-9.2.1-windows-x64.exe` and run it directly. It is fully
 self-contained (no Python, no installation, no `PATH` changes).
 
 ### Linux / macOS — remote installer
@@ -178,7 +189,7 @@ seedcode
 After installing by any route:
 
 ```bash
-seedcode --version    # -> Seed Code CLI 9.2.0
+seedcode --version    # -> Seed Code CLI 9.2.1
 ```
 
 > **`seedcode` not recognized?** Open a *new* terminal. `PATH` changes only
@@ -215,7 +226,7 @@ keeps the launch directory.
 You then land in the persistent interface:
 
 ```text
-Seed Code CLI v9.2.0 · Ollama · qwen3:4b · Agent
+Seed Code CLI v9.2.1 · Ollama · qwen3:4b · Agent
 ● Ready · Workspace D:\Projects\demo · Context 16,384 tokens
 
 You > read README.md
@@ -420,7 +431,7 @@ Environment variables: `SEEDCODE_WORKSPACE`, `SEEDCODE_NO_WORKSPACE_PROMPT`,
 
 ```bash
 python -m pip install build twine
-python -m build                     # dist/seedcode_cli-9.2.0-*.whl and *.tar.gz
+python -m build                     # dist/seedcode_cli-9.2.1-*.whl and *.tar.gz
 python -m twine check dist/*
 ```
 
@@ -438,17 +449,17 @@ Requirements: Python 3.10+, PyInstaller, Inno Setup 6 or 7.
 
 ---
 
-## Release artifacts (v9.2.0)
+## Release artifacts (v9.2.1)
 
-Release: [v9.2.0](https://github.com/Alshahriar-07/seedcode-cli/releases/tag/v9.2.0)
+Release: [v9.2.1](https://github.com/Alshahriar-07/seedcode-cli/releases/tag/v9.2.1)
 
 | File | What it is |
 | --- | --- |
-| `SeedCode-CLI-Setup-9.2.0.exe` | Windows Setup installer (Inno Setup; uninstaller, Start Menu entry). |
-| `SeedCode-CLI-9.2.0-windows-x64.exe` | Standalone Windows executable — downloaded by the Windows IRM installer. |
-| `seedcode_cli-9.2.0-py3-none-any.whl` | Python wheel — downloaded by the Linux IRM installer. |
-| `seedcode_cli-9.2.0.tar.gz` | Python source distribution. |
-| `seedcode-cli-9.2.0.tgz` | npm package tarball (launcher that downloads the official binary). |
+| `SeedCode-CLI-Setup-9.2.1.exe` | Windows Setup installer (Inno Setup; uninstaller, Start Menu entry). |
+| `SeedCode-CLI-9.2.1-windows-x64.exe` | Standalone Windows executable — downloaded by the Windows IRM installer. |
+| `seedcode_cli-9.2.1-py3-none-any.whl` | Python wheel — downloaded by the Linux IRM installer. |
+| `seedcode_cli-9.2.1.tar.gz` | Python source distribution. |
+| `seedcode-cli-9.2.1.tgz` | npm package tarball (launcher that downloads the official binary). |
 | `SHA256SUMS.txt` | SHA-256 of every artifact above. |
 
 Verify a download before using it:
@@ -458,7 +469,7 @@ sha256sum -c SHA256SUMS.txt              # Linux / macOS
 Get-FileHash <file> -Algorithm SHA256    # Windows PowerShell
 ```
 
-All release artifacts are staged in `dist/release/9.2.0/` by the build pipeline;
+All release artifacts are staged in `dist/release/9.2.1/` by the build pipeline;
 digests are computed from the final files, never copied from an older release.
 
 ---

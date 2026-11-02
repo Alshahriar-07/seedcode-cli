@@ -22,7 +22,7 @@ nothing here is shared with the CLI and no terminal surface imports this
 module. Everything is deterministic: same inputs, byte-identical outputs.
 
 Usage:
-    python build_assets.py --version 9.2.0
+    python build_assets.py --version 9.2.1
     python build_assets.py --verify-exe ..\\..\\dist\\seedcode.exe
 """
 

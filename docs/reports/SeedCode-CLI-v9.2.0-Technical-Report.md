@@ -1,5 +1,9 @@
 # Seed Code CLI v9.2.0 — Technical Report
 
+> **Status: historical.** This report documents the v9.2.0 release and is kept
+> unchanged as a record. The current release is v9.2.1 — see
+> [`SeedCode-CLI-v9.2.1-Technical-Report.md`](SeedCode-CLI-v9.2.1-Technical-Report.md).
+
 **Version:** 9.2.0 · **Tag:** `v9.2.0` · **Built:** 2026-11-02 · **Platform:** Windows 11 x64
 **Repository:** https://github.com/Alshahriar-07/seedcode-cli
 

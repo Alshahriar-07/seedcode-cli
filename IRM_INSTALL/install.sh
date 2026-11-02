@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Seed Code CLI v9.2.0 - official remote installer (Linux / macOS / WSL).
+# Seed Code CLI v9.2.1 - official remote installer (Linux / macOS / WSL).
 #
 # Installs Seed Code CLI for the CURRENT USER. No administrator rights and no
 # cloned repository are required: the official release artifact is downloaded
@@ -18,11 +18,11 @@
 #
 # Or, to pass options, download-then-run:
 #
-#   bash install.sh --version 9.2.0
+#   bash install.sh --version 9.2.1
 #   bash install.sh --bin-dir ~/.local/bin
 #
 # Options:
-#   --version V   Release version to install   (default: 9.2.0)
+#   --version V   Release version to install   (default: 9.2.1)
 #   --bin-dir D   Where the seedcode binary should live (default: ~/.local/bin)
 #   --force       Reinstall even if this version is already present
 #   --plain       Disable the ANSI/Unicode UI
@@ -39,7 +39,7 @@ umask 022
 
 # --- constants ---------------------------------------------------------------
 REPO="Alshahriar-07/seedcode-cli"
-DEFAULT_VERSION="9.2.0"
+DEFAULT_VERSION="9.2.1"
 USER_AGENT="seedcode-cli-installer/${DEFAULT_VERSION}"
 
 # The release artifact names are the release contract shared with
@@ -199,10 +199,10 @@ sha256_of() {
 # version_ok <reported-output> <version> -> 0 when the reported output carries
 # the version as a whole token. The historical check was a plain substring
 # match (`*"$VERSION"*`), which a wrongly-numbered binary defeats: "Seed Code
-# CLI 19.2.0" contains "9.2.0". This matcher requires the version at a token
-# boundary — never directly after a digit ('19.2.0' != '9.2.0'), never directly
-# before a digit or a dot ('9.2.0' != '9.2.01' / '9.2.0.1'), with only a
-# single-occurrence v/V version marker ('v9.2.0' is accepted; 'rev9.2.0' is
+# CLI 19.2.1" contains "9.2.1". This matcher requires the version at a token
+# boundary — never directly after a digit ('19.2.1' != '9.2.1'), never directly
+# before a digit or a dot ('9.2.1' != '9.2.11' / '9.2.1.1'), with only a
+# single-occurrence v/V version marker ('v9.2.1' is accepted; 'rev9.2.1' is
 # not). The same rules are implemented in install.ps1 and setup.iss.
 version_ok() {
     awk -v want="${2:-}" '

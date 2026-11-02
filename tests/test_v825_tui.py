@@ -89,7 +89,7 @@ def _configured() -> AppConfig:
 
 # --- the version --------------------------------------------------------------
 def test_header_reports_the_release_version() -> None:
-    assert __version__ == "9.2.0"
+    assert __version__ == "9.2.1"
     out = header_text(AppState(provider="OpenRouter", model="m", mode="Chat"), 80)
     assert f"v{__version__}" in out
 

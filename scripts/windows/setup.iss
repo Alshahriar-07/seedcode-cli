@@ -9,8 +9,8 @@
 ;    * modern branded wizard (Seed Code icon, wizard art, license page)
 ;    * no Python required, detected, or downloaded on the user's PC
 ;    * installs into Program Files, adds the folder to the system PATH
-;    * Start Menu shortcut always, Desktop shortcut optional - all with the
-;      Seed Code icon (never the default Python icon)
+;    * Start Menu shortcut always, Desktop shortcut by DEFAULT (still
+;      deselectable) - all with the Seed Code icon (never the Python icon)
 ;    * verifies TWICE before claiming success: the installed exe reports
 ;      exactly this installer's version, and `seedcode` resolves through
 ;      PATH the way a NEW terminal will see it; failure aborts loudly
@@ -29,7 +29,7 @@
 #ifdef AppVersionFromBuild
   #define MyAppVersion AppVersionFromBuild
 #else
-  #define MyAppVersion "9.2.0"
+  #define MyAppVersion "9.2.1"
 #endif
 ; Refuse to compile without the build outputs - packaging nothing (or a
 ; leftover) must fail loudly, not "succeed".
@@ -94,8 +94,10 @@ LicenseFile=..\..\LICENSE
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
+; v9.2.1: checked by default. The installer must leave a desktop icon behind
+; without the user having to find an unchecked "additional icons" task.
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; \
-    GroupDescription: "Additional icons:"; Flags: unchecked
+    GroupDescription: "Additional icons:"
 
 [Files]
 ; The self-contained CLI produced by PyInstaller - all Python dependencies
@@ -195,14 +197,14 @@ end;
 //      terminal will see it (the fresh {app} entry is appended for the probe
 //      because this process still holds the pre-install environment).
 // ---------------------------------------------------------------------------
-// Version boundary matching (v9.2.0)
+// Version boundary matching (v9.2.1)
 // ---------------------------------------------------------------------------
-// The CLI reports "Seed Code CLI 9.2.0" — no 'v' prefix. Matching the version
-// as a whole token accepts that output, still accepts "Seed Code CLI v9.2.0",
-// and rejects a longer build number: '19.2.0' does not pass for '9.2.0'
-// (version preceded by a digit) and '9.2.0' does not pass for '9.2.01' /
-// '9.2.0.1' (version followed by a digit or a dot). The optional v/V version
-// marker must stand alone, not inside a longer word ("rev9.2.0" is refused).
+// The CLI reports "Seed Code CLI 9.2.1" — no 'v' prefix. Matching the version
+// as a whole token accepts that output, still accepts "Seed Code CLI v9.2.1",
+// and rejects a longer build number: '19.2.1' does not pass for '9.2.1'
+// (version preceded by a digit) and '9.2.1' does not pass for '9.2.11' /
+// '9.2.1.1' (version followed by a digit or a dot). The optional v/V version
+// marker must stand alone, not inside a longer word ("rev9.2.1" is refused).
 // The same rules are implemented in install.ps1 (Test-InstalledVersion) and
 // install.sh (version_ok).
 function VersionInOutput(const Reported, Version: string): Boolean;
@@ -220,7 +222,7 @@ begin
     if Copy(Reported, I, L) <> Version then
       continue;
     // Boundary BEFORE the version: a separator, the start of the text, or a
-    // lone v/V marker. A digit ('19.2.0') or a dot ('...9.2.0') never is.
+    // lone v/V marker. A digit ('19.2.1') or a dot ('...9.2.1') never is.
     if I > 1 then
     begin
       Before := Reported[I - 1];
@@ -241,7 +243,7 @@ begin
       end;
     end;
     // Boundary AFTER the version: end of text or a non-digit, non-dot char
-    // ('9.2.0' is not '9.2.01' nor '9.2.0.1').
+    // ('9.2.1' is not '9.2.11' nor '9.2.1.1').
     After := ' ';
     if I + L <= N then
       After := Reported[I + L];

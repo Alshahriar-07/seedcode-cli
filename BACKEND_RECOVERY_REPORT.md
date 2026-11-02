@@ -1,5 +1,9 @@
 # Seed Code CLI v9.2.0 — Backend Recovery Report
 
+> **Status: historical.** This document records the v9.2.0 backend repair and is
+> kept unchanged as evidence of that release. The current release is v9.2.1 —
+> see [`docs/reports/SeedCode-CLI-v9.2.1-Technical-Report.md`](docs/reports/SeedCode-CLI-v9.2.1-Technical-Report.md).
+
 Date: 2026-11-01
 Scope: backend repair/stabilization of the existing codebase. No new UI features were added.
 

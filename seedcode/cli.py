@@ -53,9 +53,10 @@ _HELP = """\
 Seed Code - a terminal-based AI coding assistant. Plant ideas. Grow code.
 
 Usage:
-  seedcode              Start the interactive app (chat + menu)
-  seedcode --version    Print the version and exit
-  seedcode --help       Show this help and exit
+  seedcode                     Start the interactive app (chat + menu)
+  seedcode --version           Print the version and exit
+  seedcode --help              Show this help and exit
+  seedcode --install-shortcuts Create Desktop + Start Menu shortcuts (Windows)
 
 Inside the app, type /help for commands: /provider, /model, /agent,
 /permission, /settings, /doctor, and more.
@@ -78,6 +79,27 @@ def main() -> None:
     if len(sys.argv) > 1 and sys.argv[1] in ("--help", "-h"):
         print(_HELP)
         return
+    if len(sys.argv) > 1 and sys.argv[1] == "--install-shortcuts":
+        # v9.2.1: pip installs have no post-install hook, and the IRM installer
+        # is a bare exe copy — this is the explicit way to (re)create the
+        # Desktop / Start Menu shortcuts, on any Windows install channel.
+        from .utils.shortcuts import ensure_shortcuts, shortcuts_supported
+
+        if not shortcuts_supported():
+            print("Desktop shortcuts are only supported on Windows.")
+            return
+        created = ensure_shortcuts(force=True)
+        if created:
+            for path in created:
+                print(f"Created shortcut: {path}")
+            return
+        # Deliberately NOT sys.exit: cli.py owns exactly one exit path (the
+        # fatal-error handler below), and that invariant is enforced by the
+        # task-flow tests. A failed shortcut is reported, never fatal.
+        print(
+            "Could not create the shortcuts. Check that PowerShell is available, "
+            "then retry: seedcode --install-shortcuts"
+        )
 
     _prepare_console()
 
@@ -99,6 +121,14 @@ def main() -> None:
     # --version/--help above return before this, so installers that parse
     # output are never touched.
     set_terminal_title(seedcode_cli_title(__version__))
+
+    # v9.2.1: a pip install never runs a post-install step, so the Desktop and
+    # Start Menu shortcuts are created once on the first interactive Windows
+    # launch (marker-guarded, no-op elsewhere, never fatal).
+    from .utils.shortcuts import first_run_shortcuts
+
+    for shortcut in first_run_shortcuts():
+        log.info("created shortcut: %s", shortcut)
     try:
         # v9.1.0: pick the project workspace explicitly instead of silently
         # treating the launch directory as the project. Non-interactive hosts

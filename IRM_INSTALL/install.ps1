@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Seed Code CLI v9.2.0 - official Windows remote installer.
+    Seed Code CLI v9.2.1 - official Windows remote installer.
 
 .DESCRIPTION
     Installs Seed Code CLI for the CURRENT USER. No administrator rights, no
@@ -31,16 +31,20 @@
 
     Or, to pass options, download-then-run:
 
-        & ([scriptblock]::Create((irm https://seedcode-cli.vercel.app/install.ps1))) -Version 9.2.0
+        & ([scriptblock]::Create((irm https://seedcode-cli.vercel.app/install.ps1))) -Version 9.2.1
 
 .PARAMETER Version
-    Release version to install. Defaults to 9.2.0 (the current stable release).
+    Release version to install. Defaults to 9.2.1 (the current stable release).
 
 .PARAMETER InstallDir
     Install directory. Defaults to %LOCALAPPDATA%\Programs\SeedCode.
 
 .PARAMETER NoPathUpdate
     Install without modifying PATH. Use `seedcode` via the full path instead.
+
+.PARAMETER NoShortcuts
+    Do not create the Desktop and Start Menu shortcuts. They are created by
+    default (they were missing in earlier releases).
 
 .PARAMETER Force
     Reinstall even when the requested version is already installed.
@@ -59,9 +63,10 @@
 #>
 [CmdletBinding()]
 param(
-    [string] $Version = "9.2.0",
+    [string] $Version = "9.2.1",
     [string] $InstallDir = "",
     [switch] $NoPathUpdate,
+    [switch] $NoShortcuts,
     [switch] $Force,
     [switch] $Plain
 )
@@ -302,8 +307,8 @@ function Test-InstalledVersion([string] $ExePath, [string] $Expected) {
         return $false
     }
     if (-not $reported) { return $false }
-    # Boundary-checked match, not a substring search: '19.2.0' must not pass
-    # for '9.2.0', '9.2.01' must not pass for '9.2.0', and the optional
+    # Boundary-checked match, not a substring search: '19.2.1' must not pass
+    # for '9.2.1', '9.2.11' must not pass for '9.2.1', and the optional
     # v/V version marker must be a single marker, not part of a longer word.
     # The same rules are implemented in install.sh (version_ok) and
     # setup.iss (VersionInOutput).
@@ -330,6 +335,54 @@ function Add-ToUserPath([string] $Directory) {
     Write-Ok "PATH configured: $Directory (new terminals)"
 }
 
+function New-Shortcuts([string] $TargetExe) {
+    # Real .lnk files through the Windows Script Host COM object: one on the
+    # Desktop and one in the Start Menu Programs folder. The exe's own embedded
+    # icon is used, so the shortcut never shows a generic icon.
+    $made = @()
+    try {
+        $shell = New-Object -ComObject WScript.Shell
+    } catch {
+        Write-Ui "  ! Could not start the Windows shortcut engine: $($_.Exception.Message)" "Yellow"
+        return $made
+    }
+    $desktop = ""
+    $programs = ""
+    try { $desktop = [Environment]::GetFolderPath("Desktop") } catch { }
+    try { $programs = [Environment]::GetFolderPath("Programs") } catch { }
+    foreach ($dir in @($desktop, $programs)) {
+        if (-not $dir) { continue }
+        try {
+            if (-not (Test-Path -LiteralPath $dir)) { continue }
+            $linkPath = Join-Path $dir "Seed Code.lnk"
+            $shortcut = $shell.CreateShortcut($linkPath)
+            $shortcut.TargetPath = $TargetExe
+            $shortcut.WorkingDirectory = (Split-Path -Parent $TargetExe)
+            $shortcut.Description = "Seed Code CLI"
+            $shortcut.IconLocation = "$TargetExe,0"
+            $shortcut.Save()
+            if (Test-Path -LiteralPath $linkPath) { $made += $linkPath }
+        } catch {
+            Write-Ui "  ! Could not create a shortcut in $dir`n      $($_.Exception.Message)" "Yellow"
+        }
+    }
+    try { [Runtime.InteropServices.Marshal]::ReleaseComObject($shell) | Out-Null } catch { }
+    return $made
+}
+
+function Install-Shortcuts([string] $TargetExe) {
+    if ($NoShortcuts) {
+        Write-Note "Shortcuts skipped (-NoShortcuts)."
+        return
+    }
+    $made = @(New-Shortcuts $TargetExe)
+    if ($made.Count -gt 0) {
+        foreach ($path in $made) { Write-Ok "Shortcut created: $path" }
+    } else {
+        Write-Ui "  ! No shortcut could be created. Run: seedcode --install-shortcuts" "Yellow"
+    }
+}
+
 # --- main --------------------------------------------------------------------
 $Arch        = Get-Arch
 $AssetName   = "SeedCode-CLI-$Version-windows-$Arch.exe"
@@ -354,6 +407,9 @@ if ($already -and -not $Force) {
     Write-Section "$($Sym.Tick) Already installed"
     Write-Ok "Seed Code CLI $Version is already installed at $TargetExe"
     Write-Ui ""
+    # The binary is already current, but a missing desktop icon is exactly the
+    # reported upgrade symptom - restore the shortcuts before exiting.
+    Install-Shortcuts $TargetExe
     Write-Ui "  $RuleText" "DarkGray"
     Write-Ui "  $($Sym.Tick) Nothing to do" "Green"
     Write-Ui ""
@@ -413,6 +469,9 @@ try {
 }
 
 if (-not $NoPathUpdate) { Add-ToUserPath $InstallDir }
+
+Write-Section "Shortcuts"
+Install-Shortcuts $TargetExe
 
 Write-Section "Verifying"
 # Verify the file THIS run installed, by absolute path - a `seedcode` already

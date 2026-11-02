@@ -19,13 +19,18 @@ cancelled instead of the loop dying.
 
 from __future__ import annotations
 
+import itertools
 import os
 import queue
+import re
 import signal
 import subprocess
 import sys
 import threading
 import time
+from collections import deque
+from dataclasses import dataclass
+from pathlib import Path
 from typing import IO, TYPE_CHECKING, Any, Callable
 
 from .base import MAX_OUTPUT_CHARS, ToolResult, int_arg, register
@@ -89,6 +94,27 @@ def _reader(pipe: IO[str], out: "queue.Queue[object]") -> None:
     out.put(_EOF)
 
 
+def _popen_spec(command: str, shell: str) -> tuple[str | list[str] | None, bool, str]:
+    """Resolve a command + shell choice to a Popen specification.
+
+    Returns ``(argv, use_shell, error)``. ``argv`` is None when the requested
+    shell is unknown, in which case ``error`` is the user-facing reason. Shared
+    by the foreground and background runners so the two can never disagree.
+    """
+    key = shell.strip().lower()
+    if key in _AUTO_SHELLS:
+        # Resolve the shell the user is actually in (VS Code PowerShell/CMD,
+        # Git Bash, ...). Empty means "let the platform decide".
+        key = run_command_shell()
+    if key:
+        builder = _SHELLS.get(key)
+        if builder is None:
+            choices = ", ".join(sorted(set(_SHELLS) | {"auto"}))
+            return None, False, f"Unknown shell '{shell}'. Choose one of: {choices}."
+        return builder(command), False, ""
+    return command, True, ""
+
+
 def run_command(
     perm: "PermissionManager",
     command: str,
@@ -106,22 +132,12 @@ def run_command(
     timeout_s = max(1, min(int(timeout_s), _MAX_TIMEOUT_S))
     on_line = on_line or perm.on_output
 
-    key = shell.strip().lower()
-    if key in _AUTO_SHELLS:
-        # Resolve the shell the user is actually in (VS Code PowerShell/CMD,
-        # Git Bash, ...). Empty means "let the platform decide".
-        key = run_command_shell()
+    popen_args, use_shell, shell_error = _popen_spec(command, shell)
+    if popen_args is None:
+        return ToolResult(False, shell_error)
+        
+    
 
-    if key:
-        builder = _SHELLS.get(key)
-        if builder is None:
-            choices = ", ".join(sorted(set(_SHELLS) | {"auto"}))
-            return ToolResult(False, f"Unknown shell '{shell}'. Choose one of: {choices}.")
-        popen_args: str | list[str] = builder(command)
-        use_shell = False
-    else:
-        popen_args = command
-        use_shell = True
 
     kwargs: dict[str, Any] = {}
     if sys.platform == "win32":
@@ -210,7 +226,7 @@ def run_command(
     success = proc.returncode == 0
     status = "✓ Success" if success else f"✗ FAILED (exit code {proc.returncode})"
 
-    return ToolResult(success, f"{status}\n{body}")
+    return ToolResult(success, f"{status}\n{body}", exit_code=proc.returncode)
 
 
 @register(
@@ -220,9 +236,10 @@ def run_command(
         "command": "the shell command to run",
         "timeout": "(optional) seconds before the command is killed (default 60)",
         "shell": "(optional) cmd, powershell, pwsh, bash, or auto (default: system shell)",
+        "background": "(optional) true to start it and return immediately (id reported)",
     },
     mutates=True,
-    types={"timeout": "integer"},
+    types={"timeout": "integer", "background": "boolean"},
 )
 def _run_command(perm: "PermissionManager", args: dict[str, Any]) -> ToolResult:
     command = str(args["command"]).strip()
@@ -231,4 +248,280 @@ def _run_command(perm: "PermissionManager", args: dict[str, Any]) -> ToolResult:
     timeout_s = int_arg(args, "timeout", _DEFAULT_TIMEOUT_S, 1, _MAX_TIMEOUT_S)
     perm.check_execute(command)
     perm.confirm_action(CATEGORY_SHELL, command)
-    return run_command(perm, command, timeout_s, shell=str(args.get("shell", "")))
+    shell = str(args.get("shell", ""))
+    if _truthy(args.get("background")):
+        return _start_background(perm, command, shell)
+    result = run_command(perm, command, timeout_s, shell=shell)
+    _record_result(command, result)
+    return result
+
+
+# --- command registry (v9.2.1) -----------------------------------------------
+# Every command this session really ran is recorded with its ACTUAL output and
+# exit status, so the agent (and the user) can inspect what happened instead of
+# relying on a recollection of the transcript. Background commands keep the
+# same record while they run, which is what makes get_command_output /
+# check_exit_code / inspect_process truthful rather than decorative.
+@dataclass
+class CommandRecord:
+    """One command this session started, with its real observed state."""
+
+    id: int
+    command: str
+    output: str = ""
+    exit_code: int | None = None
+    running: bool = True
+    started_at: float = 0.0
+    finished_at: float | None = None
+    background: bool = False
+
+
+_COMMAND_HISTORY: "deque[CommandRecord]" = deque(maxlen=20)
+_COMMAND_LOCK = threading.Lock()
+_COMMAND_IDS = itertools.count(1)
+
+
+def _truthy(value: Any) -> bool:
+    """Whether a model-supplied flag means yes (accepts bools and strings)."""
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _new_record(command: str, *, background: bool = False) -> CommandRecord:
+    record = CommandRecord(
+        id=next(_COMMAND_IDS),
+        command=command,
+        started_at=time.time(),
+        background=background,
+    )
+    with _COMMAND_LOCK:
+        _COMMAND_HISTORY.append(record)
+    return record
+
+
+def _record_result(command: str, result: ToolResult) -> CommandRecord:
+    """Record a finished foreground command with its real result."""
+    record = _new_record(command)
+    with _COMMAND_LOCK:
+        record.output = result.output
+        record.exit_code = result.exit_code
+        record.running = False
+        record.finished_at = time.time()
+    return record
+
+
+def _find_record(command_id: int | None) -> CommandRecord | None:
+    """The requested record, or the latest one when no id is given."""
+    with _COMMAND_LOCK:
+        if command_id:
+            for record in _COMMAND_HISTORY:
+                if record.id == command_id:
+                    return record
+            return None
+        return _COMMAND_HISTORY[-1] if _COMMAND_HISTORY else None
+
+
+def _id_arg(args: dict[str, Any]) -> int:
+    """The optional command id (0 = latest, non-numeric = 0, never raises)."""
+    try:
+        return max(0, int(args.get("id") or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _start_background(
+    perm: "PermissionManager", command: str, shell: str
+) -> ToolResult:
+    """Start a real background process and track it in the command registry."""
+    popen_args, use_shell, error = _popen_spec(command, shell)
+    if popen_args is None:
+        return ToolResult(False, error)
+    kwargs: dict[str, Any] = {}
+    if sys.platform == "win32":
+        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        kwargs["start_new_session"] = True
+    try:
+        proc = subprocess.Popen(
+            popen_args,
+            shell=use_shell,
+            cwd=perm.workspace,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            **kwargs,
+        )
+    except OSError as exc:
+        return ToolResult(False, f"Could not start command: {exc}")
+
+    record = _new_record(command, background=True)
+
+    def pump() -> None:
+        """Collect output while the process runs, then stamp the real exit."""
+        try:
+            for line in proc.stdout or ():
+                text = safe_text(line)
+                with _COMMAND_LOCK:
+                    if len(record.output) < MAX_OUTPUT_CHARS:
+                        record.output += text
+                plain = text.rstrip("\r\n")
+                for callback in (perm.on_output, perm.on_activity):
+                    if callback is None:
+                        continue
+                    try:
+                        callback(plain)
+                    except Exception:
+                        pass  # a UI echo bug must never kill the process
+        except (OSError, ValueError):
+            pass
+        try:
+            code: int | None = proc.wait(timeout=_EXIT_GRACE_S)
+        except subprocess.TimeoutExpired:  # still running: keep that truth
+            code = None
+        with _COMMAND_LOCK:
+            record.exit_code = code
+            record.running = False
+            record.finished_at = time.time()
+
+    threading.Thread(target=pump, daemon=True).start()
+    return ToolResult(
+        True,
+        f"Started command {record.id} in the background: {command}\n"
+        f"Use get_command_output(id={record.id}) or check_exit_code(id={record.id}) "
+        "to inspect it, and inspect_process to list every command.",
+    )
+
+
+def _detect_test_command(workspace: Any) -> str:
+    """A real test command for the workspace, or "" when none is detectable."""
+    root = Path(workspace)
+    python_markers = ("pytest.ini", "conftest.py", "tox.ini")
+    if (root / "tests").is_dir() or any((root / name).is_file() for name in python_markers):
+        return "python -m pytest -q"
+    pyproject = root / "pyproject.toml"
+    if pyproject.is_file():
+        try:
+            text = pyproject.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            text = ""
+        if "pytest" in text:
+            return "python -m pytest -q"
+    if (root / "package.json").is_file():
+        return "npm test"
+    if (root / "Cargo.toml").is_file():
+        return "cargo test"
+    if (root / "go.mod").is_file():
+        return "go test ./..."
+    return ""
+
+
+@register(
+    "run_tests",
+    "Run the project's real test suite in the workspace and return its actual "
+    "output and exit code. When no command is given, a runner is detected from "
+    "the project (pytest / npm / cargo / go).",
+    {
+        "command": "(optional) exact test command; auto-detected when omitted",
+        "timeout": "(optional) seconds before the run is killed (default 300)",
+    },
+    mutates=True,
+    types={"timeout": "integer"},
+)
+def _run_tests(perm: "PermissionManager", args: dict[str, Any]) -> ToolResult:
+    command = str(args.get("command") or "").strip()
+    if not command:
+        command = _detect_test_command(perm.workspace)
+        if not command:
+            return ToolResult(
+                False,
+                "Could not detect a test runner in "
+                f"{perm.workspace}. Pass command= with the exact test command.",
+            )
+    timeout_s = int_arg(args, "timeout", _MAX_TIMEOUT_S, 1, _MAX_TIMEOUT_S)
+    perm.check_execute(command)
+    perm.confirm_action(CATEGORY_SHELL, command)
+    result = run_command(perm, command, timeout_s, shell="")
+    _record_result(command, result)
+    return result
+
+
+@register(
+    "get_command_output",
+    "Return the real captured output of a command this session ran — the latest "
+    "command, or the one named by id. Never invents output.",
+    {"id": "(optional) command id reported by inspect_process"},
+    mutates=False,
+    types={"id": "integer"},
+)
+def _get_command_output(perm: "PermissionManager", args: dict[str, Any]) -> ToolResult:
+    record = _find_record(_id_arg(args))
+    if record is None:
+        return ToolResult(False, "No command has been run in this session yet.")
+    state = "running" if record.running else f"exit code {record.exit_code}"
+    body = record.output.strip() or "(no output yet)"
+    return ToolResult(
+        True, f"command {record.id}: {record.command} [{state}]\n{body}"
+    )
+
+
+@register(
+    "check_exit_code",
+    "Report the real exit code of a command this session ran. A command that "
+    "is still running (or never exited) has no exit code — that is reported "
+    "honestly rather than guessed.",
+    {"id": "(optional) command id reported by inspect_process"},
+    mutates=False,
+    types={"id": "integer"},
+)
+def _check_exit_code(perm: "PermissionManager", args: dict[str, Any]) -> ToolResult:
+    record = _find_record(_id_arg(args))
+    if record is None:
+        return ToolResult(True, "No command has been run in this session yet.")
+    if record.running:
+        return ToolResult(
+            True, f"command {record.id} is still running; it has no exit code yet."
+        )
+    if record.exit_code is None:
+        return ToolResult(
+            False,
+            f"command {record.id} produced no exit code (it timed out, was "
+            "cancelled, or is still running).",
+        )
+    verdict = "success" if record.exit_code == 0 else "failure"
+    return ToolResult(
+        True, f"command {record.id} exited with code {record.exit_code} ({verdict})."
+    )
+
+
+@register(
+    "inspect_process",
+    "List the commands this session started with their real state: running or "
+    "finished, exit code, age and command line.",
+    {"id": "(optional) command id for a single detailed entry"},
+    mutates=False,
+    types={"id": "integer"},
+)
+def _inspect_process(perm: "PermissionManager", args: dict[str, Any]) -> ToolResult:
+    command_id = _id_arg(args)
+    with _COMMAND_LOCK:
+        records = list(_COMMAND_HISTORY)
+    if not records:
+        return ToolResult(True, "No command has been started in this session yet.")
+    if command_id:
+        record = _find_record(command_id)
+        if record is None:
+            return ToolResult(False, f"No command with id {command_id}.")
+        records = [record]
+    lines = []
+    for record in records:
+        age = (record.finished_at or time.time()) - record.started_at
+        state = "running" if record.running else f"exit {record.exit_code}"
+        kind = "background" if record.background else "foreground"
+        lines.append(
+            f"#{record.id} [{state}] {kind} {age:.1f}s — {record.command}"
+        )
+    return ToolResult(True, "\n".join(lines))

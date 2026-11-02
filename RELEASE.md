@@ -1,15 +1,47 @@
-# Seed Code CLI v9.2.0 — Release Notes
+# Seed Code CLI v9.2.1 — Release Notes
 
-**Version:** 9.2.0 · **Tag:** `v9.2.0` · **Release date:** 2026-11-01
-**Release page:** https://github.com/Alshahriar-07/seedcode-cli/releases/tag/v9.2.0
+**Version:** 9.2.1 · **Tag:** `v9.2.1` · **Release date:** 2026-11-02
+**Release page:** https://github.com/Alshahriar-07/seedcode-cli/releases/tag/v9.2.1
 
-v9.2.0 makes Seed Code a dedicated AI coding agent and turns the terminal into
+v9.2.1 makes Seed Code a dedicated AI coding agent and turns the terminal into
 a live, honest view of its work. The remaining mode machinery and the non-coding
 desktop features are gone; what is left is one engine that reads the project,
 plans, edits real files, runs real commands, verifies its own work and reports
 what actually happened.
 
-## Highlights
+## What's new in v9.2.1
+
+v9.2.1 completes the tool surface the agent contract promises, so a model no
+longer has to describe work it could not invoke.
+
+- **New real file tools.** `create_file` creates a new file and refuses to
+  clobber an existing one; `copy_file` copies and verifies the bytes, refusing
+  an existing destination unless `overwrite: true`.
+- **New terminal tools.** `run_tests` detects pytest / npm / cargo / go and
+  returns the real suite result; `get_command_output`, `check_exit_code` and
+  `inspect_process` read a session command registry that records every command
+  with its actual output and exit status. `run_command` gained
+  `background: true`, tracked until the process exits.
+- **Contract aliases.** `list_directory`, `search_files` and `search_content`
+  are registered as exact aliases of `list_dir`, `find_files` and
+  `search_text` — the runner and schema are shared, so an alias cannot drift.
+- **Structured exit codes.** `ToolResult.exit_code` carries the real process
+  status instead of it being parsed out of display text.
+- **Cloud reasoning in the thinking panel.** OpenAI-compatible providers relay
+  the provider's own `reasoning` / `reasoning_content` / `reasoning_details`
+  deltas as `ThinkingDelta`, so real reasoning is shown on those backends too.
+  A model with no reasoning channel still produces none — nothing is invented.
+- **Desktop shortcuts on every Windows install channel.** The IRM installer
+  now creates Desktop and Start Menu shortcuts instead of only copying the
+  exe, the Setup installer's Desktop shortcut is checked by default, and a pip
+  install creates them once on its first interactive launch. All three can be
+  recreated with `seedcode --install-shortcuts`.
+
+Verified live in this environment: a real Ollama turn (qwen2.5-coder:7b)
+produced a native `create_file` call that created and re-read the file, and
+qwen3:4b streamed real thinking deltas. The full suite is 825 passing tests.
+
+## Highlights (carried from v9.2.0)
 
 - **One unified agent.** Chat Mode, Agent Mode, Assist Mode and Code Mode were
   merged into a single engine. Every request is one agent turn; a deterministic,
@@ -59,7 +91,7 @@ what actually happened.
 
 ## UI changes
 
-- The fixed header is a compact two-row bar: `Seed Code CLI v9.2.0 · Provider ·
+- The fixed header is a compact two-row bar: `Seed Code CLI v9.2.1 · Provider ·
   Model · Agent`, then `● Status · Workspace … · Context … tokens`.
 - Activity lines are prefix-free and indented two columns; all five markers are
   used consistently.
@@ -107,34 +139,34 @@ curl -fsSL https://seedcode-cli.vercel.app/install.sh | bash
 pip install seedcode-cli
 ```
 
-Windows users can also download `SeedCode-CLI-Setup-9.2.0.exe` (Setup wizard) or
-`SeedCode-CLI-9.2.0-windows-x64.exe` (portable) directly from the release page.
+Windows users can also download `SeedCode-CLI-Setup-9.2.1.exe` (Setup wizard) or
+`SeedCode-CLI-9.2.1-windows-x64.exe` (portable) directly from the release page.
 
 Verify afterwards:
 
 ```bash
-seedcode --version    # -> Seed Code CLI 9.2.0
+seedcode --version    # -> Seed Code CLI 9.2.1
 ```
 
 ## Release artifacts
 
 | File | Size (bytes) | Description |
 | --- | ---: | --- |
-| `seedcode_cli-9.2.0-py3-none-any.whl` | see `SHA256SUMS.txt` | Python wheel (any OS) |
-| `seedcode_cli-9.2.0.tar.gz` | see `SHA256SUMS.txt` | Python source distribution |
-| `SeedCode-CLI-9.2.0-windows-x64.exe` | see `SHA256SUMS.txt` | Standalone Windows x64 executable |
-| `seedcode-cli-9.2.0.tgz` | see `SHA256SUMS.txt` | npm package tarball (launcher) |
-| `SeedCode-CLI-Setup-9.2.0.exe` | see `SHA256SUMS.txt` | Windows Setup installer (Inno Setup) |
+| `seedcode_cli-9.2.1-py3-none-any.whl` | see `SHA256SUMS.txt` | Python wheel (any OS) |
+| `seedcode_cli-9.2.1.tar.gz` | see `SHA256SUMS.txt` | Python source distribution |
+| `SeedCode-CLI-9.2.1-windows-x64.exe` | see `SHA256SUMS.txt` | Standalone Windows x64 executable |
+| `seedcode-cli-9.2.1.tgz` | see `SHA256SUMS.txt` | npm package tarball (launcher) |
+| `SeedCode-CLI-Setup-9.2.1.exe` | see `SHA256SUMS.txt` | Windows Setup installer (Inno Setup) |
 | `SHA256SUMS.txt` | — | SHA-256 of all five artifacts above |
 
 ## SHA-256 verification
 
 ```bash
-cd dist/release/9.2.0
+cd dist/release/9.2.1
 sha256sum -c SHA256SUMS.txt
 
 # Windows PowerShell
-Get-FileHash .\SeedCode-CLI-9.2.0-windows-x64.exe -Algorithm SHA256
+Get-FileHash .\SeedCode-CLI-9.2.1-windows-x64.exe -Algorithm SHA256
 ```
 
 Both remote installers download `SHA256SUMS.txt` and abort on a missing entry,
@@ -158,5 +190,5 @@ an unreachable checksum file, or a mismatch. Verification is never bypassed.
 - **Desktop control, OCR and browser automation were removed** in this release.
   Requests that would have needed them are answered without those tools.
 - **The GitHub release has not been published by this build.** All artifacts are
-  prepared and verified locally in `dist/release/9.2.0/`; publishing is a
+  prepared and verified locally in `dist/release/9.2.1/`; publishing is a
   separate, explicit step.

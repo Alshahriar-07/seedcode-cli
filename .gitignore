@@ -81,3 +81,23 @@ opencode.txt
 V6.2.0/
 newupdatec6.2.5/
 WEBSITE/
+
+# npm launcher packaging output. `npm pack` inside npm/ writes the tarball
+# here; release tarballs are staged in dist/ instead of being committed.
+/npm/*.tgz
+/npm/node_modules/
+
+# Release archives are build outputs. Wheels, sdists and npm tarballs are
+# published as GitHub Release assets and staged under dist/release/<version>/,
+# so a stray copy at the repository root is never source.
+/*.whl
+/*.tar.gz
+/*.tgz
+
+# Windows build scratch: a literal %LOCALAPPDATA% directory can be created by
+# pip when an environment variable fails to expand inside a cmd shell during a
+# build. It holds only caches and is never source.
+/%localappdata%*/
+
+# NOTE: docs/reports/*.md, *.txt and *.docx are committed release documents
+# (see docs/reports/), so they are deliberately NOT ignored.

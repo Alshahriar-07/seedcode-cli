@@ -1,0 +1,86 @@
+================================================================================
+ SEED CODE CLI v9.2.1 — RELEASE SUMMARY
+================================================================================
+Version    : 9.2.1
+Tag        : v9.2.1
+Released   : 2026-11-02
+Platform   : Windows 11 x64 (Python 3.12.10, PyInstaller 6.21.0, Inno Setup 7)
+Repository : https://github.com/Alshahriar-07/seedcode-cli
+
+WHAT CHANGED
+------------
+v9.2.1 completes the agent tool surface the contract promises. The v9.2.0
+execution loop was audited first and was found to be genuinely working:
+native tool calling with a text-protocol fallback, tool results fed back to
+the model, real file/shell execution, model-exposed thinking, and an
+evidence-verified task graph (813 tests passing before the change).
+
+The real gap was the tool *surface*: several tool names the agent contract
+requires were never registered, so a model asking for run_tests, copy_file or
+get_command_output was told the tool did not exist. v9.2.1 adds them for real,
+reusing existing implementations where one already existed.
+
+NEW TOOLS (real execution, verified on disk)
+  create_file        Creates a NEW file; refuses to clobber an existing file
+  copy_file          Byte-verified copy; refuses an existing destination
+  run_tests          Detects pytest / npm / cargo / go; returns the real result
+  get_command_output Returns captured output of a command this session ran
+  check_exit_code    Returns the real exit code (or says it is still running)
+  inspect_process    Lists session commands with state, exit code and age
+  list_directory     Exact alias of list_dir
+  search_files       Exact alias of find_files
+  search_content     Exact alias of search_text
+
+OTHER CHANGES
+  * Command registry: every executed command is recorded with its real output
+    and exit status; run_command gained background execution tracked to exit.
+  * ToolResult.exit_code carries real process status instead of parsing text.
+  * Cloud reasoning: OpenAI-compatible providers relay reasoning /
+    reasoning_content / reasoning_details deltas as ThinkingDelta, so the
+    thinking panel shows real reasoning on those backends too. Models without
+    a reasoning channel produce none.
+  * Version 9.2.1 synchronised across package, wheel/sdist, npm launcher,
+    installers and documentation.
+  * LICENSE flattened to plain text (no ASCII-art rules or symbol bullets);
+    the installer's license page and every package carry it.
+  * install.ps1 now creates Desktop + Start Menu shortcuts (was missing),
+    the Setup installer's Desktop icon is checked by default, and pip
+    installs create them on first launch; seedcode --install-shortcuts
+    recreates them.
+
+VERIFICATION (actual results)
+  Full suite                : 833 passed, 0 failed, 0 skipped (75.02s)
+  New regression tests      : 18 (real files, real subprocesses, real exits;
+                              includes 6 real shortcut-creation tests)
+  Live Ollama tool calling  : PASSED (qwen2.5-coder:7b, 54.4s)
+      -> model called create_file; hello.py created and re-read as
+         print('Hello World')
+  Live Ollama thinking      : PASSED (qwen3:4b, capability detected, 139 chars
+                              of real ThinkingDelta streamed)
+  Executable startup        : dist/seedcode.exe --version -> "Seed Code CLI 9.2.1"
+  Installer metadata        : FileVersion 9.2.1 / ProductVersion 9.2.1
+  Wheel metadata            : seedcode-cli 9.2.1
+  Checksums                 : SHA256SUMS.txt verified 5/5 with sha256sum -c
+
+ARTIFACTS (dist/release/9.2.1/)
+
+  SeedCode-CLI-9.2.1-windows-x64.exe   43,996,688 B
+  SeedCode-CLI-Setup-9.2.1.exe         45,442,473 B
+  seedcode_cli-9.2.1-py3-none-any.whl      342,319 B
+  seedcode_cli-9.2.1.tar.gz               294,275 B
+  seedcode-cli-9.2.1.tgz                    6,400 B
+  SHA256SUMS.txt                              479 B
+
+LIMITATIONS
+  * The installer was compiled and metadata/icon/checksum-verified but NOT
+    executed: installing modifies Program Files and the system PATH.
+  * Live provider testing covered the local Ollama server only; cloud
+    reasoning parsing is unit-tested against documented delta shapes.
+  * Installer scripts were not run against published assets: no GitHub
+    release was published (publishing needs explicit authorization).
+  * Only Windows x64 binaries were built.
+  * No commit or push was made.
+
+================================================================================
+ Plant ideas. Grow code.  ·  github.com/Alshahriar-07/seedcode-cli
+================================================================================
