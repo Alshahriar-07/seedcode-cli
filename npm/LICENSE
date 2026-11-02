@@ -1,82 +1,154 @@
-## Seed Code CLI
-# Copyright © 2026 Al Shahriar Sowan
+﻿Seed Code CLI — License
+══════════════════════════════════════════════════════════════════════════
 
-Licensed under the PolyForm Noncommercial License 1.0.0.
+  Author            Al Shahriar Sowan
+  Studio            Eagox Studio
+  Version           9.2.0
+  License           PolyForm Noncommercial License 1.0.0
+  Terms             https://polyformproject.org/licenses/noncommercial/1.0.0
 
-Required Notice: Copyright © 2026 Al Shahriar Sowan.
+────────────────────────────────────────────────────────────────────────────
+  COPYRIGHT NOTICE
+────────────────────────────────────────────────────────────────────────────
 
-The complete license terms are provided below.
+  Copyright © 2026 Al Shahriar Sowan.
 
----
+  Required Notice: Copyright © 2026 Al Shahriar Sowan.
 
-# PolyForm Noncommercial License 1.0.0
+────────────────────────────────────────────────────────────────────────────
+  QUICK SUMMARY   ·   informational only — the terms below are the law
+────────────────────────────────────────────────────────────────────────────
 
-https://polyformproject.org/licenses/noncommercial/1.0.0
+  ✓  You MAY use Seed Code for personal, educational, research,
+     hobby and other noncommercial purposes.
+  ✓  You MAY modify the source and build new works from it.
+  ✓  You MAY share copies with others, as long as they also receive
+     these terms and the Required Notice above.
 
-Acceptance
+  ✗  You MAY NOT use Seed Code for commercial purposes.
+  ✗  You MAY NOT remove these license terms from any copy you share.
 
-In order to get any license under these terms, you must agree to them as both strict obligations and conditions to all your licenses.
+────────────────────────────────────────────────────────────────────────────
 
-Copyright License
+  PolyForm Noncommercial License 1.0.0
 
-The licensor grants you a copyright license for the software to do everything you might do with the software that would otherwise infringe the licensor's copyright in it for any permitted purpose. However, you may only distribute the software according to Distribution License and make changes or new works based on the software according to Changes and New Works License.
+  https://polyformproject.org/licenses/noncommercial/1.0.0
 
-Distribution License
+  Acceptance
 
-The licensor grants you an additional copyright license to distribute copies of the software. Your license to distribute covers distributing the software with changes and new works permitted by Changes and New Works License.
+  In order to get any license under these terms, you must agree to them
+  as both strict obligations and conditions to all your licenses.
 
-Notices
+  Copyright License
 
-You must ensure that anyone who gets a copy of any part of the software from you also gets a copy of these terms or the URL for them above, as well as copies of any plain-text lines beginning with `Required Notice:` that the licensor provided with the software.
+  The licensor grants you a copyright license for the software to do
+  everything you might do with the software that would otherwise
+  infringe the licensor's copyright in it for any permitted purpose.
+  However, you may only distribute the software according to
+  Distribution License and make changes or new works based on the
+  software according to Changes and New Works License.
 
-Changes and New Works License
+  Distribution License
 
-The licensor grants you an additional copyright license to make changes and new works based on the software for any permitted purpose.
+  The licensor grants you an additional copyright license to distribute
+  copies of the software. Your license to distribute covers distributing
+  the software with changes and new works permitted by Changes and New
+  Works License.
 
-Patent License
+  Notices
 
-The licensor grants you a patent license for the software that covers patent claims the licensor can license, or becomes able to license, that you would infringe by using the software.
+  You must ensure that anyone who gets a copy of any part of the
+  software from you also gets a copy of these terms or the URL for them
+  above, as well as copies of any plain-text lines beginning with
+  `Required Notice:` that the licensor provided with the software.
 
-Noncommercial Purposes
+  Changes and New Works License
 
-Any noncommercial purpose is a permitted purpose.
+  The licensor grants you an additional copyright license to make
+  changes and new works based on the software for any permitted purpose.
 
-Personal Uses
+  Patent License
 
-Personal use for research, experiment, and testing for the benefit of public knowledge, personal study, private entertainment, hobby projects, amateur pursuits, or religious observance, without any anticipated commercial application, is use for a permitted purpose.
+  The licensor grants you a patent license for the software that covers
+  patent claims the licensor can license, or becomes able to license,
+  that you would infringe by using the software.
 
-Noncommercial Organizations
+  Noncommercial Purposes
 
-Use by any charitable organization, educational institution, public research organization, public safety or health organization, environmental protection organization, or government institution is use for a permitted purpose regardless of the source of funding or obligations resulting from the funding.
+  Any noncommercial purpose is a permitted purpose.
 
-Fair Use
+  Personal Uses
 
-You may have "fair use" rights for the software under the law. These terms do not limit them.
+  Personal use for research, experiment, and testing for the benefit of
+  public knowledge, personal study, private entertainment, hobby
+  projects, amateur pursuits, or religious observance, without any
+  anticipated commercial application, is use for a permitted purpose.
 
-No Other Rights
+  Noncommercial Organizations
 
-These terms do not allow you to sublicense or transfer any of your licenses to anyone else, or prevent the licensor from granting licenses to anyone else. These terms do not imply any other licenses.
+  Use by any charitable organization, educational institution, public
+  research organization, public safety or health organization,
+  environmental protection organization, or government institution is
+  use for a permitted purpose regardless of the source of funding or
+  obligations resulting from the funding.
 
-Patent Defense
+  Fair Use
 
-If you make any written claim that the software infringes or contributes to infringement of any patent, your patent license for the software granted under these terms ends immediately. If your company makes such a claim, your patent license ends immediately for work on behalf of your company.
+  You may have "fair use" rights for the software under the law. These
+  terms do not limit them.
 
-Violations
+  No Other Rights
 
-The first time you are notified in writing that you have violated any of these terms, or done anything with the software not covered by your licenses, your licenses can nonetheless continue if you come into full compliance with these terms, and take practical steps to correct past violations, within 32 days of receiving notice. Otherwise, all your licenses end immediately.
+  These terms do not allow you to sublicense or transfer any of your
+  licenses to anyone else, or prevent the licensor from granting
+  licenses to anyone else. These terms do not imply any other licenses.
 
-No Liability
+  Patent Defense
 
-As far as the law allows, the software comes as is, without any warranty or condition, and the licensor will not be liable to you for any damages arising from these terms or the use or nature of the software, under any kind of legal claim.
+  If you make any written claim that the software infringes or
+  contributes to infringement of any patent, your patent license for the
+  software granted under these terms ends immediately. If your company
+  makes such a claim, your patent license ends immediately for work on
+  behalf of your company.
 
-Definitions
+  Violations
 
-The licensor is the individual or entity offering these terms, and the software is the software the licensor makes available under these terms.
+  The first time you are notified in writing that you have violated any
+  of these terms, or done anything with the software not covered by your
+  licenses, your licenses can nonetheless continue if you come into full
+  compliance with these terms, and take practical steps to correct past
+  violations, within 32 days of receiving notice. Otherwise, all your
+  licenses end immediately.
 
-You refers to the individual or entity agreeing to these terms.
+  No Liability
 
-Your company is any legal entity, sole proprietorship, or other kind of organization that you work for, plus all organizations that have control over, are under the control of, or are under common control with that organization. Control means ownership of substantially all the assets of an entity, or the power to direct its management and policies by vote, contract, or otherwise.
+  As far as the law allows, the software comes as is, without any
+  warranty or condition, and the licensor will not be liable to you for
+  any damages arising from these terms or the use or nature of the
+  software, under any kind of legal claim.
 
-Your licenses are all the licenses granted to you for the software under these terms.
+  Definitions
 
-Use means anything you do with the software requiring one of your licenses.
+  The licensor is the individual or entity offering these terms, and the
+  software is the software the licensor makes available under these
+  terms.
+
+  You refers to the individual or entity agreeing to these terms.
+
+  Your company is any legal entity, sole proprietorship, or other kind
+  of organization that you work for, plus all organizations that have
+  control over, are under the control of, or are under common control
+  with that organization. Control means ownership of substantially all
+  the assets of an entity, or the power to direct its management and
+  policies by vote, contract, or otherwise.
+
+  Your licenses are all the licenses granted to you for the software
+  under these terms.
+
+  Use means anything you do with the software requiring one of your
+  licenses.
+
+────────────────────────────────────────────────────────────────────────────
+
+  Copyright © 2026 Al Shahriar Sowan · Eagox Studio
+  Seed Code CLI v9.2.0 — https://github.com/Alshahriar-07/seedcode-cli

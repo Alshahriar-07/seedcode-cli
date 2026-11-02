@@ -196,6 +196,42 @@ sha256_of() {
 
 # verify_sha256 <file> <sums-text> [<file-name>]
 # Aborts (never returns) when the expected hash is missing or does not match.
+# version_ok <reported-output> <version> -> 0 when the reported output carries
+# the version as a whole token. The historical check was a plain substring
+# match (`*"$VERSION"*`), which a wrongly-numbered binary defeats: "Seed Code
+# CLI 19.2.0" contains "9.2.0". This matcher requires the version at a token
+# boundary — never directly after a digit ('19.2.0' != '9.2.0'), never directly
+# before a digit or a dot ('9.2.0' != '9.2.01' / '9.2.0.1'), with only a
+# single-occurrence v/V version marker ('v9.2.0' is accepted; 'rev9.2.0' is
+# not). The same rules are implemented in install.ps1 and setup.iss.
+version_ok() {
+    awk -v want="${2:-}" '
+        {
+            t = $0
+            n = length(t)
+            m = length(want)
+            if (m == 0 || n < m) next
+            for (i = 1; i + m - 1 <= n; i++) {
+                if (substr(t, i, m) != want) continue
+                b = (i > 1) ? substr(t, i - 1, 1) : " "
+                a = (i + m <= n) ? substr(t, i + m, 1) : " "
+                if (b ~ /[0-9.]/) continue
+                if (b ~ /[A-Za-z]/) {
+                    if (b != "v" && b != "V") continue
+                    p = (i > 2) ? substr(t, i - 2, 1) : " "
+                    if (p ~ /[A-Za-z]/) continue
+                }
+                if (a ~ /[0-9.]/) continue
+                found = 1
+                break
+            }
+        }
+        END { exit found ? 0 : 1 }
+    ' <<< "${1:-}"
+}
+
+# verify_sha256 <file> <sums-text> [<file-name>]
+# Aborts (never returns) when the expected hash is missing or does not match.
 verify_sha256() {
     _file="$1"
     _sums="${2:-}"
@@ -350,10 +386,11 @@ section "${SYM_NODE} Verifying"
 # on PATH could be an older copy, and a stale binary must never be reported as
 # this install's success.
 REPORTED="$("$INSTALLED_EXE" --version 2>/dev/null | tail -n1)"
-case "$REPORTED" in
-    *"$VERSION"*) ok "seedcode --version  ->  ${REPORTED}" ;;
-    *) die "The installed binary did not report version ${VERSION} (it said: '${REPORTED:-nothing}')." ;;
-esac
+if version_ok "${REPORTED:-}" "$VERSION"; then
+    ok "seedcode --version  ->  ${REPORTED}"
+else
+    die "The installed binary did not report version ${VERSION} (it said: '${REPORTED:-nothing}')."
+fi
 
 # A different `seedcode` earlier on PATH keeps being invoked instead of the one
 # just installed (the "old executable still runs" failure mode). Say so out

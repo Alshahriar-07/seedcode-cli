@@ -87,54 +87,53 @@ def main() -> None:
     log = get_logger("cli")
 
     from . import __version__
-    from .utils.terminal_env import detect_terminal, workspace_root
-
-    # Detect the terminal host/shell once (VS Code, Windows Terminal, Git Bash
-    # or unknown) so a support log says exactly where this session ran.
-    terminal = detect_terminal()
-    log.info(
-        "Seed Code v%s starting (python %s on %s); terminal %s; cwd=%s",
-        __version__,
-        sys.version.split()[0],
-        sys.platform,
-        terminal.describe(),
-        workspace_root(),
+    from .utils.terminal_title import (
+        restore_terminal_title,
+        seedcode_cli_title,
+        set_terminal_title,
     )
 
-    # v9.1.0: pick the project workspace explicitly instead of silently
-    # treating the launch directory as the project. Non-interactive hosts
-    # (pipelines, CI, scripts) skip the prompt and keep the launch directory;
-    # `SEEDCODE_WORKSPACE` selects one directly. Everything below — Agent
-    # Mode, file I/O, .seedcode, indexing, terminal commands, verification —
-    # resolves against whatever this returns.
-    from .workspace import ensure_workspace
-
-    workspace = ensure_workspace(interactive=_interactive())
-    log.info("workspace selected: %s", workspace)
-
-    from .app import run
-    from .ui import UI
-
-    ui = UI(plain=terminal.plain)
+    # v9.2.0: claim the terminal tab title once, from the CLI lifecycle —
+    # never from a UI render pass — and restore the original on exit. A
+    # title-less environment (pipes, tests, CI) is a silent no-op inside.
+    # --version/--help above return before this, so installers that parse
+    # output are never touched.
+    set_terminal_title(seedcode_cli_title(__version__))
     try:
-        if _use_persistent_tui(terminal.plain):
-            # v9.1.0: a real console gets the persistent three-region TUI;
-            # every other host keeps the sequential console experience.
-            from .app import run_persistent
+        # v9.1.0: pick the project workspace explicitly instead of silently
+        # treating the launch directory as the project. Non-interactive hosts
+        # (pipelines, CI, scripts) skip the prompt and keep the launch
+        # directory; `SEEDCODE_WORKSPACE` selects one directly. Everything
+        # below — Agent Mode, file I/O, .seedcode, indexing, terminal
+        # commands, verification — resolves against whatever this returns.
+        workspace = ensure_workspace(interactive=_interactive())
+        log.info("workspace selected: %s", workspace)
 
-            run_persistent()
-        else:
-            run(ui)
-        log.info("Clean exit.")
-    except KeyboardInterrupt:
-        ui.blank()
-        ui.dim("Interrupted.")
-        log.info("Exited via Ctrl+C.")
-    except Exception as exc:  # final safety net — never show a traceback
-        log.exception("Fatal error")
-        ui.error(f"Fatal error: {exc}")
-        ui.dim("Details were logged to ~/.seedcode/logs/seedcode.log")
-        sys.exit(1)
+        from .app import run
+        from .ui import UI
+
+        ui = UI(plain=terminal.plain)
+        try:
+            if _use_persistent_tui(terminal.plain):
+                # v9.1.0: a real console gets the persistent three-region
+                # TUI; every other host keeps the sequential console.
+                from .app import run_persistent
+
+                run_persistent()
+            else:
+                run(ui)
+            log.info("Clean exit.")
+        except KeyboardInterrupt:
+            ui.blank()
+            ui.dim("Interrupted.")
+            log.info("Exited via Ctrl+C.")
+        except Exception as exc:  # final safety net — never show a traceback
+            log.exception("Fatal error")
+            ui.error(f"Fatal error: {exc}")
+            ui.dim("Details were logged to ~/.seedcode/logs/seedcode.log")
+            sys.exit(1)
+    finally:
+        restore_terminal_title()
 
 
 if __name__ == "__main__":

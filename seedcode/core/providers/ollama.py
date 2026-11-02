@@ -21,6 +21,7 @@ from .base import (
     ProviderError,
     StreamEvent,
     TextDelta,
+    ThinkingDelta,
     ToolCallEvent,
     ToolSpec,
     ValidationResult,
@@ -32,6 +33,39 @@ if TYPE_CHECKING:
 _DETECT_TIMEOUT = 5.0
 # Local generation can pause while a model loads into memory; be generous.
 _CHAT_TIMEOUT = httpx.Timeout(10.0, read=300.0)
+
+#: ``model -> exposes a thinking channel`` as reported by ``/api/show``.
+#: Probed lazily and cached; an unreached server just means "no thinking".
+_thinking_cache: dict[tuple[str, str], bool] = {}
+
+
+def _model_can_think(config: "AppConfig") -> bool:
+    """True when the model exposes a real reasoning channel.
+
+    Detected from the Ollama API itself (``capabilities`` includes
+    ``thinking``) — never assumed. A detection failure degrades to "no
+    thinking": the request is sent without the ``think`` flag and the answer
+    path is untouched.
+    """
+    key = (str(getattr(config, "ollama_host", "")), str(getattr(config, "model", "")))
+    if not key[1]:
+        return False
+    if key in _thinking_cache:
+        return _thinking_cache[key]
+    supported = False
+    try:
+        response = pooled_http.post(
+            f"{config.ollama_host}/api/show",
+            json={"model": config.model},
+            timeout=_DETECT_TIMEOUT,
+        )
+        if response.status_code == 200:
+            capabilities = (response.json() or {}).get("capabilities") or []
+            supported = "thinking" in capabilities
+    except Exception:
+        supported = False
+    _thinking_cache[key] = supported
+    return supported
 
 
 def _not_running(host: str) -> ProviderError:
@@ -223,6 +257,10 @@ class OllamaProvider(Provider):
             ],
             "stream": True,
         }
+        # v9.2.0: request the thinking channel ONLY on models that expose one
+        # (detected from /api/show). Models without it reject ``think``.
+        if _model_can_think(config):
+            payload["think"] = True
         call_counter = 0
         try:
             with pooled_http.stream(
@@ -241,6 +279,17 @@ class OllamaProvider(Provider):
                     )
                 if response.status_code >= 400:
                     detail = response.read().decode("utf-8", "replace")[:300]
+                    if "think" in detail:
+                        # The model claimed thinking capability at /api/show
+                        # but its runtime refuses it: disable the channel for
+                        # this session step and let the agent's own retry
+                        # continue without it (graceful degradation).
+                        _thinking_cache[(config.ollama_host, config.model)] = False
+                        raise ProviderError(
+                            f"Ollama rejected thinking mode for '{config.model}'; "
+                            "retrying without it.",
+                            transient=True,
+                        )
                     raise ProviderError(f"Ollama error (HTTP {response.status_code}): {detail}")
                 # NDJSON stream; tool calls arrive with arguments already
                 # parsed as objects (no fragment assembly needed). Ollama has
@@ -257,6 +306,11 @@ class OllamaProvider(Provider):
                         raise ProviderError(f"Ollama error: {event['error']}")
                     message = event.get("message") or {}
                     piece = message.get("content")
+                    thinking = message.get("thinking")
+                    if thinking:
+                        # The model's own reasoning channel — never answer
+                        # content; the UI shows it in the thinking panel.
+                        yield ThinkingDelta(thinking)
                     if piece:
                         saw_output = True
                         yield TextDelta(piece)

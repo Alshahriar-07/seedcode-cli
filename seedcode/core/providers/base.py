@@ -93,6 +93,19 @@ class TextDelta:
 
 
 @dataclass(slots=True)
+class ThinkingDelta:
+    """A streamed piece of model-exposed reasoning.
+
+    Only providers with a real thinking channel (Ollama's ``thinking`` field
+    on a ``thinking``-capable model) emit this; the UI renders it in the
+    dedicated thinking panel and never as answer content. The UI never
+    fabricates reasoning: no deltas means no panel.
+    """
+
+    text: str
+
+
+@dataclass(slots=True)
 class ToolCallEvent:
     """One COMPLETE native tool call.
 
@@ -109,7 +122,7 @@ class ToolCallEvent:
     error: str = ""
 
 
-StreamEvent = TextDelta | ToolCallEvent
+StreamEvent = TextDelta | ThinkingDelta | ToolCallEvent
 
 
 @dataclass

@@ -299,6 +299,115 @@ class _AutocompleteControl(UIControl):
         return NotImplemented
 
 
+class _PlanControl(UIControl):
+    """The right-side TASK PLAN panel (v9.2.0): dynamic width, real state.
+
+    ``provider(width, height)`` renders the visible rows from live state; the
+    control reports its own preferred width, so the panel sizes to the plan
+    (clipped) and *collapses to nothing* when there is no plan or the terminal
+    is too narrow for the conversation next to it.
+    """
+
+    #: Limits: hard-clip any title, hide entirely under this terminal width.
+    MAX_WIDTH = 30
+    MIN_ROOM = 72
+    MAX_TITLE = 24
+
+    def __init__(
+        self,
+        provider: Callable[[int, int], list[StyledLine]],
+        width_fn: Callable[[], int],
+        rows_fn: Callable[[], list[tuple[str, str]]],
+    ) -> None:
+        self._provider = provider
+        self._width_fn = width_fn
+        self._rows_fn = rows_fn
+
+    def is_focusable(self) -> bool:
+        return False
+
+    def is_scrollable(self) -> bool:
+        return False
+
+    def preferred_width(self, max_available_width: int) -> int | None:
+        return calculated_plan_width(self._rows_fn(), self._width_fn())
+
+    def create_content(self, width: int, height: int):
+        try:
+            fragments = self._provider(width, height)
+        except Exception:
+            fragments = [[("", "")]]
+        if not fragments:
+            fragments = [[("", "")]]
+        return UIContent(
+            get_line=lambda index: fragments[index],
+            line_count=len(fragments),
+            show_cursor=False,
+        )
+
+    def mouse_handler(self, mouse_event):
+        return NotImplemented
+
+
+def calculated_plan_width(rows, terminal_width: int) -> int:
+    """The panel width: title-bound, terminal-limited, 0 when it must hide."""
+    if not rows or terminal_width < _PlanControl.MIN_ROOM:
+        return 0
+    longest = max((len(str(title or "")) for _s, title in rows), default=0)
+    clipped = min(longest, _PlanControl.MAX_TITLE)
+    # glyph + space + padding, and never wider than a third of the screen.
+    return max(8, min(_PlanControl.MAX_WIDTH, clipped + 6, terminal_width // 3))
+
+
+class _ThinkingControl(UIControl):
+    """The bounded THINKING panel (v9.2.0): only what the model exposes.
+
+    ``provider(width, height)`` renders the visible slice of the model's own
+    reasoning stream. The control reports its preferred height, so the panel
+    reserves roughly the spec's 25-30% of the terminal while thinking flows
+    and collapses to nothing when empty or when the user collapsed it.
+    """
+
+    def __init__(
+        self,
+        provider: Callable[[int, int], list[StyledLine]],
+        height_fn: Callable[[], int],
+    ) -> None:
+        self._provider = provider
+        self._height_fn = height_fn
+
+    def is_focusable(self) -> bool:
+        return False
+
+    def is_scrollable(self) -> bool:
+        return False
+
+    def preferred_height(
+        self,
+        width: int,
+        max_available_height: int,
+        wrap_lines: bool = False,
+        get_line_prefix=None,
+    ) -> int | None:
+        return self._height_fn()
+
+    def create_content(self, width: int, height: int):
+        try:
+            fragments = self._provider(width, height)
+        except Exception:
+            fragments = [[("", "")]]
+        if not fragments:
+            fragments = [[("", "")]]
+        return UIContent(
+            get_line=lambda index: fragments[index],
+            line_count=len(fragments),
+            show_cursor=False,
+        )
+
+    def mouse_handler(self, mouse_event):
+        return NotImplemented
+
+
 class TuiStreamRenderer:
     """Streamed assistant tokens, painted into the live content block."""
 
@@ -404,6 +513,9 @@ class ChatTUI:
         self._input_window: Window | None = None
         self._content_window: Window | None = None
         self._hint_window: Window | None = None
+        # --- v9.2.0: the right-side TASK PLAN + bounded THINKING panels -----
+        self._plan_window: Window | None = None
+        self._thinking_window: Window | None = None
         self._scroll = 0
         self._follow = True
         #: Lines below the viewport while the user is scrolled up (a hint only).
@@ -1066,6 +1178,75 @@ class ChatTUI:
     def _hint_dimension(self) -> Dimension:
         return Dimension.exact(self._hint_rows)
 
+    # --- v9.2.0: TASK PLAN + THINKING panels ---------------------------------
+    def _plan_fragments(self, width: int, height: int) -> list[StyledLine]:
+        """The right-side plan rows, styled straight from live state."""
+        from .theme import active_palette
+        from .taskpanel import plan_progress, state_role, task_glyph
+
+        palette = active_palette()
+        rows = list(self.state.plan_rows or [])
+        lines: list[StyledLine] = []
+        inner = max(1, (width or 1) - 1)
+        for state, title in rows:
+            style = f"fg:{getattr(palette, state_role(state), palette.dim)}"
+            title = " ".join(str(title or "").split())
+            clipped = (
+                title
+                if len(title) <= inner - 2
+                else title[: max(0, inner - 3)] + "\u2026"
+            )
+            lines.append([(style, f" {task_glyph(state)} "), (f"fg:{palette.text}", clipped)])
+        progress = plan_progress(rows)
+        if progress:
+            lines.append([(f"fg:{palette.dim}", f" {progress}")])
+        return lines
+
+    def _plan_height(self) -> int:
+        """Panel rows: one per plan task plus the progress line (0 = hidden)."""
+        rows = list(self.state.plan_rows or [])
+        return len(rows) + 1 if rows else 0
+
+    def _thinking_fragments(self, width: int, height: int) -> list[StyledLine]:
+        """A bounded slice of the model's own reasoning stream.
+
+        Auto-scroll follows the newest text; while the user has scrolled up
+        (``thinking_offset > 0``) their position is kept — new reasoning does
+        not yank the view back down — and auto-scroll resumes when they return
+        to the bottom (Ctrl+Down past the end, or Ctrl+B toggling).
+        """
+        from .theme import active_palette
+
+        palette = active_palette()
+        visible = max(1, int(height or 1))
+        text = (self.state.thinking_text or "").splitlines()
+        if not text:
+            return []
+        offset = max(0, int(self.state.thinking_offset or 0))
+        # Viewport end: the newest line while following, offset lines back
+        # once the user has scrolled up (kept position).
+        end = len(text) - offset
+        start = max(0, end - visible)
+        slice_ = text[start:end]
+        lines: list[StyledLine] = [[(f"fg:{palette.dim}", " \u2500 Thinking \u2500")]]
+        for line in slice_:
+            lines.append(
+                [(f"fg:{palette.text}", " " + line[: max(1, (width or 1) - 1)])]
+            )
+        return lines
+
+    def _thinking_height(self) -> int:
+        """Bounded height: ~30% of the terminal, capped; 0 when hidden."""
+        if not (self.state.thinking_text or "").strip():
+            return 0
+        if not self.state.thinking_open:
+            return 0
+        return max(3, min(int(self._rows * 0.30), 14))
+
+    def _plan_dimension(self) -> Dimension:
+        rows = self._plan_height()
+        return Dimension.exact(rows if rows > 0 else 0)
+
     # --- composer prompt ----------------------------------------------------
     def _prompt_fragments(self) -> list[tuple[str, str]]:
         """The composer's in-box chevron, drawn in its own fixed-width column."""
@@ -1545,6 +1726,27 @@ class ChatTUI:
         def _(_event) -> None:
             self.show_last_command()
 
+        # v9.2.0: the thinking panel — Ctrl+B collapses/expands it, Ctrl+Up/
+        # Ctrl+Down scroll it manually. While scrolled up the panel keeps the
+        # user's position (no forced auto-scroll back down); auto-scroll
+        # resumes when they return to the bottom.
+        @kb.add("c-b")
+        def _(_event) -> None:
+            self.state.toggle_thinking()
+            self._invalidate()
+
+        @kb.add("c-up")
+        def _(_event) -> None:
+            if (self.state.thinking_text or "").strip():
+                self.state.scroll_thinking(3)
+                self._invalidate()
+
+        @kb.add("c-down")
+        def _(_event) -> None:
+            if self.state.thinking_offset > 0:
+                self.state.scroll_thinking(-3)
+                self._invalidate()
+
         @kb.add("c-c")
         def _(_event) -> None:
             if self._deny_confirm():
@@ -1646,10 +1848,27 @@ class ChatTUI:
             dont_extend_height=True,
             wrap_lines=False,
         )
+        self._plan_window = Window(
+            _PlanControl(
+                self._plan_fragments,
+                lambda: self._width,
+                lambda: self.state.plan_rows,
+            ),
+            height=self._plan_dimension,
+            width=None,  # the control's preferred width sizes the panel
+            dont_extend_height=True,
+            wrap_lines=False,
+        )
+        self._thinking_window = Window(
+            _ThinkingControl(self._thinking_fragments, self._thinking_height),
+            dont_extend_height=True,
+            wrap_lines=False,
+        )
         root = HSplit(
             [
                 self._header_window,
-                self._content_window,
+                self._thinking_window,
+                VSplit([self._content_window, self._plan_window]),
                 self._autocomplete_window,
                 self._permission_window,
                 composer,

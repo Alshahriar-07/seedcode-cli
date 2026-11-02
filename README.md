@@ -1,9 +1,30 @@
 # Seed Code CLI
 
+<div align="center">
+
+![Release](https://img.shields.io/badge/release-v9.2.0-0b6623?style=flat-square)
+![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square)
+![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey?style=flat-square)
+![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-informational?style=flat-square)
+
 **Seed Code — Eagox Studio**
 
 > ### Faster. Smaller. Smarter. Workspace-aware.
 > *Plant ideas. Grow code.*
+
+</div>
+
+---
+
+**Jump to:** [What you get](#what-you-get) · [Installation](#installation) ·
+[First run](#first-run) · [Providers](#providers-and-models) ·
+[How a task runs](#how-a-task-runs) · [Commands](#command-reference) ·
+[Permissions](#permissions) · [Config](#configuration-and-local-data) ·
+[Internet](#internet-access) · [Build](#building-from-source) ·
+[Artifacts](#release-artifacts-v920) · [Troubleshooting](#troubleshooting) ·
+[Security](#security-model) · [License](#license)
+
+---
 
 Seed Code is a premium terminal-based **AI coding agent** that runs directly
 inside your terminal. One unified agent — not a chat bot with a mode switch —
@@ -49,6 +70,17 @@ fails, and reports honestly on what it actually did.
   *current operation* with a live elapsed timer, e.g. `⠹ Reading README.md……
   · 12s`. The label is read from backend state (`state.operation`), so it says
   what the agent is doing, not just "Working".
+- **A bounded thinking panel** for models that expose a reasoning channel
+  (Ollama models with the `thinking` capability). What the model itself streams
+  as thinking appears in a separate collapsible panel above the activity log —
+  never invented, never mixed with the response. Height is bounded (about a
+  quarter of the terminal), auto-scroll follows the stream unless you scroll
+  up manually, and the panel collapses when the turn ends. Models without an
+  exposed channel simply never see it.
+- **A right-side task plan panel.** The agent's TODO list renders live on the
+  right (`○` pending, `●` in progress, `✓` done, `✗` failed, `↻` retrying) and
+  is driven only by real orchestrator task events — the current task is
+  highlighted and progress is shown as `N / M completed`.
 - **Real file operations and diffs.** File reads, creations, updates and
   deletions are reported with the path, the line counts, the affected line
   range and a bounded unified-diff preview; `Ctrl+E` expands the last diff.
@@ -248,6 +280,11 @@ one provider's credentials or model onto another.
    `ollama pull qwen3:4b`.
 2. In Seed Code run `/provider` and choose **Ollama**, then `/model` and pick
    the model you pulled.
+
+Models that expose a thinking channel (Seed Code reads the model's
+`capabilities` from `GET /api/show`) also stream that reasoning into the
+thinking panel; the request enables `think` only for models that report the
+capability, and it degrades silently for models that do not.
 
 If the server is not running, Seed Code starts `ollama serve` for you and waits
 for it to become reachable. The default host is `http://localhost:11434`. A
@@ -459,4 +496,17 @@ Built by **Al Shahriar Sowan** (Eagox Studio).
 
 ## License
 
-PolyForm Noncommercial License 1.0.0 — see [LICENSE](LICENSE).
+Seed Code is licensed under the **PolyForm Noncommercial License 1.0.0** —
+see [LICENSE](LICENSE) for the full terms.
+
+In short:
+
+| | |
+| :---: | --- |
+| ✓ | Personal, educational, research and hobby use — free. |
+| ✓ | Modification and distribution with these terms included — allowed. |
+| ✗ | Commercial use — not allowed without a separate license. |
+
+Copyright © 2026 **Al Shahriar Sowan** · Eagox Studio.
+Commercial licensing or questions about the terms → open an issue or reach the
+author via <https://github.com/Alshahriar-07>.

@@ -301,7 +301,16 @@ function Test-InstalledVersion([string] $ExePath, [string] $Expected) {
     } catch {
         return $false
     }
-    return ($reported -like "*v$Expected*") -or ($reported -like "* $Expected*")
+    if (-not $reported) { return $false }
+    # Boundary-checked match, not a substring search: '19.2.0' must not pass
+    # for '9.2.0', '9.2.01' must not pass for '9.2.0', and the optional
+    # v/V version marker must be a single marker, not part of a longer word.
+    # The same rules are implemented in install.sh (version_ok) and
+    # setup.iss (VersionInOutput).
+    $pattern = [regex]::Escape($Expected)
+    $plain = [regex]::IsMatch($reported, "(?<![0-9A-Za-z.])$pattern(?![0-9.])")
+    $marked = [regex]::IsMatch($reported, "(?<![0-9A-Za-z.])[vV]$pattern(?![0-9.])")
+    return $plain -or $marked
 }
 
 function Add-ToUserPath([string] $Directory) {

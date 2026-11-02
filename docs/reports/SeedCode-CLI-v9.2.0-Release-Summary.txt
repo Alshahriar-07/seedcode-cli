@@ -1,0 +1,86 @@
+================================================================================
+ SEED CODE CLI v9.2.0 - RELEASE SUMMARY
+================================================================================
+Version:        9.2.0
+Tag:            v9.2.0
+Release date:   2026-11-01 (docs) / built 2026-11-02
+Platform:       Windows 11 x64
+Repository:     https://github.com/Alshahriar-07/seedcode-cli
+================================================================================
+
+IMPLEMENTED IMPROVEMENTS
+--------------------------------------------------------------------------------
+* Single unified coding agent: one engine, one turn lifecycle
+  (task analysis -> workspace inspection -> plan -> TODO -> tool execution ->
+  verification -> final report). Mode switching removed.
+* Right-side task plan panel: live TODO rendering from real orchestrator events
+  (o pending / . in progress / v done / x failed / r retrying), N/M progress,
+  "All tasks completed" only when every task is verified.
+* Model thinking panel: bounded, collapsible, auto-scroll with manual-scroll
+  override. Shows ONLY ThinkingDelta content the model itself exposes
+  (Ollama thinking capability detected via GET /api/show). Never synthesized.
+* Ollama improvements: capability-aware think flag, ThinkingDelta emission and
+  relay, streaming robustness (partial/malformed chunks, empty responses,
+  timeouts), auto-start without duplicate servers, provider never silently
+  switched.
+* Completion verification: files re-read after write, real exit codes parsed,
+  real test results, COMPLETED / PARTIALLY COMPLETED / FAILED / CANCELLED.
+* Real activity logging: tool name, path, command, status, exit code, duration,
+  diff previews; no AI > prefix; no fake logs.
+
+FIXED ISSUES
+--------------------------------------------------------------------------------
+* NameError: name 'active_workspace' is not defined
+* ImportError: AgentEngine entry-point drift
+* Ollama thinking stream dropped in the loop; think flag never requested
+* Installer version verification rejected "Seed Code CLI 9.2.0"; now extracts
+  the semantic version robustly (regression-tested)
+* False completion reports (evidence-based verification now required)
+* TUI preferred_height signature drift vs prompt_toolkit 3.0.16 (4-arg call)
+
+TEST SUMMARY
+--------------------------------------------------------------------------------
+Full suite: 813 passed, 0 failed, 0 skipped
+  (= 773 pre-existing + 40 new regression tests)
+New test files:
+  tests/test_v920_thinking_stream.py   (capability, think flag, ThinkingDelta)
+  tests/test_v920_task_panel.py        (panel rendering, states, progress)
+Also: real-tool agent integration tests (codemode), installer version check
+      tests (tests/test_installer_version.py), terminal title tests.
+
+BUILD ARTIFACTS (dist/release/9.2.0)
+--------------------------------------------------------------------------------
+SeedCode-CLI-9.2.0-windows-x64.exe     43,980,669 bytes   sha256 VERIFIED
+SeedCode-CLI-Setup-9.2.0.exe           45,427,583 bytes   sha256 VERIFIED
+seedcode_cli-9.2.0-py3-none-any.whl       333,932 bytes   sha256 VERIFIED
+seedcode_cli-9.2.0.tar.gz                 286,636 bytes   sha256 VERIFIED
+seedcode-cli-9.2.0.tgz                      6,399 bytes   sha256 VERIFIED
+SHA256SUMS.txt                                                 5/5 entries OK
+
+CHECKSUM VERIFICATION
+--------------------------------------------------------------------------------
+Command: sha256sum -c SHA256SUMS.txt   -> all five artifacts: OK
+Checksums are generated from the actual final files by
+scripts/windows/stage_release.py; no hashes are hand-written.
+
+INSTALLATION VERIFICATION
+--------------------------------------------------------------------------------
+* Standalone exe launches and reports: "Seed Code CLI 9.2.0";
+  Seed Code icon embedded and verified.
+* Setup installer compiled with Inno Setup 6 (ISCC.exe) and verified the same:
+  icon payload and version banner verified post-build.
+* Remote installers verify against SHA256SUMS.txt at download time and abort on
+  any mismatch or unreachable checksum file.
+
+REMAINING LIMITATIONS
+--------------------------------------------------------------------------------
+* Cloud providers not live-tested (no valid keys in this environment);
+  mocked tests cover the request paths.
+* Thinking panel populated only by models exposing a thinking channel.
+* Local-model latency (qwen3:4b: 30-300 s per turn) is model-inherent.
+* Not committed: changes are local to branch "main"; commit/push not performed
+  without explicit authorization.
+
+================================================================================
+ Generated from actual build output - no fabricated results.
+================================================================================

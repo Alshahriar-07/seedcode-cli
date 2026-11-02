@@ -23,6 +23,14 @@ what actually happened.
   the backend's current operation (`Reading README.md…`, `Waiting for the model
   response…`, `Running pytest…`) with a live elapsed timer instead of a generic
   "Working".
+- **A bounded thinking panel.** Models that expose a reasoning channel (Ollama
+  models with the `thinking` capability) stream their own reasoning into a
+  collapsible panel above the activity log — real model output, never
+  synthesized, never mixed with the response.
+- **A right-side task plan panel.** The agent's TODO list renders live beside
+  the conversation from real orchestrator task events: `○ / ● / ✓ / ✗ / ↻`
+  states, live `N / M completed` progress and completion only when every task
+  is verified.
 - **Real terminal and file reporting.** Commands report their real exit code;
   file changes report path, line counts, line range and a bounded unified diff;
   one operation produces one line (no duplicates).
@@ -66,7 +74,10 @@ what actually happened.
 - Default (built in), OpenRouter, FreeModel Claude, FreeModel Codex, AeroLink and
   Ollama, plus unlimited custom OpenAI-compatible providers.
 - Ollama is started automatically when selected and fails loudly when it cannot
-  answer; its models are listed from the live server.
+  answer; its models are listed from the live server. Capabilities come from
+  `GET /api/show`: the `think` flag is only sent for models that report the
+  `thinking` capability, and their thinking streams surface as `ThinkingDelta`
+  events in the UI rather than in the response.
 - Every provider keeps its own key and model; switching never copies one onto
   another.
 

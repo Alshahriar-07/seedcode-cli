@@ -194,6 +194,64 @@ end;
 //   2. Bare `seedcode --version` resolves through PATH exactly as a NEW
 //      terminal will see it (the fresh {app} entry is appended for the probe
 //      because this process still holds the pre-install environment).
+// ---------------------------------------------------------------------------
+// Version boundary matching (v9.2.0)
+// ---------------------------------------------------------------------------
+// The CLI reports "Seed Code CLI 9.2.0" — no 'v' prefix. Matching the version
+// as a whole token accepts that output, still accepts "Seed Code CLI v9.2.0",
+// and rejects a longer build number: '19.2.0' does not pass for '9.2.0'
+// (version preceded by a digit) and '9.2.0' does not pass for '9.2.01' /
+// '9.2.0.1' (version followed by a digit or a dot). The optional v/V version
+// marker must stand alone, not inside a longer word ("rev9.2.0" is refused).
+// The same rules are implemented in install.ps1 (Test-InstalledVersion) and
+// install.sh (version_ok).
+function VersionInOutput(const Reported, Version: string): Boolean;
+var
+  I, L, N: Integer;
+  Before, After, Before2: Char;
+begin
+  Result := False;
+  L := Length(Version);
+  N := Length(Reported);
+  if (L = 0) or (N = 0) or (L > N) then
+    exit;
+  for I := 1 to N - L + 1 do
+  begin
+    if Copy(Reported, I, L) <> Version then
+      continue;
+    // Boundary BEFORE the version: a separator, the start of the text, or a
+    // lone v/V marker. A digit ('19.2.0') or a dot ('...9.2.0') never is.
+    if I > 1 then
+    begin
+      Before := Reported[I - 1];
+      if ((Before >= '0') and (Before <= '9')) or (Before = '.') then
+        continue;
+      if ((Before >= 'A') and (Before <= 'Z')) or
+         ((Before >= 'a') and (Before <= 'z')) then
+      begin
+        if (Before <> 'v') and (Before <> 'V') then
+          continue;
+        // The v/V marker itself must not be part of a longer word.
+        Before2 := ' ';
+        if I > 2 then
+          Before2 := Reported[I - 2];
+        if ((Before2 >= 'A') and (Before2 <= 'Z')) or
+           ((Before2 >= 'a') and (Before2 <= 'z')) then
+          continue;
+      end;
+    end;
+    // Boundary AFTER the version: end of text or a non-digit, non-dot char
+    // ('9.2.0' is not '9.2.01' nor '9.2.0.1').
+    After := ' ';
+    if I + L <= N then
+      After := Reported[I + L];
+    if ((After >= '0') and (After <= '9')) or (After = '.') then
+      continue;
+    Result := True;
+    exit;
+  end;
+end;
+
 function VersionReportOk(const Command: string; var Reported: string): Boolean;
 var
   ResultCode: Integer;
@@ -214,7 +272,7 @@ begin
   if not LoadStringFromFile(VerFile, Output) then
     exit;
   Reported := Trim(String(Output));
-  Result := Pos('v{#MyAppVersion}', Reported) > 0;
+  Result := VersionInOutput(Reported, '{#MyAppVersion}');
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
@@ -233,7 +291,9 @@ begin
       SuppressibleMsgBox(
         'Installation verification FAILED.' + #13#10#13#10 +
         'The installed seedcode.exe did not report version {#MyAppVersion} ' +
-        '(it said: "' + Reported + '").' + #13#10#13#10 +
+        '(it said: "' + Reported + '"). A version like "Seed Code CLI ' +
+        '{#MyAppVersion}" IS accepted; a different build number, an empty or ' +
+        'malformed output is not. ' + #13#10#13#10 +
         'The copied program is incomplete or damaged. Try running the ' +
         'installer again; if it keeps failing, report it at {#MyAppURL}.',
         mbCriticalError, MB_OK, IDOK);

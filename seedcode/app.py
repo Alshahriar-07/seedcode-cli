@@ -375,6 +375,16 @@ class _TaskPresenter:
         if kind == "say" and flow is not None:
             flow.observe_text(detail)
             return
+        if kind == "thinking":
+            # v9.2.0: model-exposed reasoning (real provider channel only).
+            # Streams into the bounded thinking panel; ignored elsewhere.
+            tui = getattr(self.ui, "tui", None)
+            if tui is not None:
+                try:
+                    tui.state.append_thinking(detail)
+                except Exception:  # pragma: no cover - display-only
+                    pass
+            return
         if kind == "error":
             self.ui.dim(f"  ✖ {detail.splitlines()[0][:120]}")
             self._set_status(Status.ERROR, "an operation failed")
@@ -487,6 +497,30 @@ class _TaskPresenter:
             self._flush_report("failed")
 
 
+    # Kinds after which the right-side TASK PLAN panel is refreshed with the
+    # graph's real snapshot — the same event the activity line uses.
+    _PLAN_PUBLISH_KINDS = frozenset(
+        {"plan_ready", "task_start", "task_done", "task_failed", "task_blocked",
+         "task_skipped", "recovery"}
+    )
+
+    def _publish_plan_rows(self, graph, total: int | None) -> None:
+        """Push the task graph's snapshot into the TUI's plan panel.
+
+        ``None`` clears the panel (no active plan). Best-effort: a rendering
+        problem never touches execution.
+        """
+        tui = getattr(self.ui, "tui", None)
+        if tui is None or not hasattr(tui, "state"):
+            return
+        try:
+            rows: list[tuple[str, str]] = []
+            if total is not None and callable(getattr(graph, "checklist", None)):
+                rows = list(graph.checklist(limit=12))
+            tui.state.set_plan(rows)
+        except Exception:  # pragma: no cover - display-only
+            pass
+
     # --- live TODO/plan lines (TUI) -----------------------------------------
     def _tui_plan_update(self, kind: str, detail: str) -> None:
         """One real plan-state line in the persistent TUI feed.
@@ -508,7 +542,11 @@ class _TaskPresenter:
             if detail:
                 text = f"{text} — {str(detail).strip()[:120]}"
             self.ui.append_activity("action", text)
+            self._publish_plan_rows(graph, total)
             return
+        self._publish_plan_rows(
+            graph, total if kind in self._PLAN_PUBLISH_KINDS else None
+        )
         states = {
             "task_start": ("\u25cf", "action", "Working on"),
             "task_done": ("\u2713", "success", "Completed"),
@@ -906,6 +944,15 @@ def _handle_agent(
         _handle_codemode(ui, agent, history, text, presenter)
         return
 
+    # v9.2.0: a fresh bounded thinking panel for every turn, collapsed only
+    # when the parseable answer has been produced.
+    _tui = getattr(ui, "tui", None)
+    if _tui is not None:
+        try:
+            _tui.state.reset_thinking()
+        except Exception:  # pragma: no cover - display-only
+            pass
+
     lc = lifecycle()
     flow = TaskFlow.for_ui(
         ui, mode_label=_task_mode_label(agent.config), task=text
@@ -941,6 +988,11 @@ def _handle_agent(
             presenter.flow = None
 
     if outcome != "completed":
+        if _tui is not None:
+            try:
+                _tui.state.collapse_thinking()
+            except Exception:  # pragma: no cover - display-only
+                pass
         if reason:
             ui.error(reason)
         else:
@@ -958,6 +1010,11 @@ def _handle_agent(
         # a time, and the answer deserves the full width.
         flow.stop()
     final = strip_tool_blocks(reply or "")
+    if _tui is not None:
+        try:
+            _tui.state.collapse_thinking()
+        except Exception:  # pragma: no cover - display-only
+            pass
     if final.strip():
         with ui.streaming() as renderer:
             renderer.feed(final)

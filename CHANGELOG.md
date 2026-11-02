@@ -11,6 +11,18 @@ activity log, and the removal of the remaining non-coding features.
 
 ### Added
 
+- **Model thinking stream.** Providers can now emit a `ThinkingDelta` event
+  carrying the model's own reasoning (Ollama's `thinking` field). Seed Code
+  requests the thinking channel only when `GET /api/show` reports the
+  `thinking` capability for the selected model, streams it into a bounded,
+  collapsible thinking panel (never synthesized by the UI, never mixed with
+  the response, auto-scroll with manual-scroll override), and collapses it
+  when the turn ends.
+- **Right-side task plan panel.** The orchestrator's task events
+  (`task_start`, `task_done`, `task_retry`, …) drive a live TODO panel beside
+  the conversation: `○` pending, `●` in progress, `✓` completed, `✗` failed,
+  `↻` retrying, real `N / M` progress and an `All tasks completed` state —
+  rendered from actual orchestrator events, never fake animations.
 - **Live current-operation status.** The thinking spinner shows the backend's
   real operation (`Reading README.md…`, `Waiting for the model response…`) with
   a live elapsed timer instead of a generic "Working".

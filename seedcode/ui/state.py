@@ -181,6 +181,27 @@ class AppState:
     messages: list[dict[str, Any]] = field(default_factory=list)
     activities: list[Activity] = field(default_factory=list)
 
+    # --- v9.2.0: the right-side TASK PLAN panel -----------------------------
+    #: ``(state, title)`` rows of the active task plan, straight from the
+    #: session's task graph. Real orchestrator state — never an animation;
+    #: empty while no plan is running, which hides the panel.
+    plan_rows: list[tuple[str, str]] = field(default_factory=list)
+
+    # --- v9.2.0: the thinking panel -----------------------------------------
+    #: Reasoning text exposed by the model itself (a thinking channel such as
+    #: Ollama's ``thinking`` field). Never synthesized by the UI; empty when
+    #: the model exposes none.
+    thinking_text: str = ""
+    #: Collapsed state of the thinking panel (auto-collapsed at turn end; the
+    #: user can re-expand it with Ctrl+B).
+    thinking_open: bool = True
+    #: Manual scroll offset into the thinking text (0 = follow the bottom).
+    thinking_offset: int = 0
+
+    #: Bounded size of the thinking buffer (characters): old reasoning text
+    #: is dropped, never unbounded.
+    THINKING_BUFFER_LIMIT = 24_000
+
     # --- reactivity ---------------------------------------------------------
     version: int = 0
     _listeners: list[Callable[["AppState"], None]] = field(
@@ -256,6 +277,83 @@ class AppState:
             self.messages.append({"role": role, "text": text})
             self.version += 1
         self._notify()
+
+    # --- plan / thinking mutations (v9.2.0) -----------------------------------
+    def set_plan(self, rows: list[tuple[str, str]]) -> None:
+        """Publish one task-plan snapshot (the right-side TASK PLAN panel).
+
+        A snapshot replaces the previous one in full — a task that has since
+        failed or been skipped is never silently shown as pending again.
+        """
+        normalized = [
+            (str(getattr(s, "value", s) or "pending"), str(t or "")) for (s, t) in rows
+        ][:12]
+        with self._lock:
+            changed = normalized != self.plan_rows
+            if changed:
+                self.plan_rows = normalized
+                self.version += 1
+        if changed:
+            self._notify()
+
+    def reset_thinking(self) -> None:
+        """Start of a new turn: a fresh thinking stream, panel expanded."""
+        with self._lock:
+            self.thinking_text = ""
+            self.thinking_offset = 0
+            self.thinking_open = True
+            self.version += 1
+        self._notify()
+
+    def collapse_thinking(self) -> None:
+        """Turn end (or user action): collapse the bounded thinking panel."""
+        with self._lock:
+            if self.thinking_open:
+                self.thinking_open = False
+                self.version += 1
+        self._notify()
+
+    def toggle_thinking(self) -> None:
+        """User action (Ctrl+B): collapse / expand the thinking panel."""
+        with self._lock:
+            if self.thinking_text:
+                self.thinking_open = not self.thinking_open
+                if self.thinking_open:
+                    self.thinking_offset = 0
+                self.version += 1
+        self._notify()
+
+    def append_thinking(self, chunk: str) -> None:
+        """Fold one model-exposed reasoning chunk into the bounded buffer."""
+        if not chunk:
+            return
+        changed = False
+        with self._lock:
+            self.thinking_text += chunk
+            if len(self.thinking_text) > self.THINKING_BUFFER_LIMIT:
+                # Drop the oldest half; the buffer stays bounded forever.
+                self.thinking_text = self.thinking_text[len(self.thinking_text) // 2 :]
+            changed = True
+            self.version += 1
+        if changed:
+            self._notify()
+
+    def scroll_thinking(self, lines: int) -> None:
+        """User manual scroll of the thinking panel (older content up)."""
+        with self._lock:
+            self.thinking_offset = max(0, self.thinking_offset + int(lines))
+            self.version += 1
+        self._notify()
+
+    def thinking_follow(self) -> bool:
+        """True while the panel auto-follows the bottom (offset == 0).
+
+        While the user has scrolled up the panel keeps their position — new
+        reasoning does not yank it down — and auto-scroll resumes when they
+        return to the bottom.
+        """
+        with self._lock:
+            return self.thinking_offset == 0
 
     # --- construction -------------------------------------------------------
     @classmethod

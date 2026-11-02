@@ -39,7 +39,12 @@ from .intent import Intent, IntentKind, classify
 from .models import AppConfig, Message, ToolCallRecord, clean_values
 from .project import detect_project
 from .providers import provider_label
-from .providers.base import TextDelta, ToolCallEvent, ToolSpec
+from .providers.base import (
+    TextDelta,
+    ThinkingDelta,
+    ToolCallEvent,
+    ToolSpec,
+)
 from .tasks import TurnEvidence
 from ..tools import (
     TOOL_REGISTRY,
@@ -691,6 +696,10 @@ class AgentEngine(ChatEngine):
             for event in self.stream_reply_events(specs):
                 if isinstance(event, TextDelta):
                     text_parts.append(event.text)
+                elif isinstance(event, ThinkingDelta):
+                    # Model-exposed reasoning: forwarded to the UI as its own
+                    # event kind — never counted as answer content.
+                    self._on_event("thinking", event.text)
                 elif isinstance(event, ToolCallEvent):
                     calls.append(
                         ToolCall(
