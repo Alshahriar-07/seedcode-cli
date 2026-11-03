@@ -300,18 +300,18 @@ class _AutocompleteControl(UIControl):
 
 
 class _PlanControl(UIControl):
-    """The right-side TASK PLAN panel (v9.2.0): dynamic width, real state.
+    """The right-side TODO panel (v9.3.1): dynamic width, real hierarchical state.
 
     ``provider(width, height)`` renders the visible rows from live state; the
     control reports its own preferred width, so the panel sizes to the plan
-    (clipped) and *collapses to nothing* when there is no plan or the terminal
-    is too narrow for the conversation next to it.
+    (clipped) and *collapses to nothing* only when there is no plan or the
+    terminal is too narrow to give the conversation a usable column at all.
     """
 
     #: Limits: hard-clip any title, hide entirely under this terminal width.
-    MAX_WIDTH = 30
-    MIN_ROOM = 72
-    MAX_TITLE = 24
+    MAX_WIDTH = 34
+    MIN_ROOM = 48
+    MAX_TITLE = 30
 
     def __init__(
         self,
@@ -350,13 +350,25 @@ class _PlanControl(UIControl):
 
 
 def calculated_plan_width(rows, terminal_width: int) -> int:
-    """The panel width: title-bound, terminal-limited, 0 when it must hide."""
+    """The panel width: title-bound, terminal-limited, 0 when it must hide.
+
+    The panel keeps a real column on a narrow terminal (v9.3.1) instead of
+    silently disappearing: it only hides below :data:`_PlanControl.MIN_ROOM`
+    columns, where a split would leave the conversation unusable.
+    """
     if not rows or terminal_width < _PlanControl.MIN_ROOM:
         return 0
-    longest = max((len(str(title or "")) for _s, title in rows), default=0)
+    longest = 0
+    for row in rows:
+        try:
+            title = str(row[1] or "")
+            depth = int(row[2] or 0)
+        except (IndexError, TypeError, ValueError):
+            title, depth = str(row or ""), 0
+        longest = max(longest, len(title) + 2 * depth)
     clipped = min(longest, _PlanControl.MAX_TITLE)
-    # glyph + space + padding, and never wider than a third of the screen.
-    return max(8, min(_PlanControl.MAX_WIDTH, clipped + 6, terminal_width // 3))
+    # glyph + arrows + padding, and never more than a third of the screen.
+    return max(8, min(_PlanControl.MAX_WIDTH, clipped + 7, terminal_width // 3))
 
 
 class _ThinkingControl(UIControl):
@@ -465,6 +477,7 @@ class ChatTUI:
         self._header_rows = 0
         self._input_rows = _MIN_INPUT_LINES
         self._permission_rows = 0
+        self._thinking_rows = 0
         self._hint_rows = _HINT_ROWS
         #: The thread running the prompt_toolkit event loop. A permission ask
         #: arriving on this thread could never be answered (the event loop is
@@ -620,7 +633,13 @@ class ChatTUI:
         }
         mark, colour = marks.get(kind, marks["note"])
         line = Text()
-        line.append(f"{_ACTIVITY_INDENT}{mark} ", style=colour)
+        # v9.3.2: no bracketed timestamp in the conversation pane. The bracketed
+        # wall-clock prefix here printed between/next to the streamed AI
+        # response — the "[TIME 12:34:56]" the user saw was this stamp (no code
+        # path ever appends a timestamp to the response text itself). When it
+        # happened is kept in the backend :class:`ActivityEvent.timestamp`.
+        line.append(f"{_ACTIVITY_INDENT}", style=palette.dim)
+        line.append(f"{mark} ", style=colour)
         line.append(safe_text(text), style=colour)
         self.console.print(line, highlight=False)
 
@@ -1134,6 +1153,11 @@ class ChatTUI:
             0, min(self._input_height(), budget - _COMPOSER_FRAME_ROWS)
         )
         budget -= input_rows + _COMPOSER_FRAME_ROWS
+        # The Thinking strip is reserved directly above the composer (it is
+        # compact and only exists while there is reasoning to show), then the
+        # header, then the transient lists.
+        thinking = min(self._thinking_height(), max(0, budget))
+        budget -= thinking
         header = min(self._header_row_count(), max(0, budget))
         budget -= header
         # The suggestion list is transient but bounded: served after the
@@ -1144,6 +1168,7 @@ class ChatTUI:
 
         self._hint_rows = hint
         self._input_rows = input_rows
+        self._thinking_rows = thinking
         self._header_rows = header
         self._permission_rows = permission
 
@@ -1158,6 +1183,7 @@ class ChatTUI:
             self._header_rows
             + self._auto_rows
             + self._permission_rows
+            +            self._thinking_rows
             + self._input_rows
             + _COMPOSER_FRAME_ROWS
             + self._hint_rows
@@ -1179,34 +1205,61 @@ class ChatTUI:
         return Dimension.exact(self._hint_rows)
 
     # --- v9.2.0: TASK PLAN + THINKING panels ---------------------------------
+    def _visible_plan_nodes(self) -> list[tuple[str, str, int, int, bool]]:
+        """The tree rows the panel shows, with collapsed subtrees hidden.
+
+        Collapsing is a display state of the real tree (the ids are the task
+        graph's own), so hiding a subtree never changes task state or progress.
+        """
+        rows = list(self.state.plan_nodes or [])
+        closed = {int(i) for i in (self.state.plan_collapsed or [])}
+        visible: list[tuple[str, str, int, int, bool]] = []
+        hidden_at: int | None = None
+        for state, title, depth, task_id, has_children in rows:
+            depth = int(depth)
+            if hidden_at is not None:
+                if depth > hidden_at:
+                    continue
+                hidden_at = None
+            visible.append((state, title, depth, task_id, has_children))
+            if has_children and int(task_id) in closed:
+                hidden_at = depth
+        return visible
+
     def _plan_fragments(self, width: int, height: int) -> list[StyledLine]:
-        """The right-side plan rows, styled straight from live state."""
+        """The right-side TODO rows, styled straight from the real task graph."""
+        from .taskpanel import state_role, task_glyph, tree_progress
         from .theme import active_palette
-        from .taskpanel import plan_progress, state_role, task_glyph
 
         palette = active_palette()
-        rows = list(self.state.plan_rows or [])
+        rows = self._visible_plan_nodes()
+        closed = {int(i) for i in (self.state.plan_collapsed or [])}
         lines: list[StyledLine] = []
         inner = max(1, (width or 1) - 1)
-        for state, title in rows:
+        for state, title, depth, task_id, has_children in rows:
             style = f"fg:{getattr(palette, state_role(state), palette.dim)}"
+            arrow = ""
+            if has_children:
+                arrow = "\u25b6 " if int(task_id) in closed else "\u25bc "
+            prefix = f"{'  ' * max(0, int(depth))}{arrow}{task_glyph(state)} "
             title = " ".join(str(title or "").split())
-            clipped = (
-                title
-                if len(title) <= inner - 2
-                else title[: max(0, inner - 3)] + "\u2026"
-            )
-            lines.append([(style, f" {task_glyph(state)} "), (f"fg:{palette.text}", clipped)])
-        progress = plan_progress(rows)
+            room = max(1, inner - len(prefix))
+            clipped = title if len(title) <= room else title[: max(0, room - 1)] + "\u2026"
+            lines.append([(style, f" {prefix}"), (f"fg:{palette.text}", clipped)])
+        progress = tree_progress(
+            list(self.state.plan_nodes or []), self.state.plan_percent
+        )
         if progress:
             lines.append([(f"fg:{palette.dim}", f" {progress}")])
         return lines
 
     def _plan_height(self) -> int:
-        """Panel rows: one per plan task plus the progress line (0 = hidden)."""
-        rows = list(self.state.plan_rows or [])
-        return len(rows) + 1 if rows else 0
+        """Panel rows: one per visible task plus the progress line (0 = hidden)."""
+        if not self.state.plan_nodes:
+            return 0
+        return len(self._visible_plan_nodes()) + 1
 
+    # --- v9.3.2: the compact Thinking strip ---------------------------------
     def _thinking_fragments(self, width: int, height: int) -> list[StyledLine]:
         """A bounded slice of the model's own reasoning stream.
 
@@ -1228,20 +1281,31 @@ class ChatTUI:
         end = len(text) - offset
         start = max(0, end - visible)
         slice_ = text[start:end]
-        lines: list[StyledLine] = [[(f"fg:{palette.dim}", " \u2500 Thinking \u2500")]]
+        # v9.3.2: minimal presentation — one small dim label, then the
+        # model's own reasoning, also dim. No heading, no LIVE badge, no
+        # model/provider metadata (execution status stays in backend state).
+        lines: list[StyledLine] = [[(f"fg:{palette.dim}", " Thinking...")]]
         for line in slice_:
+            # The reasoning stream renders dim/faded: visually quieter than
+            # a normal AI response, a tool echo or an activity line.
             lines.append(
-                [(f"fg:{palette.text}", " " + line[: max(1, (width or 1) - 1)])]
+                [(f"fg:{palette.dim}", " " + line[: max(1, (width or 1) - 1)])]
             )
         return lines
 
     def _thinking_height(self) -> int:
-        """Bounded height: ~30% of the terminal, capped; 0 when hidden."""
+        """Compact height: a small bounded slice, 0 when hidden.
+
+        The strip is a subtle text area, not a dashboard: at most a few rows
+        and never on a terminal too short to keep the conversation usable.
+        """
         if not (self.state.thinking_text or "").strip():
             return 0
         if not self.state.thinking_open:
             return 0
-        return max(3, min(int(self._rows * 0.30), 14))
+        if self._rows < 12:
+            return 0
+        return max(3, min(int(self._rows * 0.2), 6))
 
     def _plan_dimension(self) -> Dimension:
         rows = self._plan_height()
@@ -1498,6 +1562,18 @@ class ChatTUI:
         # Thinking starts the moment the message is sent — before the provider
         # has been called — and is replaced by the answer as soon as it streams.
         self.state.set_status(Status.THINKING, "composing a reply")
+        # Backend state only: the turn's real phase (no longer rendered —
+        # the bottom strip is the compact reasoning display).
+        self.state.set_briefing(
+            active=True,
+            status="Thinking",
+            task=safe_text(text).strip()[:160],
+            activity="Composing a reply",
+            last_completed="",
+            next_action="",
+            retry="",
+            error="",
+        )
         self.start_thinking("Thinking")
         self._invalidate()
         try:
@@ -1513,6 +1589,8 @@ class ChatTUI:
             self.append_activity("error", f"{type(exc).__name__}: {exc}")
         finally:
             self.stop_thinking()
+            # The turn is over: the briefing must not claim the model is working.
+            self.state.reset_briefing()
             self._busy = False
             self._cancel.clear()
             self._invalidate()
@@ -1735,6 +1813,13 @@ class ChatTUI:
             self.state.toggle_thinking()
             self._invalidate()
 
+        # v9.3.1: the TODO tree — Ctrl+O collapses / expands the container
+        # tasks (every container when nothing is selected).
+        @kb.add("c-o")
+        def _(_event) -> None:
+            self.state.toggle_plan_collapse()
+            self._invalidate()
+
         @kb.add("c-up")
         def _(_event) -> None:
             if (self.state.thinking_text or "").strip():
@@ -1852,7 +1937,7 @@ class ChatTUI:
             _PlanControl(
                 self._plan_fragments,
                 lambda: self._width,
-                lambda: self.state.plan_rows,
+                lambda: self.state.plan_nodes,
             ),
             height=self._plan_dimension,
             width=None,  # the control's preferred width sizes the panel
@@ -1867,10 +1952,13 @@ class ChatTUI:
         root = HSplit(
             [
                 self._header_window,
-                self._thinking_window,
+                # LEFT: main chat + activity. RIGHT: hierarchical TODO list.
                 VSplit([self._content_window, self._plan_window]),
                 self._autocomplete_window,
                 self._permission_window,
+                # Bottom strip: the compact thinking display sits directly
+                # above the input; it takes zero rows when there is nothing.
+                self._thinking_window,
                 composer,
                 self._hint_window,
             ]

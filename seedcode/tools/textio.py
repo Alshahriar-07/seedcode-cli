@@ -14,6 +14,7 @@ on the read side).
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -55,13 +56,37 @@ def read_text_file(path: Path) -> TextFile:
     return TextFile(text=text.replace("\r\n", "\n"), encoding=encoding, newline=newline)
 
 
+def write_bytes_atomically(path: Path, data: bytes) -> None:
+    """Write ``data`` so a crash/interrupt can never leave a partial file.
+
+    The bytes go to a temp file beside the target, are flushed and fsynced
+    (durable before the rename), then moved into place with ``os.replace``
+    (atomic on Windows and POSIX for a repaired-but-real filesystem). A
+    permission or locked-file failure surfaces as OSError and the temp file is
+    always cleaned up, so no partial or stale file is ever left behind.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".seedcode-tmp")
+    try:
+        with open(tmp, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)  # atomic: readers see the old or new content only
+    finally:
+        if tmp.exists():
+            tmp.unlink(missing_ok=True)
+
+
 def write_text_file(path: Path, tf: TextFile) -> None:
     """Write normalized text back with the original newline and encoding.
 
     v7.1.0: the text is normalized first, so a lone surrogate (from model or
     tool output) becomes U+FFFD instead of raising ``UnicodeEncodeError`` here
     — a bad character must never fail an edit or crash a session.
+    v9.3.2: the write is atomic (see :func:`write_bytes_atomically`), so an
+    interrupted edit can never leave a truncated or half-written file.
     """
     text = tf.text.replace("\n", tf.newline) if tf.newline != "\n" else tf.text
     text = safe_text(text)
-    path.write_bytes(text.encode(tf.encoding, "replace"))
+    write_bytes_atomically(path, text.encode(tf.encoding, "replace"))

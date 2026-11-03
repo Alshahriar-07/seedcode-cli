@@ -82,6 +82,37 @@ _SKIP_RE = re.compile(
     r"TASK\s+(\d+)\s+SKIPPED\b\s*[:\-–]?\s*(.*)", re.IGNORECASE
 )
 
+# --- task intent (v9.3.2 execution enforcement) -----------------------------
+#: Verb that means the task must actually change the workspace. Mutating is
+#: the DEFAULT: anything ambiguous is treated as needing writes, so a file-
+#: modification task can never verify on a printed claim alone.
+_TASK_WRITE_RE = re.compile(
+    r"\b(create|write|add|edit|update|fix|implement|refactor|delete|rename|move|"
+    r"remove|install|modify|build|generate|migrate|convert|configure|replace)\b",
+    re.IGNORECASE,
+)
+#: Verb that marks research/explanation work — a task that may legitimately
+#: finish after real read-only inspection, with no write at all.
+_TASK_RESEARCH_RE = re.compile(
+    r"\b(analy[sz]e|analysis|explain|review|inspect|summari[sz]e|summary|"
+    r"understan[dz]|research|audit|inventory|report|document)\b",
+    re.IGNORECASE,
+)
+
+
+def _task_allows_read_only(task: Task) -> bool:
+    """Whether ``task`` is genuinely research/explanation work.
+
+    Strictly conservative: a task is read-only ONLY when it contains no modify
+    verb at all AND at least one research verb. "Review then fix" contains the
+    modify verb, so it still requires writes — never relaxed. This deliberately
+    cannot be gamed by adding nice words around a request the user wrote.
+    """
+    text = f"{task.title} {task.detail}"
+    if _TASK_WRITE_RE.search(text):
+        return False
+    return bool(_TASK_RESEARCH_RE.search(text))
+
 
 class TaskCancelled(Exception):
     """The user asked to stop the session; state and files are preserved."""
@@ -661,7 +692,12 @@ class CodeSession:
             task.note_action("verifying acceptance criteria")
             task.mark(TaskState.VERIFYING, "verifying acceptance criteria")
             self.event("verify", f"verifying Task {task.id}")
-            outcome = verify_task(task, self.task_evidence, self.workspace)
+            outcome = verify_task(
+                task,
+                self.task_evidence,
+                self.workspace,
+                read_only=_task_allows_read_only(task),
+            )
             last_outcome = outcome
             task.verification = outcome.detail
             if outcome.ok:

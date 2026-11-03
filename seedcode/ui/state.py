@@ -29,6 +29,8 @@ import threading
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from .briefing import Briefing
+
 __all__ = [
     "Activity",
     "AppState",
@@ -186,6 +188,18 @@ class AppState:
     #: session's task graph. Real orchestrator state — never an animation;
     #: empty while no plan is running, which hides the panel.
     plan_rows: list[tuple[str, str]] = field(default_factory=list)
+    #: The same snapshot with its hierarchy: ``(state, title, depth, task_id,
+    #: has_children)`` in tree order. This is what the panel renders (v9.3.1).
+    plan_nodes: list[tuple[str, str, int, int, bool]] = field(default_factory=list)
+    #: Verified-work percentage reported by the task graph itself.
+    plan_percent: int = 0
+    #: Container task ids the user collapsed (display-only, real ids).
+    plan_collapsed: list[int] = field(default_factory=list)
+
+    # --- internal execution status (not user-facing; see briefing.py) -------
+    #: What the selected model is doing right now, set only from real events
+    #: (see :mod:`seedcode.ui.briefing`). Idle until a turn really starts.
+    briefing: Briefing = field(default_factory=Briefing)
 
     # --- v9.2.0: the thinking panel -----------------------------------------
     #: Reasoning text exposed by the model itself (a thinking channel such as
@@ -197,10 +211,19 @@ class AppState:
     thinking_open: bool = True
     #: Manual scroll offset into the thinking text (0 = follow the bottom).
     thinking_offset: int = 0
+    #: Whether THIS turn streamed at least one (non-blank) model-exposed
+    #: reasoning chunk. The panel never invents reasoning: a turn whose model
+    #: exposed no reasoning records the honest fallback line instead (see
+    #: :meth:`collapse_thinking`), and blank deltas never suppress it.
+    reasoning_seen: bool = False
 
     #: Bounded size of the thinking buffer (characters): old reasoning text
     #: is dropped, never unbounded.
     THINKING_BUFFER_LIMIT = 24_000
+
+    #: The single truthful line shown for a model that exposed no reasoning
+    #: stream during a turn (v9.3.2). Nothing else is ever fabricated.
+    REASONING_FALLBACK = "Reasoning stream unavailable for this model."
 
     # --- reactivity ---------------------------------------------------------
     version: int = 0
@@ -280,21 +303,120 @@ class AppState:
 
     # --- plan / thinking mutations (v9.2.0) -----------------------------------
     def set_plan(self, rows: list[tuple[str, str]]) -> None:
-        """Publish one task-plan snapshot (the right-side TASK PLAN panel).
+        """Publish one flat task-plan snapshot (the right-side panel).
 
         A snapshot replaces the previous one in full — a task that has since
         failed or been skipped is never silently shown as pending again.
         """
         normalized = [
             (str(getattr(s, "value", s) or "pending"), str(t or "")) for (s, t) in rows
-        ][:12]
+        ][:40]
+        nodes = [(state, title, 0, index, False) for index, (state, title) in enumerate(normalized, start=1)]
+        self.set_plan_tree(nodes, plan_rows=normalized)
+
+    def set_plan_tree(
+        self,
+        nodes: list[tuple[Any, Any, Any, Any, Any]],
+        *,
+        percent: int | None = None,
+        plan_rows: list[tuple[str, str]] | None = None,
+    ) -> None:
+        """Publish the task graph's hierarchical snapshot (v9.3.1).
+
+        ``nodes`` are ``(state, title, depth, task_id, has_children)`` rows in
+        tree order, straight from ``TaskGraph.tree_rows()``; ``percent`` is the
+        graph's own verified-work figure. ``plan_rows`` is derived for the flat
+        compatibility view unless the caller supplies it.
+        """
+        normalized: list[tuple[str, str, int, int, bool]] = []
+        for node in nodes:
+            state, title, depth, task_id, has_children = node
+            normalized.append(
+                (
+                    str(getattr(state, "value", state) or "pending"),
+                    str(title or ""),
+                    max(0, int(depth or 0)),
+                    int(task_id or 0),
+                    bool(has_children),
+                )
+            )
+        normalized = normalized[:40]
+        flat = plan_rows if plan_rows is not None else [(n[0], n[1]) for n in normalized]
+        if percent is None:
+            total = len(normalized)
+            done = sum(1 for state, *_rest in normalized if state == "completed")
+            percent = int(round(100 * done / total)) if total else 0
         with self._lock:
-            changed = normalized != self.plan_rows
+            changed = (
+                normalized != self.plan_nodes
+                or flat != self.plan_rows
+                or int(percent) != self.plan_percent
+            )
             if changed:
-                self.plan_rows = normalized
+                self.plan_nodes = normalized
+                self.plan_rows = flat
+                self.plan_percent = int(percent)
+                # Forget collapsed ids that no longer exist (a new plan).
+                live = {n[3] for n in normalized if n[4]}
+                self.plan_collapsed = [i for i in self.plan_collapsed if i in live]
                 self.version += 1
         if changed:
             self._notify()
+
+    def toggle_plan_collapse(self, task_id: int | None = None) -> None:
+        """Collapse/expand a container task (all containers when no id)."""
+        with self._lock:
+            containers = {n[3] for n in self.plan_nodes if n[4]}
+            if not containers:
+                return
+            if task_id is None:
+                if containers - set(self.plan_collapsed):
+                    self.plan_collapsed = sorted(containers | set(self.plan_collapsed))
+                else:
+                    self.plan_collapsed = []  # everything closed -> open all
+            elif int(task_id) in self.plan_collapsed:
+                self.plan_collapsed = [i for i in self.plan_collapsed if i != int(task_id)]
+            elif int(task_id) in containers:
+                self.plan_collapsed = sorted([*self.plan_collapsed, int(task_id)])
+            else:
+                return
+            self.version += 1
+        self._notify()
+
+    # --- live briefing (v9.3.1) ----------------------------------------------
+    def set_briefing(self, **fields: Any) -> None:
+        """Update the bottom LIVE AI BRIEFING from one real execution event."""
+        allowed = {
+            "active",
+            "status",
+            "task",
+            "activity",
+            "last_completed",
+            "next_action",
+            "retry",
+            "error",
+        }
+        changed = False
+        with self._lock:
+            for key, value in fields.items():
+                if key not in allowed:
+                    continue
+                if getattr(self.briefing, key) != value:
+                    setattr(self.briefing, key, value)
+                    changed = True
+            if changed:
+                self.version += 1
+        if changed:
+            self._notify()
+
+    def reset_briefing(self, status: str = "") -> None:
+        """Return the briefing to idle (no request in flight)."""
+        with self._lock:
+            self.briefing.clear()
+            if status:
+                self.briefing.status = status
+            self.version += 1
+        self._notify()
 
     def reset_thinking(self) -> None:
         """Start of a new turn: a fresh thinking stream, panel expanded."""
@@ -302,12 +424,50 @@ class AppState:
             self.thinking_text = ""
             self.thinking_offset = 0
             self.thinking_open = True
+            self.reasoning_seen = False
             self.version += 1
         self._notify()
 
-    def collapse_thinking(self) -> None:
-        """Turn end (or user action): collapse the bounded thinking panel."""
+    def begin_reasoning(self) -> None:
+        """Start a request's reasoning window without touching the buffer.
+
+        A plan session may keep its thinking history across turns, but the
+        reasoning *accounting* is per request: whatever the previous request
+        streamed must not suppress this one's honest fallback record.
+        """
         with self._lock:
+            self.reasoning_seen = False
+            self.version += 1
+        self._notify()
+
+    def finish_thinking(self) -> None:
+        """End-of-turn record: no reasoning streamed → the honest fallback.
+
+        A turn that ends through :meth:`collapse_thinking` gets the same
+        record there; plan sessions (which keep their buffer across turns)
+        call this when the request finishes. Idempotent and never fabricates
+        anything beyond the single truthful line.
+        """
+        with self._lock:
+            if not self.reasoning_seen and not self.thinking_text.strip():
+                self.thinking_text = self.REASONING_FALLBACK
+                self.version += 1
+        self._notify()
+
+    def collapse_thinking(self) -> None:
+        """Turn end (or user action): collapse the bounded thinking panel.
+
+        If nothing in the turn exposed a reasoning stream (a model/provider
+        without a thinking channel, or a turn that failed before any delta
+        arrived), the completed panel records the single honest line instead
+        of silently disappearing: the preserved thinking buffer is always
+        truthful. The record is idempotent — repeated end-of-turn collapses
+        never duplicate it.
+        """
+        with self._lock:
+            if not self.reasoning_seen and not self.thinking_text.strip():
+                self.thinking_text = self.REASONING_FALLBACK
+                self.version += 1
             if self.thinking_open:
                 self.thinking_open = False
                 self.version += 1
@@ -325,10 +485,13 @@ class AppState:
 
     def append_thinking(self, chunk: str) -> None:
         """Fold one model-exposed reasoning chunk into the bounded buffer."""
-        if not chunk:
+        if not (chunk or "").strip():
+            # A blank delta is not real reasoning: it never suppresses the
+            # honest fallback and never enters the buffer.
             return
         changed = False
         with self._lock:
+            self.reasoning_seen = True
             self.thinking_text += chunk
             if len(self.thinking_text) > self.THINKING_BUFFER_LIMIT:
                 # Drop the oldest half; the buffer stays bounded forever.

@@ -29,7 +29,7 @@
 #ifdef AppVersionFromBuild
   #define MyAppVersion AppVersionFromBuild
 #else
-  #define MyAppVersion "9.2.1"
+  #define MyAppVersion "9.3.2"
 #endif
 ; Refuse to compile without the build outputs - packaging nothing (or a
 ; leftover) must fail loudly, not "succeed".
@@ -94,7 +94,7 @@ LicenseFile=..\..\LICENSE
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
-; v9.2.1: checked by default. The installer must leave a desktop icon behind
+; v9.3.1: checked by default. The installer must leave a desktop icon behind
 ; without the user having to find an unchecked "additional icons" task.
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; \
     GroupDescription: "Additional icons:"
@@ -197,14 +197,14 @@ end;
 //      terminal will see it (the fresh {app} entry is appended for the probe
 //      because this process still holds the pre-install environment).
 // ---------------------------------------------------------------------------
-// Version boundary matching (v9.2.1)
+// Version boundary matching (v9.3.1)
 // ---------------------------------------------------------------------------
-// The CLI reports "Seed Code CLI 9.2.1" — no 'v' prefix. Matching the version
-// as a whole token accepts that output, still accepts "Seed Code CLI v9.2.1",
-// and rejects a longer build number: '19.2.1' does not pass for '9.2.1'
-// (version preceded by a digit) and '9.2.1' does not pass for '9.2.11' /
-// '9.2.1.1' (version followed by a digit or a dot). The optional v/V version
-// marker must stand alone, not inside a longer word ("rev9.2.1" is refused).
+// The CLI reports "Seed Code CLI 9.3.2" — no 'v' prefix. Matching the version
+// as a whole token accepts that output, still accepts "Seed Code CLI v9.3.2",
+// and rejects a longer build number: '19.3.2' does not pass for '9.3.2'
+// (version preceded by a digit) and '9.3.2' does not pass for '9.3.21' /
+// '9.3.2.1' (version followed by a digit or a dot). The optional v/V version
+// marker must stand alone, not inside a longer word ("rev9.3.2" is refused).
 // The same rules are implemented in install.ps1 (Test-InstalledVersion) and
 // install.sh (version_ok).
 function VersionInOutput(const Reported, Version: string): Boolean;
@@ -222,7 +222,7 @@ begin
     if Copy(Reported, I, L) <> Version then
       continue;
     // Boundary BEFORE the version: a separator, the start of the text, or a
-    // lone v/V marker. A digit ('19.2.1') or a dot ('...9.2.1') never is.
+    // lone v/V marker. A digit ('19.3.1') or a dot ('...9.3.1') never is.
     if I > 1 then
     begin
       Before := Reported[I - 1];
@@ -243,7 +243,7 @@ begin
       end;
     end;
     // Boundary AFTER the version: end of text or a non-digit, non-dot char
-    // ('9.2.1' is not '9.2.11' nor '9.2.1.1').
+    // ('9.3.1' is not '9.3.11' nor '9.3.1.1').
     After := ' ';
     if I + L <= N then
       After := Reported[I + L];
@@ -352,7 +352,12 @@ begin
     DataDir := ExpandConstant('{%USERPROFILE}\.seedcode');
     if DirExists(DataDir) then
     begin
-      if SuppressibleMsgBox(
+      // A silent uninstall (/VERYSILENT) must never delete user data: there is
+      // nobody to answer the prompt, so keep it unconditionally and log that
+      // decision. Only an interactive uninstall may ask.
+      if UninstallSilent then
+        Log('User data kept at ' + DataDir + ' (silent uninstall)')
+      else if SuppressibleMsgBox(
         'Also remove your Seed Code data?' + #13#10#13#10 +
         'This deletes settings, API keys, chat history, and logs at:' + #13#10 +
         DataDir + #13#10#13#10 +

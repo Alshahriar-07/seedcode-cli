@@ -276,6 +276,50 @@ class _TaskPresenter:
         except Exception:
             pass  # a cosmetic status must never break a task
 
+    # --- live briefing (v9.3.1) ----------------------------------------------
+    def _brief(self, **fields) -> None:
+        """Update the bottom LIVE AI BRIEFING from one real execution event.
+
+        Only fields the backend actually observed are passed: the strip's
+        provider/model always come from the live configuration, and an idle
+        turn clears it (see :mod:`seedcode.ui.briefing`).
+        """
+        state = getattr(self.ui, "state", None)
+        if state is None:
+            state = getattr(getattr(self.ui, "tui", None), "state", None)
+        if state is None or not hasattr(state, "set_briefing"):
+            return
+        try:
+            state.set_briefing(**fields)
+        except Exception:
+            pass  # a cosmetic strip must never break a task
+
+    def _session_graph(self):
+        """The active session's task graph, if a session is running."""
+        try:
+            from .core import session as session_mod
+
+            session = session_mod.current_session()
+            return getattr(session, "graph", None)
+        except Exception:
+            return None
+
+    def _brief_next_action(self) -> str:
+        """The graph's own next runnable step (empty when it knows none)."""
+        graph = self._session_graph()
+        if graph is None:
+            return ""
+        try:
+            nxt = graph.next_task()
+            if nxt is not None:
+                return f"Continue: {nxt.title}"
+            active = graph.active()
+            if active is not None:
+                return f"Finish: {active.title}"
+        except Exception:
+            return ""
+        return ""
+
     # --- one command's live output ------------------------------------------
     def reset_echo(self) -> None:
         self._echo_lines = 0
@@ -388,14 +432,17 @@ class _TaskPresenter:
         if kind == "error":
             self.ui.dim(f"  ✖ {detail.splitlines()[0][:120]}")
             self._set_status(Status.ERROR, "an operation failed")
+            self._brief(active=True, status="Error", error=detail.splitlines()[0][:200])
         elif kind == "switching_provider":
             # A provider request failed and a healthy fallback took over; the
             # task continues rather than restarting (v7.2.5).
             self.ui.warning(f"  Switching provider: {detail}")
             if flow is not None:
                 flow.set_activity("Switching provider")
+            self._brief(active=True, status="Retrying", retry=f"Switching provider: {detail}")
         elif kind == "retry":
             self.ui.dim(f"  {detail}")
+            self._brief(active=True, status="Retrying", retry=detail)
         elif kind == "limit":
             self.ui.warning(f"Agent Mode stopped: {detail}")
         elif kind == "call" and flow is None and not getattr(self.ui, "is_tui", False):
@@ -455,6 +502,15 @@ class _TaskPresenter:
             self._turn_ops = self._fresh_turn()
             append("note", "Analyzing the task and inspecting the workspace...")
             self._set_status(Status.THINKING, "analyzing the task")
+            self._brief(
+                active=True,
+                status="Analyzing",
+                task="Understanding the request and the project",
+                activity="Inspecting the workspace",
+                error="",
+                retry="",
+                next_action=self._brief_next_action(),
+            )
             return
         if phase == "terminal_output":
             # The command's live echo is already handled by on_output; the
@@ -470,6 +526,12 @@ class _TaskPresenter:
             self.reset_echo()
             append("action", activity_for(name, args))
             self._set_status(Status.EXECUTING, activity_for(name, args))
+            self._brief(
+                active=True,
+                status="Executing",
+                activity=activity_for(name, args),
+                next_action=self._brief_next_action(),
+            )
             return
         if phase == "tool_done":
             ok = bool(payload.get("ok"))
@@ -485,16 +547,25 @@ class _TaskPresenter:
             else:
                 append("success" if ok else "error", message or f"{name} finished")
             self._set_status(Status.WORKING, "waiting for the model response")
+            self._brief(
+                active=True,
+                status="Working",
+                activity="Waiting for the model response",
+                last_completed=message or f"{name} finished",
+                next_action=self._brief_next_action(),
+            )
             return
         if phase == "task_completed":
             append("success", "Task completed.")
             self._set_status(Status.COMPLETED, "")
             self._flush_report("completed")
+            self._brief(status="Completed", last_completed="Task completed")
             return
         if phase == "task_failed":
             append("error", message or "Task failed.")
             self._set_status(Status.ERROR, message or "task failed")
             self._flush_report("failed")
+            self._brief(status="Failed", error=message or "Task failed.")
 
 
     # Kinds after which the right-side TASK PLAN panel is refreshed with the
@@ -514,10 +585,27 @@ class _TaskPresenter:
         if tui is None or not hasattr(tui, "state"):
             return
         try:
-            rows: list[tuple[str, str]] = []
-            if total is not None and callable(getattr(graph, "checklist", None)):
-                rows = list(graph.checklist(limit=12))
-            tui.state.set_plan(rows)
+            state = tui.state
+            if total is None:
+                state.set_plan_tree([], percent=0)
+                return
+            nodes: list[tuple] = []
+            if callable(getattr(graph, "tree_rows", None)):
+                nodes = list(graph.tree_rows(collapsed=state.plan_collapsed))
+            elif callable(getattr(graph, "checklist", None)):
+                nodes = [
+                    (row_state, title, 0, index, False)
+                    for index, (row_state, title) in enumerate(
+                        graph.checklist(limit=12), start=1
+                    )
+                ]
+            percent = 0
+            if callable(getattr(graph, "percent", None)):
+                try:
+                    percent = int(graph.percent())
+                except Exception:
+                    percent = 0
+            state.set_plan_tree(nodes, percent=percent)
         except Exception:  # pragma: no cover - display-only
             pass
 
@@ -592,6 +680,38 @@ class _TaskPresenter:
         flow = self.flow
         session = session_mod.current_session()
         # Reflect the real session phase on the live header (TUI only).
+        briefing = {
+            "plan": {"active": True, "status": "Planning", "activity": "Planning the tasks", "error": "", "retry": ""},
+            "plan_ready": {"active": True, "status": "Working", "activity": "Plan ready", "error": "", "retry": ""},
+            "task_start": {"active": True, "status": "Working", "activity": "Starting the task", "error": "", "retry": ""},
+            "verify": {"active": True, "status": "Verifying", "activity": "Checking acceptance criteria", "error": "", "retry": ""},
+            "recovery": {"active": True, "status": "Recovering", "activity": "Diagnosing and repairing the failure", "retry": ""},
+            "task_done": {"active": True, "status": "Working", "activity": "Moving to the next task", "error": ""},
+            "task_blocked": {"active": True, "status": "Blocked"},
+            "task_failed": {"active": True, "status": "Failed"},
+            "final_verify": {"active": True, "status": "Testing", "activity": "Running the final verification", "error": ""},
+            "reconnect": {"active": True, "status": "Retrying"},
+            "reconnected": {"active": True, "status": "Working", "retry": "", "activity": "Connection restored"},
+            "network_lost": {"active": True, "status": "Retrying"},
+            "session_completed": {"active": False, "status": "Completed"},
+            "session_paused": {"active": False, "status": "Paused"},
+            "session_failed": {"active": False, "status": "Failed"},
+            "session_cancelled": {"active": False, "status": "Cancelled"},
+        }.get(kind)
+        if briefing is not None:
+            fields = dict(briefing)
+            if kind in ("task_start", "task_done", "task_blocked", "task_failed"):
+                fields.setdefault("last_completed", "")
+                fields["task"] = str(detail or "").strip()[:160]
+            if kind in ("task_done", "plan_ready"):
+                fields["last_completed"] = str(detail or "").strip()[:160]
+            if kind in ("task_blocked", "task_failed", "network_lost", "session_failed"):
+                fields["error"] = str(detail or "").strip()[:200]
+            if kind in ("reconnect", "retry"):
+                fields["retry"] = str(detail or "").strip()[:160]
+            if kind in ("task_start", "task_done", "plan_ready", "verify"):
+                fields["next_action"] = self._brief_next_action()
+            self._brief(**fields)
         phase = {
             "plan": (Status.THINKING, "planning the work"),
             "plan_ready": (Status.WORKING, "plan ready"),
@@ -794,6 +914,14 @@ def _handle_codemode(
     from .core.session import CodeSession, SessionStatus
 
     lc = lifecycle()
+    _thinking_state = getattr(getattr(ui, "tui", None), "state", None)
+    if _thinking_state is not None:
+        # A fresh reasoning window for this request (the buffer may keep the
+        # session's history across turns); accounting is per request.
+        try:
+            _thinking_state.begin_reasoning()
+        except Exception:  # pragma: no cover - display-only
+            pass
     workspace, store = _codemode_workspace()
     config = getattr(agent, "config", None)
     label = _task_mode_label(config) if config is not None else "Agent Mode"
@@ -832,6 +960,15 @@ def _handle_codemode(
     finally:
         if presenter is not None:
             presenter.flow = None
+
+    # The request ended (a pause keeps its window open for /resume): when the
+    # model exposed no reasoning stream at all, the panel records the one
+    # honest line instead of an empty record.
+    if _thinking_state is not None and status is not SessionStatus.PAUSED:
+        try:
+            _thinking_state.finish_thinking()
+        except Exception:  # pragma: no cover - display-only
+            pass
 
     if session.store is not None and status is not SessionStatus.PAUSED:
         _save_codemode_summary(agent, text, session.reason or status.value)
@@ -950,6 +1087,18 @@ def _handle_agent(
     if _tui is not None:
         try:
             _tui.state.reset_thinking()
+            # A fresh briefing for this turn: the model/provider are read live
+            # by the strip itself; only the real phase is set here.
+            _tui.state.set_briefing(
+                active=True,
+                status="Thinking",
+                task=str(text or "").strip()[:160],
+                activity="Composing a reply",
+                last_completed="",
+                next_action="",
+                retry="",
+                error="",
+            )
         except Exception:  # pragma: no cover - display-only
             pass
 
@@ -1001,6 +1150,11 @@ def _handle_agent(
         _save_codemode_summary(agent, text, reason or "task cancelled")
         if flow is not None:
             flow.finish(outcome, reason)
+        if _tui is not None:
+            try:
+                _tui.state.reset_briefing()
+            except Exception:  # pragma: no cover - display-only
+                pass
         return
 
     _advance(lc, "to_responding")
@@ -1028,6 +1182,12 @@ def _handle_agent(
         # Prints the persistent final block and leaves the prompt ready for the
         # next task — the terminal is never closed from here.
         flow.finish("completed")
+    if _tui is not None:
+        # The turn is over: the briefing stops claiming the model is working.
+        try:
+            _tui.state.reset_briefing()
+        except Exception:  # pragma: no cover - display-only
+            pass
 
 
 def _make_agent(

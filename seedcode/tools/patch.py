@@ -31,13 +31,16 @@ if TYPE_CHECKING:
 
 @register(
     "edit_file",
-    "Replace an exact text snippet in a file (must match exactly once).",
+    "Replace an exact text snippet in a file (must match exactly once; pass "
+    "replace_all=true to replace every occurrence).",
     {
         "path": "file path",
         "old_text": "exact text currently in the file",
         "new_text": "replacement text",
+        "replace_all": "(optional) true to replace every occurrence instead of exactly one",
     },
     mutates=True,
+    types={"replace_all": "boolean"},
 )
 def _edit_file(perm: "PermissionManager", args: dict[str, Any]) -> ToolResult:
     path = perm.resolve(args["path"])
@@ -64,15 +67,23 @@ def _edit_file(perm: "PermissionManager", args: dict[str, Any]) -> ToolResult:
             f"old_text was not found in {path}. Read the file again and copy the "
             "text exactly (whitespace matters).",
         )
-    if count > 1:
+
+    raw_all = args.get("replace_all")
+    replace_all = raw_all is True or (
+        isinstance(raw_all, str)
+        and raw_all.strip().lower() in ("1", "true", "yes", "on")
+    )
+    if count > 1 and not replace_all:
         return ToolResult(
             False,
             f"old_text appears {count} times in {path}. Include more surrounding "
-            "lines so it matches exactly once.",
+            "lines so it matches exactly once, or pass replace_all=true to "
+            "replace every occurrence deliberately.",
         )
 
     before = tf.text
-    tf.text = tf.text.replace(old, new, 1)
+    tf.text = tf.text.replace(old, new) if replace_all else tf.text.replace(old, new, 1)
+    replacements = count if replace_all else 1
     expected = tf.text
     try:
         write_text_file(path, tf)
@@ -99,7 +110,8 @@ def _edit_file(perm: "PermissionManager", args: dict[str, Any]) -> ToolResult:
 
     return ToolResult(
         True,
-        f"Edited {path} (1 replacement, verified).",
+        f"Edited {path} ({replacements} replacement"
+        f"{'s' if replacements != 1 else ''}, verified).",
         diff=make_diff(path, before, expected),
     )
 

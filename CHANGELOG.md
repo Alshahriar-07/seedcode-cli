@@ -4,6 +4,100 @@ All notable changes to Seed Code CLI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [9.3.2] — 2026-11-03
+
+**Quieter interface, and a coding agent that provably writes the code it
+claims.**
+
+### Changed
+
+- **Minimal thinking display.** The bottom strip is now a small dim
+  `Thinking...` label above the reasoning summaries the selected model or
+  provider actually exposes. The full-width "LIVE AI BRIEFING" dashboard
+  (heading, model/provider identity, status fields, LIVE badge, metadata) was
+  removed from the terminal. The strip stays hidden when there is no
+  reasoning, keeps a compact bounded height, auto-follows the newest update,
+  preserves completed reasoning after the turn, and still records the honest
+  `Reasoning stream unavailable for this model.` line when the provider
+  exposes nothing. The execution-status object remains as internal backend
+  state for logs and debugging.
+- **No timestamp beside AI responses.** The activity log no longer prints a
+  bracketed `[HH:MM:SS]` wall-clock prefix, which is what appeared next to
+  streamed assistant answers. Timestamps remain in the backend
+  `ActivityEvent` record for sorting, logs and session management. Activity
+  lines keep their real marks and messages; nothing else in the conversation
+  pane changed.
+- **Layout.** The thinking strip now sits directly above the composer (the
+  old briefing slot), hidden at zero height when empty and on terminals too
+  short to spare the rows; the left chat/activity and right TODO panel are
+  unchanged.
+
+### Added
+
+- **Execution enforcement for file-modification tasks.** Completion of a
+  task that must change files is gated on observed evidence: files really
+  created/changed or commands really run. A reply that only *describes* the
+  work is rejected, the task is re-opened with the unmet criteria named, and
+  the session fails honestly if the work still never happened. Read-only
+  research/explanation tasks verify from real inspection evidence instead, so
+  the gate understands task intent rather than forcing writes.
+- **Prompt rules B/D/H** — code belongs in files, a printed tool call is not
+  an executed tool call, and chat output is not file output — in both the
+  native and text tool protocols.
+
+### Fixed
+
+- **`read_file` refuses probable binaries** (NUL probe) with actionable
+  guidance instead of decoding bytes into the model context as mojibake.
+- **Writes are atomic.** `write_file`, `edit_file`, `insert_in_file` and
+  `append_file` write a temp file, flush, fsync and replace, so an
+  interruption cannot leave a truncated file; a probable binary target is
+  refused rather than overwritten with text.
+- **`edit_file` `replace_all`** (opt-in) replaces several independent
+  occurrences in one call while the default stays exactly-one with ambiguity
+  rejected; unrelated content is preserved and verified.
+- **`search_text` filters and globs.** New `ignore_case` and `exclude`
+  arguments; path globs are path-aware (`src/*.py` matches one level,
+  `src/**/*.py` recurses — `fnmatch` no longer lets `*` cross separators);
+  the workspace walker honors `.gitignore` (names, paths, directory rules).
+- **Version 9.3.2** across package metadata, npm launcher, IRM installers,
+  Setup script and docs.
+
+### Tests
+
+- 912 passing (`python -m pytest -q`): file-tool hardening matrix
+  (read/write/edit/search/enforcement), end-to-end sessions proving real
+  writes via `hello.py` creation and edit of an existing file, the rejection
+  of a claim-without-execution session, the compact thinking strip contract
+  and the absence of bracketed timestamps in activity lines.
+
+## [9.3.1] — 2026-11-02
+
+**Startup repair: the CLI can launch again from source, pip and the EXE.**
+
+- **Fixed `NameError: name 'ensure_workspace' is not defined`.** The v9.1.0
+  workspace selector (`seedcode.workspace.ensure_workspace`) and the terminal
+  snapshot (`seedcode.utils.terminal_env.detect_terminal`) are now imported by
+  `seedcode/cli.py` where they are used. Previously both names were referenced
+  but never imported, so `main()` raised before the UI was built — in every
+  launch channel. The workspace function itself was never missing and is not
+  replaced by a stub.
+- **Terminal detection is explicit.** `main()` takes one `TerminalEnv`
+  snapshot after logging setup and uses it for both the plain-mode rendering
+  decision and the persistent-TUI decision, so the two can never disagree.
+- **Regression coverage.** `tests/test_v931_startup.py` runs the real `main()`
+  (with only the long-running app entry point replaced), guards the imports,
+  and checks `python -m seedcode --version` plus every distribution channel.
+- **npm launcher fix.** `npm/lib/download.js` passed the artifact descriptor
+  to `assetName(version, platform)`, raising `no prebuilt asset for undefined`
+  before any download. One `artifactFileName()` helper now drives the cache
+  name, checksum lookup and URL; covered by `tests/test_v931_npm.py`.
+- **Silent uninstall never deletes user data.** The uninstaller now keeps
+  `~/.seedcode` unconditionally under `/VERYSILENT` instead of relying on a
+  suppressed prompt.
+- **Version 9.3.1** across package metadata, npm launcher, IRM installers,
+  Setup script and docs.
+
 ## [9.2.1] — 2026-11-02
 
 **The tool surface the agent contract promises now exists and really runs.**

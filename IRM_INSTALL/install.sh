@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Seed Code CLI v9.2.1 - official remote installer (Linux / macOS / WSL).
+# Seed Code CLI v9.3.2 - official remote installer (Linux / macOS / WSL).
 #
 # Installs Seed Code CLI for the CURRENT USER. No administrator rights and no
 # cloned repository are required: the official release artifact is downloaded
@@ -18,11 +18,11 @@
 #
 # Or, to pass options, download-then-run:
 #
-#   bash install.sh --version 9.2.1
+#   bash install.sh --version 9.3.2
 #   bash install.sh --bin-dir ~/.local/bin
 #
 # Options:
-#   --version V   Release version to install   (default: 9.2.1)
+#   --version V   Release version to install   (default: 9.3.2)
 #   --bin-dir D   Where the seedcode binary should live (default: ~/.local/bin)
 #   --force       Reinstall even if this version is already present
 #   --plain       Disable the ANSI/Unicode UI
@@ -39,7 +39,7 @@ umask 022
 
 # --- constants ---------------------------------------------------------------
 REPO="Alshahriar-07/seedcode-cli"
-DEFAULT_VERSION="9.2.1"
+DEFAULT_VERSION="9.3.2"
 USER_AGENT="seedcode-cli-installer/${DEFAULT_VERSION}"
 
 # The release artifact names are the release contract shared with
@@ -74,16 +74,30 @@ done
 
 INSTALL_DIR="$BIN_DIR"
 
-# --- UI (ANSI / Unicode with graceful fallback) -------------------------------
-# Every output helper is self-contained: it depends on no other function, so it
-# is safe to call from the installer AND from the extracted test harnesses.
+# --- UI (monochrome premium theme, ANSI/Unicode with graceful fallback) -------
+# Animation is enabled only on a real terminal. Redirected output, NO_COLOR,
+# --plain and TERM=dumb all fall back to static, escape-free text. Every output
+# helper is self-contained (no helper calls another), so the checksum and
+# version harnesses that extract individual functions keep working.
 if [ -t 1 ] && [ -z "${PLAIN:-}" ] && [ -z "${NO_COLOR:-}" ] && [ "${TERM:-dumb}" != "dumb" ]; then
     UI_TTY=1
 else
     UI_TTY=0
 fi
 
-# Unicode is best-effort; everything degrades to ASCII cleanly.
+# Width: COLUMNS, then tput, then a safe 80. Nothing GNU-only is required.
+UI_WIDTH="${COLUMNS:-}"
+case "$UI_WIDTH" in ''|*[!0-9]*) UI_WIDTH=80 ;; esac
+[ "$UI_WIDTH" -ge 40 ] 2>/dev/null || UI_WIDTH=80
+if [ "$UI_TTY" = "1" ] && command -v tput >/dev/null 2>&1; then
+    _tput_width="$(tput cols 2>/dev/null || true)"
+    case "$_tput_width" in
+        ''|*[!0-9]*) : ;;
+        *) [ "$_tput_width" -ge 40 ] && UI_WIDTH="$_tput_width" ;;
+    esac
+fi
+[ "$UI_WIDTH" -le 100 ] || UI_WIDTH=100
+
 if command -v locale >/dev/null 2>&1 && locale -k charmap 2>/dev/null | grep -qi 'UTF-8'; then
     UI_UNICODE=1
 else
@@ -91,50 +105,174 @@ else
 fi
 
 if [ "$UI_UNICODE" = "1" ]; then
-    SYM_RULE="─"; SYM_TICK="✓"; SYM_NODE="●"; SYM_DOT="•"; SYM_BRANCH="├"
+    SYM_RULE="─"; SYM_TICK="✓"; SYM_CROSS="✕"; SYM_NODE="●"; SYM_DOT="·"
+    SYM_BRANCH="├"; SYM_FULL="█"; SYM_EMPTY="░"
 else
-    SYM_RULE="-"; SYM_TICK="OK"; SYM_NODE="*"; SYM_DOT="|"; SYM_BRANCH="|"
+    SYM_RULE="-"; SYM_TICK="OK"; SYM_CROSS="x"; SYM_NODE="*"; SYM_DOT="|"
+    SYM_BRANCH="|"; SYM_FULL="#"; SYM_EMPTY="."
 fi
 RULE_TEXT=$(awk -v s="$SYM_RULE" 'BEGIN{for(i=0;i<38;i++) printf "%s", s}')
 
 if [ "$UI_TTY" = "1" ]; then
-    C_RESET=$'\033[0m'; C_GRAY=$'\033[90m'; C_GREEN=$'\033[92m'
-    C_YELLOW=$'\033[93m'; C_RED=$'\033[91m'; C_CYAN=$'\033[96m'; C_DGRAY=$'\033[37m'
+    C_RESET=$'\033[0m'; C_WHITE=$'\033[97m'; C_GRAY=$'\033[90m'
+    C_GREEN=$'\033[92m'; C_YELLOW=$'\033[93m'; C_RED=$'\033[91m'
+    C_CYAN=$'\033[96m'; C_DGRAY=$'\033[37m'
 else
-    C_RESET=""; C_GRAY=""; C_GREEN=""; C_YELLOW=""; C_RED=""; C_CYAN=""; C_DGRAY=""
+    C_RESET=""; C_WHITE=""; C_GRAY=""; C_GREEN=""; C_YELLOW=""; C_RED=""
+    C_CYAN=""; C_DGRAY=""
 fi
 
-ui()      { printf '  %b\n' "$1"; }                    # raw line
-title()   { printf '  %b%s%b\n' "${C_GREEN:-}" "$1" "${C_RESET:-}"; }
-rule()    { printf '  %b%s%b\n' "${C_DGRAY:-}" "$RULE_TEXT" "${C_RESET:-}"; }
-section() { printf '\n'; printf '  %b%s%b\n' "${C_CYAN:-}" "$1" "${C_RESET:-}"; }
-ok()      { printf '  %b%s %s%b\n' "${C_GREEN:-}" "${SYM_TICK:-OK}" "$1" "${C_RESET:-}"; }
-step()    { printf '  %b%s %s%b\n' "${C_GRAY:-}" "${SYM_BRANCH:-|}" "$1" "${C_RESET:-}"; }
-log()     { printf '  %s\n' "$1"; }
-# Warnings are advisory (never fatal); they go to stderr so they never pollute
-# a value a caller captures from stdout.
-warn()    { printf '  %b! %s%b\n' "${C_YELLOW:-}" "$1" "${C_RESET:-}" >&2; }
+STAGE_TOTAL=7
+SPINNER_PID=""
+if sleep 0.1 2>/dev/null; then SPINNER_DELAY=0.1; else SPINNER_DELAY=1; fi
 
-die() {  # clean, single, actionable error; non-zero exit
+show_banner() {
+    printf '\n'
+    if [ "$UI_WIDTH" -ge 56 ]; then
+        while IFS= read -r _line; do
+            printf '  %s%s%s\n' "${C_GRAY:-}" "$_line" "${C_RESET:-}"
+        done <<'SEEDCODE_BANNER'
+   _____                _  _____          _
+  / ____|              | |/ ____|        | |
+ | (___   ___  ___   __| | |     ___   __| | ___
+  \___ \ / _ \/ _ \ / _` | |    / _ \ / _` |/ _ \
+  ____) |  __/  __/ (_| | |___| (_) | (_| |  __/
+ |_____/ \___|\___|\__,_|\_____\___/ \__,_|\___|
+SEEDCODE_BANNER
+    else
+        printf '  %sSEED CODE CLI%s\n' "${C_WHITE:-}" "${C_RESET:-}"
+    fi
+    printf '  %sSEED CODE CLI%s  %s%s%s  %sAI CODING AGENT%s\n' \
+        "${C_WHITE:-}" "${C_RESET:-}" "${C_DGRAY:-}" "${SYM_DOT:-|}" "${C_RESET:-}" "${C_GRAY:-}" "${C_RESET:-}"
+    printf '  %sVersion %s%s\n\n' "${C_GRAY:-}" "${VERSION:-9.3.2}" "${C_RESET:-}"
+}
+
+write_status() {
+    printf '  %s%s%s %s\n' "${C_GREEN:-}" "${SYM_NODE:-*}" "${C_RESET:-}" "$1"
+}
+
+write_success() {
+    printf '  %s%s %s%s\n' "${C_GREEN:-}" "${SYM_TICK:-OK}" "$1" "${C_RESET:-}"
+}
+
+write_warning() {
+    printf '  %s! %s%s\n' "${C_YELLOW:-}" "$1" "${C_RESET:-}" >&2
+}
+
+write_error() {
+    printf '  %s%s %s%s\n' "${C_RED:-}" "${SYM_CROSS:-x}" "$1" "${C_RESET:-}" >&2
+}
+
+show_progress() {
+    _cur="${1:-0}"
+    _total="${2:-$STAGE_TOTAL}"
+    _label="${3:-}"
+    [ "$_total" -gt 0 ] 2>/dev/null || _total=1
+    _bar_width=$((UI_WIDTH - 32))
+    [ "$_bar_width" -gt 28 ] && _bar_width=28
+    [ "$_bar_width" -lt 12 ] && _bar_width=12
+    _filled=$((_bar_width * _cur / _total))
+    _bar=""
+    _i=0
+    while [ "$_i" -lt "$_bar_width" ]; do
+        if [ "$_i" -lt "$_filled" ]; then
+            _bar="${_bar}${SYM_FULL}"
+        else
+            _bar="${_bar}${SYM_EMPTY}"
+        fi
+        _i=$((_i + 1))
+    done
+    printf '  [%s] %s/%s  %s\n' "$_bar" "$_cur" "$_total" "$_label"
+}
+
+stage() {
+    show_progress "${1:-0}" "$STAGE_TOTAL" "${2:-}"
+}
+
+show_spinner() {
+    _text="${1:-Working...}"
+    shift
+    if [ "$#" -eq 0 ]; then return 0; fi
+    if [ "$UI_TTY" != "1" ]; then
+        "$@" >/dev/null 2>&1
+        return $?
+    fi
+    "$@" >/dev/null 2>&1 &
+    SPINNER_PID=$!
+    _frames='|/-\'
+    _i=0
+    while kill -0 "$SPINNER_PID" 2>/dev/null; do
+        _frame="${_frames:$((_i % 4)):1}"
+        printf '\r  %s%s%s %s' "${C_GREEN:-}" "$_frame" "${C_RESET:-}" "$_text"
+        _i=$((_i + 1))
+        sleep "$SPINNER_DELAY"
+    done
+    wait "$SPINNER_PID"
+    _rc=$?
+    SPINNER_PID=""
+    printf '\r%*s\r' "$UI_WIDTH" ""
+    return $_rc
+}
+
+cleanup() {
+    if [ -n "${SPINNER_PID:-}" ]; then
+        kill "$SPINNER_PID" 2>/dev/null || true
+        SPINNER_PID=""
+    fi
+    if [ "${UI_TTY:-0}" = "1" ]; then
+        printf '\033[?25h'
+    fi
+    if [ -n "${TMP_DIR:-}" ] && [ -d "${TMP_DIR}" ]; then
+        rm -rf "${TMP_DIR}" 2>/dev/null || true
+    fi
+    return 0
+}
+
+interrupted() {
+    if [ -n "${SPINNER_PID:-}" ]; then
+        kill "$SPINNER_PID" 2>/dev/null || true
+    fi
+    if [ "${UI_TTY:-0}" = "1" ]; then
+        printf '\033[?25h'
+    fi
+    printf '\n'
+    printf '  %sInterrupted.%s Nothing was installed.\n\n' "${C_YELLOW:-}" "${C_RESET:-}" >&2
+    exit 130
+}
+
+# Compatibility helpers used by the installation logic below.
+ui()      { printf '  %b\n' "$1"; }
+title()   { printf '  %s%s%s\n' "${C_WHITE:-}" "$1" "${C_RESET:-}"; }
+rule()    { printf '  %s%s%s\n' "${C_DGRAY:-}" "$RULE_TEXT" "${C_RESET:-}"; }
+section() { printf '\n'; printf '  %s%s%s\n' "${C_WHITE:-}" "$1" "${C_RESET:-}"; }
+ok()      { printf '  %s%s %s%s\n' "${C_GREEN:-}" "${SYM_TICK:-OK}" "$1" "${C_RESET:-}"; }
+step()    { printf '  %s%s %s%s\n' "${C_GRAY:-}" "${SYM_BRANCH:-|}" "$1" "${C_RESET:-}"; }
+log()     { printf '  %s\n' "$1"; }
+warn()    { printf '  %s! %s%s\n' "${C_YELLOW:-}" "$1" "${C_RESET:-}" >&2; }
+
+die() {
+    _msg="${1:-Installation failed.}"
+    _code="${2:-INSTALL_FAILED}"
+    case "$_code" in
+        DOWNLOAD_FAILED)       _action="Check your internet connection and retry." ;;
+        CHECKSUM_MISSING|CHECKSUM_MISMATCH) _action="The download may be corrupt or the release incomplete. Retry; if it persists, report it." ;;
+        CHECKSUM_UNAVAILABLE)  _action="Check your internet connection and retry." ;;
+        UNSUPPORTED_PLATFORM)  _action="Use a supported Linux, macOS, or WSL x64/arm64 system." ;;
+        MISSING_DEPENDENCY)    _action="Install the missing tool and re-run the installer." ;;
+        PERMISSION_DENIED)     _action="Choose a writable --bin-dir or fix its permissions." ;;
+        VERIFY_FAILED)         _action="Remove any older seedcode on PATH and retry the installation." ;;
+        *)                     _action="Retry the installation. If it keeps failing, report it with the error code." ;;
+    esac
     printf '\n' >&2
-    # %b (not %s) so multi-line messages keep their embedded newlines.
-    printf '  %bInstaller error:%b %b\n\n' "${C_RED:-}" "${C_RESET:-}" "$1" >&2
+    printf '  %s%s Installation failed%s\n\n' "${C_RED:-}" "${SYM_CROSS:-x}" "${C_RESET:-}" >&2
+    printf '  Reason:\n  %b\n\n' "$_msg" >&2
+    printf '  Suggested action:\n  %s\n\n' "$_action" >&2
+    printf '  Error code: %s\n\n' "$_code" >&2
     printf '  Download manually from: https://github.com/%s/releases\n\n' "${REPO:-Alshahriar-07/seedcode-cli}" >&2
     exit 1
 }
 
-# Ctrl+C must stop cleanly (no half-written state, correct exit code).
-interrupted() {
-    printf '\n' >&2
-    printf '  %bInterrupted.%b Nothing was installed.\n' "${C_YELLOW:-}" "${C_RESET:-}" >&2
-    exit 130
-}
 trap interrupted INT TERM
-
-cleanup() {
-    [ -n "${TMP_DIR:-}" ] && [ -d "${TMP_DIR}" ] && rm -rf "${TMP_DIR}" 2>/dev/null
-    return 0
-}
 trap cleanup EXIT
 
 # --- required tools -----------------------------------------------------------
@@ -199,10 +337,10 @@ sha256_of() {
 # version_ok <reported-output> <version> -> 0 when the reported output carries
 # the version as a whole token. The historical check was a plain substring
 # match (`*"$VERSION"*`), which a wrongly-numbered binary defeats: "Seed Code
-# CLI 19.2.1" contains "9.2.1". This matcher requires the version at a token
-# boundary — never directly after a digit ('19.2.1' != '9.2.1'), never directly
-# before a digit or a dot ('9.2.1' != '9.2.11' / '9.2.1.1'), with only a
-# single-occurrence v/V version marker ('v9.2.1' is accepted; 'rev9.2.1' is
+# CLI 19.3.2" contains "9.3.2". This matcher requires the version at a token
+# boundary — never directly after a digit ('19.3.2' != '9.3.2'), never directly
+# before a digit or a dot ('9.3.2' != '9.3.21' / '9.3.2.1'), with only a
+# single-occurrence v/V version marker ('v9.3.2' is accepted; 'rev9.3.2' is
 # not). The same rules are implemented in install.ps1 and setup.iss.
 version_ok() {
     awk -v want="${2:-}" '
@@ -239,15 +377,15 @@ verify_sha256() {
     [ -n "$_name" ] || _name="$(basename "$_file")"
     _expected="$(sums_lookup "$_sums" "$_name")"
     if [ -z "$_expected" ]; then
-        die "No SHA256 checksum for ${_name} in SHA256SUMS.txt - refusing to install an unverified artifact."
+        die "No SHA256 checksum for ${_name} in SHA256SUMS.txt - refusing to install an unverified artifact." "CHECKSUM_MISSING"
     fi
     if ! _actual="$(sha256_of "$_file")"; then
-        die "No SHA-256 tool available (sha256sum/shasum/openssl) - refusing to install an unverified artifact."
+        die "No SHA-256 tool available (sha256sum/shasum/openssl) - refusing to install an unverified artifact." "CHECKSUM_FAILED"
     fi
     if [ "$_actual" != "$_expected" ]; then
         die "Checksum mismatch for ${_name}.
       expected ${_expected}
-      actual   ${_actual}"
+      actual   ${_actual}" "CHECKSUM_MISMATCH"
     fi
     ok "SHA256 verified  ${_actual}"
 }
@@ -284,36 +422,41 @@ RELEASE_BASE="https://github.com/${REPO}/releases/download/v${VERSION}"
 SUMS_URL="${RELEASE_BASE}/SHA256SUMS.txt"
 
 printf '\n'
-title "Seed Code CLI"
-rule
-ui "${C_GRAY:-}  Version ${VERSION}${C_RESET:-}"
+show_banner
+ui "${C_DGRAY:-}  Initializing installation...${C_RESET:-}"
 
-section "${SYM_NODE} Checking system"
+stage 1 "Checking system requirements"
 need uname
 case "$(uname -s)" in
     Linux)  OS="linux" ;;
     Darwin) OS="darwin" ;;
-    *)      die "Unsupported operating system '$(uname -s)'. Seed Code ships Linux and macOS builds." ;;
+    *)      die "Unsupported operating system '$(uname -s)'. Seed Code ships Linux and macOS builds." "UNSUPPORTED_PLATFORM" ;;
 esac
 case "$(uname -m)" in
     x86_64|amd64) ARCH="x64" ;;
     arm64|aarch64) ARCH="arm64" ;;
-    *) die "Unsupported architecture '$(uname -m)'. Seed Code ships x64 and arm64 builds." ;;
+    *) die "Unsupported architecture '$(uname -m)'. Seed Code ships x64 and arm64 builds." "UNSUPPORTED_PLATFORM" ;;
 esac
 BINARY_ASSET="SeedCode-CLI-${VERSION}-${OS}-${ARCH}"
 ok "Platform detected: ${OS} ${ARCH}"
 
+stage 2 "Detecting environment"
 if command -v curl >/dev/null 2>&1; then
     ok "Download tool detected: curl"
 elif command -v wget >/dev/null 2>&1; then
     ok "Download tool detected: wget"
 else
-    die "Neither curl nor wget was found in PATH. Install one and re-run."
+    die "Neither curl nor wget was found in PATH. Install one and re-run." "MISSING_DEPENDENCY"
 fi
+TMP_DIR=$(mktemp -d 2>/dev/null) || die "Could not create a temporary directory." "ENVIRONMENT_FAILED"
 
-TMP_DIR=$(mktemp -d 2>/dev/null) || die "Could not create a temporary directory."
+stage 3 "Preparing installation directory"
+INSTALL_DIR="$BIN_DIR"
+INSTALLED_EXE="${INSTALL_DIR}/${BIN_NAME}"
+mkdir -p "${INSTALL_DIR}" 2>/dev/null || die "Could not create ${INSTALL_DIR}. Choose a writable --bin-dir." "PERMISSION_DENIED"
+ok "Install directory ready: ${INSTALL_DIR}"
 
-section "${SYM_NODE} Downloading"
+stage 4 "Downloading SeedCode CLI"
 step "${BINARY_ASSET}"
 if fetch_file "${RELEASE_BASE}/${BINARY_ASSET}" "${TMP_DIR}/${BINARY_ASSET}"; then
     TARGET_KIND="binary"
@@ -322,45 +465,46 @@ if fetch_file "${RELEASE_BASE}/${BINARY_ASSET}" "${TMP_DIR}/${BINARY_ASSET}"; th
 else
     # No native build for this platform in this release: use the wheel, which
     # is the portable artifact every release publishes.
+    write_warning "Standalone binary unavailable for ${OS} ${ARCH}; using the Python wheel."
     TARGET_KIND="wheel"
     TARGET_ASSET="${WHEEL_ASSET}"
     step "${WHEEL_ASSET}"
     fetch_file "${RELEASE_BASE}/${WHEEL_ASSET}" "${TMP_DIR}/${WHEEL_ASSET}" \
-        || die "Could not download ${WHEEL_ASSET} from ${RELEASE_BASE}"
+        || die "Could not download ${WHEEL_ASSET} from ${RELEASE_BASE}" "DOWNLOAD_FAILED"
     ok "Package downloaded"
 fi
 
-section "${SYM_NODE} Verifying"
+stage 5 "Verifying package integrity"
 TMP_SUMS="${TMP_DIR}/SHA256SUMS.txt"
 fetch_file "$SUMS_URL" "$TMP_SUMS" \
-    || die "Could not download SHA256SUMS.txt from ${SUMS_URL} - refusing to install an unverified artifact."
+    || die "Could not download SHA256SUMS.txt from ${SUMS_URL} - refusing to install an unverified artifact." "CHECKSUM_UNAVAILABLE"
 SUMS_TEXT="$(cat "$TMP_SUMS")"
 # verify_sha256 aborts on a missing entry or a mismatch; verification is never
 # bypassed and there is no "skip" path. It is called on whichever artifact was
 # downloaded, immediately before that artifact is installed.
-
-section "${SYM_NODE} Installing"
-INSTALLED_EXE="${INSTALL_DIR}/${BIN_NAME}"
-mkdir -p "${INSTALL_DIR}" 2>/dev/null || true
-
 if [ "${TARGET_KIND}" = "binary" ]; then
-    # The exact, tested order: fetch -> verify -> install.
     verify_sha256 "${TMP_DIR}/${BINARY_ASSET}" "$SUMS_TEXT" "${BINARY_ASSET}"
+else
+    verify_sha256 "${TMP_DIR}/${WHEEL_ASSET}" "$SUMS_TEXT" "${WHEEL_ASSET}"
+fi
+
+stage 6 "Installing SeedCode CLI"
+if [ "${TARGET_KIND}" = "binary" ]; then
     install -m 0755 "${TMP_DIR}/${BINARY_ASSET}" "${INSTALLED_EXE}" \
-        || die "Could not install ${BINARY_ASSET} to ${INSTALLED_EXE}."
+        || die "Could not install ${BINARY_ASSET} to ${INSTALLED_EXE}." "PERMISSION_DENIED"
     ok "Seed Code CLI installed (standalone)"
 else
     need python3
     PY_VER=$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null) \
-        || die "python3 exists but could not report its version."
+        || die "python3 exists but could not report its version." "ENVIRONMENT_FAILED"
     ok "Python detected: ${PY_VER}"
     if command -v pipx >/dev/null 2>&1; then
         if [ "$FORCE" = "1" ]; then
-            pipx install --force "${TMP_DIR}/${WHEEL_ASSET}" >/dev/null \
-                || die "pipx install failed. Re-run with output visible: pipx install ${TMP_DIR}/${WHEEL_ASSET}"
+            show_spinner "Installing with pipx..." pipx install --force "${TMP_DIR}/${WHEEL_ASSET}" \
+                || die "pipx install failed. Re-run with output visible: pipx install ${TMP_DIR}/${WHEEL_ASSET}" "INSTALL_FAILED"
         else
-            pipx install "${TMP_DIR}/${WHEEL_ASSET}" >/dev/null \
-                || die "pipx install failed. Re-run with output visible: pipx install ${TMP_DIR}/${WHEEL_ASSET}"
+            show_spinner "Installing with pipx..." pipx install "${TMP_DIR}/${WHEEL_ASSET}" \
+                || die "pipx install failed. Re-run with output visible: pipx install ${TMP_DIR}/${WHEEL_ASSET}" "INSTALL_FAILED"
         fi
         ok "Seed Code CLI installed (pipx)"
     else
@@ -368,20 +512,21 @@ else
         # PEP 668 (externally managed environments, Debian 12+/newer distros)
         # blocks plain `pip install --user`; --break-system-packages is the
         # sanctioned escape hatch and lands in the same user site.
-        if ! pip3 install --user "${TMP_DIR}/${WHEEL_ASSET}" >/dev/null 2>&1; then
-            pip3 install --user --break-system-packages "${TMP_DIR}/${WHEEL_ASSET}" >/dev/null 2>&1 \
-                || die "pip install failed. Install pipx (python3 -m pip install --user pipx) and re-run this installer."
+        if ! show_spinner "Installing with pip..." pip3 install --user "${TMP_DIR}/${WHEEL_ASSET}"; then
+            show_spinner "Installing with pip (user site)..." pip3 install --user --break-system-packages "${TMP_DIR}/${WHEEL_ASSET}" \
+                || die "pip install failed. Install pipx (python3 -m pip install --user pipx) and re-run this installer." "INSTALL_FAILED"
         fi
         ok "Seed Code CLI installed (pip --user)"
         if [ ! -e "${INSTALLED_EXE}" ]; then
             PYTHON_BIN="$(command -v python3)"
             printf '#!/usr/bin/env bash\nexec "%s" -m seedcode "$@"\n' "$PYTHON_BIN" > "${INSTALLED_EXE}"
-            chmod +x "${INSTALLED_EXE}" 2>/dev/null || true
+            chmod +x "${INSTALLED_EXE}" 2>/dev/null \
+                || die "Could not make ${INSTALLED_EXE} executable." "PERMISSION_DENIED"
         fi
     fi
 fi
 
-section "${SYM_NODE} Verifying"
+stage 7 "Verifying installation"
 # Verify the file THIS run installed, by absolute path - a `seedcode` already
 # on PATH could be an older copy, and a stale binary must never be reported as
 # this install's success.
@@ -389,7 +534,7 @@ REPORTED="$("$INSTALLED_EXE" --version 2>/dev/null | tail -n1)"
 if version_ok "${REPORTED:-}" "$VERSION"; then
     ok "seedcode --version  ->  ${REPORTED}"
 else
-    die "The installed binary did not report version ${VERSION} (it said: '${REPORTED:-nothing}')."
+    die "The installed binary did not report version ${VERSION} (it said: '${REPORTED:-nothing}')." "VERIFY_FAILED"
 fi
 
 # A different `seedcode` earlier on PATH keeps being invoked instead of the one
@@ -398,11 +543,11 @@ fi
 ON_PATH="$(command -v seedcode 2>/dev/null || true)"
 if [ -n "$ON_PATH" ] && [ "$ON_PATH" != "$INSTALLED_EXE" ] && [ "$ON_PATH" != "$(readlink -f "$INSTALLED_EXE" 2>/dev/null || printf '%s' "$INSTALLED_EXE")" ]; then
     printf '\n'
-    printf '  %b! Another seedcode is earlier on PATH:%b\n' "${C_YELLOW:-}" "${C_RESET:-}"
-    printf '  %b      %s%b\n' "${C_DGRAY:-}" "$ON_PATH" "${C_RESET:-}"
-    printf '  %b      (this install: %s)%b\n' "${C_DGRAY:-}" "$INSTALLED_EXE" "${C_RESET:-}"
-    printf '  %b    Remove the older copy, or run this one directly:%b\n' "${C_DGRAY:-}" "${C_RESET:-}"
-    printf '  %b      %s --version%b\n' "${C_DGRAY:-}" "$INSTALLED_EXE" "${C_RESET:-}"
+    printf '  %s! Another seedcode is earlier on PATH:%s\n' "${C_YELLOW:-}" "${C_RESET:-}"
+    printf '  %s      %s%s\n' "${C_DGRAY:-}" "$ON_PATH" "${C_RESET:-}"
+    printf '  %s      (this install: %s)%s\n' "${C_DGRAY:-}" "$INSTALLED_EXE" "${C_RESET:-}"
+    printf '  %s    Remove the older copy, or run this one directly:%s\n' "${C_DGRAY:-}" "${C_RESET:-}"
+    printf '  %s      %s --version%s\n' "${C_DGRAY:-}" "$INSTALLED_EXE" "${C_RESET:-}"
 fi
 
 # PATH guidance: honest about what actually works in THIS session.
@@ -413,14 +558,17 @@ esac
 
 printf '\n'
 rule
-printf '  %b%s Installation complete%b\n' "${C_GREEN:-}" "${SYM_TICK:-OK}" "${C_RESET:-}"
-printf '\n'
+printf '  %s%s Seed Code CLI installed successfully!%s\n\n' "${C_GREEN:-}" "${SYM_TICK:-OK}" "${C_RESET:-}"
+printf '  %sVersion: %s%s\n\n' "${C_GRAY:-}" "$VERSION" "${C_RESET:-}"
+printf '  %sGet started:%s\n\n' "${C_GRAY:-}" "${C_RESET:-}"
 if [ "$PATH_OK" = "1" ]; then
-    ui "${C_GRAY:-}  Run:${C_RESET:-}"
-    ui "${C_GRAY:-}      ${BIN_NAME}${C_RESET:-}"
+    printf '      %sseedcode --version%s\n' "${C_WHITE:-}" "${C_RESET:-}"
+    printf '      %sseedcode%s\n\n' "${C_WHITE:-}" "${C_RESET:-}"
 else
-    ui "${C_GRAY:-}  Restart your terminal (or: export PATH=\"${INSTALL_DIR}:\$PATH\"), then run:${C_RESET:-}"
-    ui "${C_GRAY:-}      ${BIN_NAME}${C_RESET:-}"
+    printf '      %sexport PATH="%s:$PATH"%s\n' "${C_WHITE:-}" "$INSTALL_DIR" "${C_RESET:-}"
+    printf '      %sseedcode --version%s\n' "${C_WHITE:-}" "${C_RESET:-}"
+    printf '      %sseedcode%s\n\n' "${C_WHITE:-}" "${C_RESET:-}"
 fi
-ui "${C_DGRAY:-}  License: PolyForm Noncommercial License 1.0.0${C_RESET:-}"
-printf '\n'
+printf '  %sDocumentation:%s\n' "${C_GRAY:-}" "${C_RESET:-}"
+printf '  %shttps://seedcode-cli.vercel.app/%s\n\n' "${C_DGRAY:-}" "${C_RESET:-}"
+printf '  %sHappy coding!%s\n\n' "${C_GREEN:-}" "${C_RESET:-}"

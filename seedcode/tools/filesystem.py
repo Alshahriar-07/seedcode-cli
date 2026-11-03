@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 from .base import ToolResult, int_arg, register
 from .diffs import make_diff
 from .permissions import CATEGORY_DELETE
-from .textio import TextFile, read_text_file, write_text_file
+from .textio import TextFile, read_text_file, write_bytes_atomically, write_text_file
 from ..utils.text import safe_text
 
 if TYPE_CHECKING:
@@ -23,6 +23,22 @@ if TYPE_CHECKING:
 
 # Read caps: a tool call must never dump a huge binary/log into the context.
 _MAX_READ_BYTES = 256 * 1024
+
+
+def _looks_binary(path: Path, probe: int = 8 * 1024) -> bool:
+    """Whether the file's first bytes look binary (contain NUL).
+
+    Model-driven decoding of an image, pickle or packed asset only produces
+    mojibake and burned context, so both the read and write paths probe the
+    head of the file for NUL bytes — the practical marker of text vs binary —
+    before acting.
+    """
+    try:
+        with path.open("rb") as handle:
+            head = handle.read(probe)
+    except OSError:
+        return False
+    return b"\x00" in head
 _MAX_INDEX_ENTRIES = 400
 
 # Directories that never belong in a project index. ".seedcode" is Code
@@ -50,6 +66,13 @@ def _read_file(perm: "PermissionManager", args: dict[str, Any]) -> ToolResult:
     perm.check_read(path)
     if not path.is_file():
         return ToolResult(False, f"File not found: {path}")
+    if _looks_binary(path):
+        return ToolResult(
+            False,
+            f"Refusing to read {path}: it looks like a binary file (contains "
+            "NUL bytes). Reading it as text would only produce mojibake — use "
+            "copy_file or a command instead.",
+        )
     if path.stat().st_size > _MAX_READ_BYTES and "start_line" not in args:
         return ToolResult(
             False,
@@ -87,11 +110,21 @@ def _write_file(perm: "PermissionManager", args: dict[str, Any]) -> ToolResult:
     existed = path.is_file()
     try:
         before = path.read_text(encoding="utf-8", errors="replace") if existed else ""
+        if existed and b"\x00" in path.read_bytes()[: 8 * 1024]:
+            return ToolResult(
+                False,
+                f"Refusing to overwrite {path}: it exists and looks like a "
+                "binary file (contains NUL bytes). Writing text over it would "
+                "corrupt it — delete it first if that is really intended. "
+                "Content was not changed.",
+            )
     except OSError:
         before = ""
     try:
+        # Atomic: temp file -> flush -> fsync -> os.replace. A crash mid-write
+        # can never leave a truncated file behind.
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
+        write_bytes_atomically(path, content.encode("utf-8"))
     except OSError as exc:
         return ToolResult(False, f"Could not write {path}: {exc}")
 

@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![Release](https://img.shields.io/badge/release-v9.2.1-0b6623?style=flat-square)
+![Release](https://img.shields.io/badge/release-v9.3.2-0b6623?style=flat-square)
 ![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey?style=flat-square)
 ![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-informational?style=flat-square)
@@ -32,7 +32,7 @@ reads your project, plans the work, writes and edits real files, runs real
 commands, reads their output, searches the web for documentation, fixes what
 fails, and reports honestly on what it actually did.
 
-`seedcode --version` → `Seed Code CLI 9.2.1`
+`seedcode --version` → `Seed Code CLI 9.3.2`
 
 ---
 
@@ -79,13 +79,16 @@ fails, and reports honestly on what it actually did.
   *current operation* with a live elapsed timer, e.g. `⠹ Reading README.md……
   · 12s`. The label is read from backend state (`state.operation`), so it says
   what the agent is doing, not just "Working".
-- **A bounded thinking panel** for models that expose a reasoning channel
-  (Ollama models with the `thinking` capability). What the model itself streams
-  as thinking appears in a separate collapsible panel above the activity log —
-  never invented, never mixed with the response. Height is bounded (about a
-  quarter of the terminal), auto-scroll follows the stream unless you scroll
-  up manually, and the panel collapses when the turn ends. Models without an
-  exposed channel simply never see it.
+- **A minimal thinking strip** for models that expose a reasoning channel
+  (Ollama models with the `thinking` capability, and cloud providers that
+  relay `reasoning` deltas). It is just a small dim `Thinking...` label plus
+  the reasoning the model itself exposes, directly above the input — never
+  invented, never mixed with the response, hidden entirely when there is
+  nothing to show. Height is compact and bounded, auto-scroll follows the
+  stream unless you scroll up manually, and completed reasoning is preserved
+  after the turn (toggle with `Ctrl+B`). No model/provider metadata is shown;
+  a provider that exposes no reasoning records the honest line
+  `Reasoning stream unavailable for this model.`
 - **A right-side task plan panel.** The agent's TODO list renders live on the
   right (`○` pending, `●` in progress, `✓` done, `✗` failed, `↻` retrying) and
   is driven only by real orchestrator task events — the current task is
@@ -148,14 +151,14 @@ Installs for the current user (no administrator rights, no Python) into
 creates Desktop and Start Menu shortcuts (`seedcode --install-shortcuts`
 recreates them at any time; `-NoShortcuts` skips them), and
 verifies the installed binary reports exactly the requested version. It
-downloads the official `SeedCode-CLI-9.2.1-windows-x64.exe` and the release's
+downloads the official `SeedCode-CLI-9.3.2-windows-x64.exe` and the release's
 `SHA256SUMS.txt`, and **refuses to install** if the checksum entry is missing,
 the checksum file is unreachable, or the digest does not match.
 
 ### Windows — Setup installer
 
-Download `SeedCode-CLI-Setup-9.2.1.exe` from the
-[Releases page](https://github.com/Alshahriar-07/seedcode-cli/releases/tag/v9.2.1)
+Download `SeedCode-CLI-Setup-9.3.2.exe` from the
+[Releases page](https://github.com/Alshahriar-07/seedcode-cli/releases/tag/v9.3.2)
 and run it. The wizard installs Seed Code, adds it to `PATH`, creates a Start
 Menu shortcut, creates a Desktop shortcut (checked by default), verifies that
 the installed `seedcode.exe` reports the installer's own version, and ships an
@@ -163,7 +166,7 @@ uninstaller that never deletes your project data silently.
 
 ### Windows — portable executable
 
-Download `SeedCode-CLI-9.2.1-windows-x64.exe` and run it directly. It is fully
+Download `SeedCode-CLI-9.3.2-windows-x64.exe` and run it directly. It is fully
 self-contained (no Python, no installation, no `PATH` changes).
 
 ### Linux / macOS — remote installer
@@ -189,7 +192,7 @@ seedcode
 After installing by any route:
 
 ```bash
-seedcode --version    # -> Seed Code CLI 9.2.1
+seedcode --version    # -> Seed Code CLI 9.3.2
 ```
 
 > **`seedcode` not recognized?** Open a *new* terminal. `PATH` changes only
@@ -226,7 +229,7 @@ keeps the launch directory.
 You then land in the persistent interface:
 
 ```text
-Seed Code CLI v9.2.1 · Ollama · qwen3:4b · Agent
+Seed Code CLI v9.3.2 · Ollama · qwen3:4b · Agent
 ● Ready · Workspace D:\Projects\demo · Context 16,384 tokens
 
 You > read README.md
@@ -294,8 +297,9 @@ one provider's credentials or model onto another.
 
 Models that expose a thinking channel (Seed Code reads the model's
 `capabilities` from `GET /api/show`) also stream that reasoning into the
-thinking panel; the request enables `think` only for models that report the
-capability, and it degrades silently for models that do not.
+`Thinking...` strip; the request enables `think` only for models that report
+the capability, and a model without one records the honest
+"Reasoning stream unavailable" note instead of inventing reasoning.
 
 If the server is not running, Seed Code starts `ollama serve` for you and waits
 for it to become reachable. The default host is `http://localhost:11434`. A
@@ -431,7 +435,7 @@ Environment variables: `SEEDCODE_WORKSPACE`, `SEEDCODE_NO_WORKSPACE_PROMPT`,
 
 ```bash
 python -m pip install build twine
-python -m build                     # dist/seedcode_cli-9.2.1-*.whl and *.tar.gz
+python -m build                     # dist/seedcode_cli-9.3.2-*.whl and *.tar.gz
 python -m twine check dist/*
 ```
 
@@ -449,17 +453,17 @@ Requirements: Python 3.10+, PyInstaller, Inno Setup 6 or 7.
 
 ---
 
-## Release artifacts (v9.2.1)
+## Release artifacts (v9.3.2)
 
-Release: [v9.2.1](https://github.com/Alshahriar-07/seedcode-cli/releases/tag/v9.2.1)
+Release: [v9.3.2](https://github.com/Alshahriar-07/seedcode-cli/releases/tag/v9.3.2)
 
 | File | What it is |
 | --- | --- |
-| `SeedCode-CLI-Setup-9.2.1.exe` | Windows Setup installer (Inno Setup; uninstaller, Start Menu entry). |
-| `SeedCode-CLI-9.2.1-windows-x64.exe` | Standalone Windows executable — downloaded by the Windows IRM installer. |
-| `seedcode_cli-9.2.1-py3-none-any.whl` | Python wheel — downloaded by the Linux IRM installer. |
-| `seedcode_cli-9.2.1.tar.gz` | Python source distribution. |
-| `seedcode-cli-9.2.1.tgz` | npm package tarball (launcher that downloads the official binary). |
+| `SeedCode-CLI-Setup-9.3.2.exe` | Windows Setup installer (Inno Setup; uninstaller, Start Menu entry). |
+| `SeedCode-CLI-9.3.2-windows-x64.exe` | Standalone Windows executable — downloaded by the Windows IRM installer. |
+| `seedcode_cli-9.3.2-py3-none-any.whl` | Python wheel — downloaded by the Linux IRM installer. |
+| `seedcode_cli-9.3.2.tar.gz` | Python source distribution. |
+| `seedcode-cli-9.3.2.tgz` | npm package tarball (launcher that downloads the official binary). |
 | `SHA256SUMS.txt` | SHA-256 of every artifact above. |
 
 Verify a download before using it:
@@ -469,7 +473,7 @@ sha256sum -c SHA256SUMS.txt              # Linux / macOS
 Get-FileHash <file> -Algorithm SHA256    # Windows PowerShell
 ```
 
-All release artifacts are staged in `dist/release/9.2.1/` by the build pipeline;
+All release artifacts are staged in `dist/release/v9.3.2/` by the build pipeline;
 digests are computed from the final files, never copied from an older release.
 
 ---

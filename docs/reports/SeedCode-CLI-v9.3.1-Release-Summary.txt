@@ -1,0 +1,85 @@
+ ============================================================
+  SEED CODE CLI v9.3.1 — RELEASE SUMMARY
+ ============================================================
+Version    : 9.3.1
+Platform   : Windows 11 x64 (build host)
+Python     : 3.12.10
+Date       : 2026-11-02
+Status     : COMPLETE — all seven required artifacts exist and verify
+
+WHAT THIS RELEASE FIXES
+-----------------------
+Startup crash reported as:
+  NameError: name 'ensure_workspace' is not defined
+
+The workspace initializer was never missing — it lives in
+seedcode/workspace.py. seedcode/cli.py referenced it (and terminal state)
+without importing either. main() now imports:
+  * ensure_workspace  (seedcode.workspace)
+  * detect_terminal   (seedcode.utils.terminal_env)
+and takes one terminal snapshot used for both the plain-mode and TUI decisions.
+No stub function was added; workspace selection behaviour is unchanged.
+
+COMPLETION PHASE (this pass)
+----------------------------
+  * Setup EXE compiled with the Inno Setup 6 compiler already installed under
+    %LOCALAPPDATA%\Programs\Inno Setup 6 (ISCC). FileVersion/ProductVersion 9.3.1.
+  * Setup EXE tested: fresh silent install -> installed exe reports 9.3.1,
+    Start Menu + public Desktop shortcuts created, machine PATH entry added,
+    installer's own Exe/PATH verification probes passed.
+  * Uninstalled: install dir, new shortcuts and PATH entry removed; a
+    pre-existing unrelated Start Menu shortcut was left untouched; a
+    ~/.seedcode canary file was preserved.
+  * Silent uninstall hardened to keep user data unconditionally (no prompt is
+    possible under /VERYSILENT).
+  * Both remote installers now share a monochrome banner, seven real stages,
+    stage-accurate progress, real spinners/byte progress and actionable error
+    codes; animation disables on redirected output/NO_COLOR/--plain.
+  * npm launcher bug fixed: download.js passed the artifact object where a
+    (version, platform) pair was expected. One artifactFileName() helper now
+    drives the cache name, checksum lookup and URL. Regression tests added.
+
+TESTS
+-----
+Baseline before changes : 833 passed in 79.90s
+Final after changes     : 846 passed in 76.29s (0 failed)
+New regression tests    : tests/test_v931_startup.py  (4)
+                          tests/test_v931_npm.py      (3)
+                          tests/test_v931_installer_ui.py (6)
+Agent end-to-end        : tests/test_v710_e2e_todo_app.py -> 4 passed
+                          (real AgentEngine, real file tools, real subprocesses)
+
+ARTIFACT INVENTORY (dist/release/v9.3.1/)
+-----------------------------------------
+  BUILD-MANIFEST.json
+  seedcode_cli-9.3.1-py3-none-any.whl          342,533 B   sha256 a0c9e0c4...
+  seedcode_cli-9.3.1.tar.gz                    295,854 B   sha256 6574bfad...
+  seedcode-cli-9.3.1.tgz                         6,620 B   sha256 7f69bb70...
+  SeedCode-CLI-9.3.1-windows-x64.exe        43,995,025 B   sha256 d65a57c1...
+  SeedCode-CLI-Setup-9.3.1.exe              45,441,897 B   sha256 adb1adae...
+  SHA256SUMS.txt
+
+VERIFICATION
+------------
+  sha256sum -c SHA256SUMS.txt                  -> OK for all five artifacts
+  python -m seedcode --version                 -> Seed Code CLI 9.3.1
+  wheel clean-venv install                     -> Seed Code CLI 9.3.1
+  sdist clean-venv install                     -> Seed Code CLI 9.3.1
+  standalone EXE --version / --help            -> 9.3.1 / help rendered
+  npm clean install launcher                   -> v9.3.1
+  Setup EXE install + uninstall                -> verified (see above)
+
+NOT VERIFIED (no credentials / no server / not authorized)
+-----------------------------------------------------------
+  * Live Ollama generation/streaming/tool calling — localhost:11434 unreachable.
+  * Live OpenRouter or custom-provider generation — no credentials present.
+  * IRM installers end-to-end against a published 9.3.1 release — publishing is
+    not authorized. Version-verification logic is covered by tests.
+
+RELEASE DIRECTORY
+-----------------
+  dist/release/v9.3.1/
+
+PUBLISHING
+----------
+Nothing was pushed, tagged, published or uploaded.

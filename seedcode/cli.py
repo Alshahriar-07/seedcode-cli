@@ -103,7 +103,14 @@ def main() -> None:
 
     _prepare_console()
 
+    # v9.3.1: the terminal snapshot and the workspace selector are imported
+    # here (deferred, like every other heavy import) and were previously
+    # referenced without being imported at all. That missing import was the
+    # real cause of `NameError: name 'ensure_workspace' is not defined` — the
+    # workspace was never selected, so startup failed before the UI existed.
+    from .utils.terminal_env import detect_terminal
     from .utils.logger import get_logger, setup_logging
+    from .workspace import ensure_workspace
 
     setup_logging()
     log = get_logger("cli")
@@ -129,6 +136,9 @@ def main() -> None:
 
     for shortcut in first_run_shortcuts():
         log.info("created shortcut: %s", shortcut)
+
+    terminal = detect_terminal()
+    log.info("terminal: %s", terminal.describe())
     try:
         # v9.1.0: pick the project workspace explicitly instead of silently
         # treating the launch directory as the project. Non-interactive hosts

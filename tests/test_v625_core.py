@@ -60,7 +60,7 @@ def _ctx(config: AppConfig | None = None) -> tuple[_StubUI, CommandContext]:
 
 def test_version_is_current_release() -> None:
     # v7.1.0: the canonical version lives only in seedcode/__init__.py.
-    assert __version__ == "9.2.1"
+    assert __version__ == "9.3.2"
 
 
 # --- authoritative defaults --------------------------------------------------

@@ -1,13 +1,13 @@
 Seed Code CLI
 =============
 
-Version: 9.2.1
+Version: 9.3.2
 License: PolyForm Noncommercial License 1.0.0
          (https://polyformproject.org/licenses/noncommercial/1.0.0/)
 
 WHAT'S IN THIS RELEASE
 ----------------------
-The v9.2.1 release artifacts:
+The v9.3.2 release artifacts:
   - Windows portable executable (x64)
   - Windows Setup installer (x64)
   - Python wheel (any OS)
@@ -18,62 +18,56 @@ The v9.2.1 release artifacts:
 Primary command after any install method:  seedcode
 Developer fallback:                        python -m seedcode
 
-WHAT CHANGED IN v9.2.1
+WHAT CHANGED IN v9.3.2
 ----------------------
-v9.2.1 is the dedicated coding-agent release. It removes the remaining
-non-coding features and makes the terminal experience a real, live view of the
-agent's work.
+v9.3.2 is a reliability and interface-polish release: the coding agent now
+guarantees real workspace changes, the terminal interface is quieter, and one
+long-standing timestamp annoyance is gone.
 
-  * One unified coding agent. Chat Mode, Agent Mode, Assist Mode and Code Mode
-    are gone; every request is one agent turn. The deterministic, model-free
-    intent classifier decides which capability the request needs, so a question
-    never reads your project and a coding task never fetches the web unless it
-    must. /chat, /agent, /mode, /assist and /codemode no longer exist.
+  * Minimal thinking display. The bottom strip is now just a small dim
+    "Thinking..." label above the reasoning summaries the connected model or
+    provider actually exposes. The former full-width "LIVE AI BRIEFING"
+    dashboard - title, model/provider identity, status fields, LIVE badges -
+    is gone. The strip hides when there is no reasoning, keeps a compact
+    bounded height, follows the newest update automatically, and preserves the
+    completed reasoning after the turn. A provider that exposes no reasoning
+    shows the honest line "Reasoning stream unavailable for this model.";
+    nothing is ever fabricated.
 
-  * Clean live activity log. The repeated "AI >" prefix is gone from agent
-    activity. Lines are indented under your turn and marked by real state:
-    a gear for a tool or file operation, a check for success, a cross for
-    failure and an info glyph for informational events. "You >" is unchanged.
+  * No timestamps beside AI responses. The activity log no longer prefixes
+    each line with a bracketed [HH:MM:SS] wall-clock stamp; that prefix was
+    the timestamp appearing next to streamed answers. Timestamps remain in
+    the backend activity events for logs and debugging.
 
-  * The spinner shows the actual operation. Instead of a generic "Working...",
-    the animated spinner carries the backend's current operation - "Reading
-    README.md...", "Running python -m pytest...", "Waiting for the model
-    response..." - with a live elapsed timer.
+  * Guaranteed real workspace execution. File-modification tasks can no
+    longer complete on a printed claim: completion is gated on observed
+    evidence (the file really created/changed, the command really run), the
+    agent is re-instructed when the work was only described, and the prompt
+    now carries explicit rules - code belongs in files, a printed tool call
+    is not an executed tool call, chat output is not file output.
 
-  * Real terminal reporting. A completed command reports its real exit code
-    ("Command completed - Exit code: 0"); failed commands report failure. No
-    operation is ever reported as successful unless it succeeded.
+  * File tools hardened.
+      - read_file refuses probable binaries instead of dumping mojibake, and
+        supports line ranges for large files.
+      - Every write (write_file, edit_file, insert_in_file, append_file) is
+        atomic: temp file -> flush -> fsync -> replace, so an interruption
+        cannot leave a truncated file, and a binary file is never silently
+        overwritten with text.
+      - edit_file supports an explicit replace_all for several independent
+        occurrences while still rejecting ambiguous single replacements.
+      - search_text gained ignore_case and exclude filters, path globs are
+        path-aware ('src/*.py' is one level; 'src/**/*.py' recurses), and the
+        workspace walker honors .gitignore.
 
-  * Real file-operation diffs. Created, updated and deleted files report the
-    path, line counts, the affected line range and a bounded unified diff.
+  * Read-only tasks are understood, not punished. Research, explanation and
+    review tasks can finish verified from real read-only inspection shared
+    with the task, while any task that says it must modify files stays gated
+    on real file evidence.
 
-  * Duplicate-free events. One operation produces one activity line: a file
-    change is rendered by the diff view instead of being printed twice.
-
-  * Compact header. The oversized boxed ASCII logo in the fixed header was
-    replaced by a compact two-row bar: branding/provider/model/mode above,
-    live status/workspace/context/key below. No line exceeds the terminal
-
-    width at any size and the branding line never churns while the agent
-    works.
-
-  * Removed non-coding features. Desktop control (windows, keyboard, mouse),
-    OCR/vision, the Computer Engine and the YouTube Music command were removed,
-    together with their [desktop], [vision] and [browser] extras. The tool
-    surface is now the coding agent's own: filesystem, search, terminal, git and
-    web research.
-
-  * Workspace lifecycle fix. The engine's permission manager is now bound to
-    the selected workspace at construction (the missing import that made a
-    normal message crash with NameError: name 'active_workspace' is not defined
-    is fixed), and a clean shutdown clears any in-flight initialization state.
-
-  * Provider honesty. A failed request is reported, never silently rerouted to
-    another provider; automatic failover is opt-in (auto_failover) and Ollama
-    failures surface as Ollama errors.
-
-  * Release gate. The build pipeline runs the full test suite before packaging
-    and refuses to build an artifact when a test fails.
+  * TODO/plan panel improvements carried in this release line: hierarchical
+    plans keep their nesting, dependencies schedule dependency-first, crashed
+    or repeated failures cannot be marked complete, and the panel always
+    reflects backend state.
 
 INSTALLATION METHODS
 --------------------
@@ -82,18 +76,18 @@ INSTALLATION METHODS
 
      irm https://seedcode-cli.vercel.app/install.ps1 | iex
 
-   Downloads the official SeedCode-CLI-9.2.1-windows-x64.exe from GitHub
+   Downloads the official SeedCode-CLI-9.3.2-windows-x64.exe from GitHub
    Releases and verifies its SHA-256 against the release's SHA256SUMS.txt. A
    mismatch, a missing entry, or an unreachable checksum file aborts;
    verification is never bypassed. It installs per-user to
    %LOCALAPPDATA%\Programs\SeedCode, adds that directory to the user PATH, and
-   verifies the installed binary reports version 9.2.1. PowerShell 5.1 and 7+
+   verifies the installed binary reports version 9.3.2. PowerShell 5.1 and 7+
    compatible; ANSI UI with graceful fallback; Ctrl+C safe.
 
 2) Windows - Setup installer
 
-   Download SeedCode-CLI-Setup-9.2.1.exe from
-   https://github.com/Alshahriar-07/seedcode-cli/releases/tag/v9.2.1 and run it.
+   Download SeedCode-CLI-Setup-9.3.2.exe from
+   https://github.com/Alshahriar-07/seedcode-cli/releases/tag/v9.3.2 and run it.
    Installs with a Start Menu shortcut and adds the install directory to the
    PATH so `seedcode` works in new terminals. Preserves configuration during
    upgrades (user config lives in the Seed Code config directory, not the
@@ -101,21 +95,21 @@ INSTALLATION METHODS
 
 3) Windows - portable executable
 
-   Download SeedCode-CLI-9.2.1-windows-x64.exe from the releases page and
+   Download SeedCode-CLI-9.3.2-windows-x64.exe from the releases page and
    run it directly. No installation, no PATH changes; `seedcode --version`
-   reports 9.2.1. For a persistent `seedcode` command, use method 1 or 2.
+   reports 9.3.2. For a persistent `seedcode` command, use method 1 or 2.
 
 4) Linux / macOS - remote shell installer
 
      curl -fsSL https://seedcode-cli.vercel.app/install.sh | bash
 
-   Downloads the official SeedCode-CLI-9.2.1-<os>-<arch> standalone binary
+   Downloads the official SeedCode-CLI-9.3.2-<os>-<arch> standalone binary
    from GitHub Releases when the release publishes one for this platform, and
-   otherwise downloads the official seedcode_cli-9.2.1-py3-none-any.whl. Either
+   otherwise downloads the official seedcode_cli-9.3.2-py3-none-any.whl. Either
    way the downloaded file's SHA-256 is verified against the release's
    SHA256SUMS.txt before anything is installed (a mismatch aborts, and an
    unreachable checksum file aborts too - verification is never bypassed).
-   Installs to ~/.local/bin and verifies the installed binary reports 9.2.1.
+   Installs to ~/.local/bin and verifies the installed binary reports 9.3.2.
    pipx is used for the wheel when available (otherwise pip --user, with
    PEP 668 handling). Clean ANSI UI with ASCII fallback; Ctrl+C safe.
 
@@ -132,6 +126,18 @@ INSTALLATION METHODS
    config directory (never inside site-packages) and prompts for a provider
    and model. The wheel requires Python 3.10+.
 
+INSTALLER EXPERIENCE
+--------------------
+Both remote installers share one monochrome Seed Code UI: a compact banner,
+seven real installation stages, stage-accurate progress and actionable errors.
+Download, checksum and version verification are unchanged.
+
+  - Progress reflects real stages (no invented percentages).
+  - Long operations show real spinners, or the downloader's own byte progress.
+  - Redirected output, NO_COLOR, --plain and TERM=dumb disable animation.
+  - Errors report a reason, a suggested action and a stable error code.
+  - The success screen appears only after the installed binary reports 9.3.2.
+
 UPGRADE SAFETY
 --------------
 Upgrades preserve user configuration and provider/API settings. The Windows
@@ -142,7 +148,7 @@ CHECKSUMS
 ---------
 Every release artifact has a SHA-256 entry in SHA256SUMS.txt:
 
-  cd dist/release/9.2.1
+  cd dist/release/v9.3.2
   sha256sum -c SHA256SUMS.txt            # Linux/macOS
   Get-FileHash <file> -Algorithm SHA256  # Windows
 

@@ -134,7 +134,18 @@ _CODEMODE_PREAMBLE = (
     "decide, act again. A failed command is information to fix, never a "
     "reason to stop. Do not ask for permission for normal coding work; ask "
     "only when genuinely blocked.\n"
-    "5. When you learn something durable about this project "
+    "5. REAL FILES OR IT DID NOT HAPPEN: code belongs in files. Create or "
+    "change any source code by calling write_file/create_file/edit_file/"
+    "insert_in_file — printing a code block in your reply is NOT the "
+    "operation, and a described or proposed tool call is not an executed "
+    "one: the operation counts only when a tool result says it succeeded. "
+    "Before editing an existing file, locate and read it, then make the "
+    "minimal targeted change. After a file operation, verify (file exists, "
+    "content matches, command passes) BEFORE reporting success, and report "
+    "failures honestly if recovery fails. The chat is for explanations, "
+    "questions, updates and short summaries — never the destination for complete "
+    "source files (show code in chat only when the user asked for a snippet).\n"
+    "6. When you learn something durable about this project "
     "(architecture, conventions, decisions), note it in .seedcode memory."
 )
 
@@ -153,7 +164,10 @@ _NATIVE_INSTRUCTIONS = (
     "results arrive as tool messages; when the task is complete, answer "
     "WITHOUT calling tools — that is your final answer. Never invent tool "
     "results. If a call fails, read the error and correct your next call. "
-    "Prefer editing existing files over rewriting them."
+    "Prefer editing existing files over rewriting them. Code belongs in "
+    "files: create or change source code with the file tools — printing a "
+    "code block in your reply is not a file operation and never counts as "
+    "implemented."
 )
 
 def _inspection_label(call: ToolCall) -> str:

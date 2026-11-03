@@ -557,18 +557,18 @@ class TestResizeResponsiveness:
         with _session() as (tui, _pipe, _out):
             app = tui._build_app()
             root = app.layout.container
-            # The top level carries exactly the eight regions, in order
-            # (v9.2.0: the thinking row, the slash-autocomplete row, and the
-            # content/plan side-by-side pair).
+            # The top level carries exactly the regions, in order (v9.2.0: the
+            # slash-autocomplete row and the content/plan side-by-side pair;
+            # v9.3.2: the compact thinking strip directly above the composer).
             children = root.get_children()
-            pair = children[2]  # the content|plan side-by-side container
+            pair = children[1]  # the content|plan side-by-side container
             assert pair.get_children() == [tui._content_window, tui._plan_window]
             assert children == [
                 tui._header_window,
-                tui._thinking_window,
                 pair,
                 tui._autocomplete_window,
                 tui._permission_window,
+                tui._thinking_window,
                 root.get_children()[5],  # the composer frame
                 tui._hint_window,
             ]

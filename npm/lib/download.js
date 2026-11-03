@@ -26,12 +26,23 @@ function checksumsUrl() {
   return `${RELEASE_BASE}/v${VERSION}/SHA256SUMS.txt`;
 }
 
-function artifactUrl(artifact) {
-  return `${RELEASE_BASE}/v${VERSION}/${assetName(artifact)}`;
+/**
+ * The release asset filename for an artifact descriptor.
+ *
+ * Single source for the cache name, the checksum lookup and the URL. Passing
+ * the descriptor itself to `assetName()` threw "no prebuilt asset for
+ * undefined" and made the launcher fail before it ever downloaded anything.
+ */
+function artifactFileName(artifact) {
+  if (artifact && typeof artifact.asset === "string" && artifact.asset) {
+    return artifact.asset;
+  }
+  const platform = artifact && (artifact.os === "windows" ? "win32" : artifact.os);
+  return assetName(VERSION, platform);
 }
 
 function artifactUrl(artifact) {
-  return `${RELEASE_BASE}/v${VERSION}/${assetName(VERSION, artifact.os === "windows" ? "win32" : artifact.os)}`;
+  return `${RELEASE_BASE}/v${VERSION}/${artifactFileName(artifact)}`;
 }
 
 function fetch(url, redirects = 5) {
@@ -107,7 +118,7 @@ async function expectedChecksum(assetNameToCheck) {
 
 async function ensureDownloaded(artifact, packageVersion) {
   const root = cacheRoot();
-  const target = path.join(root, assetName(artifact));
+  const target = path.join(root, artifactFileName(artifact));
 
   if (fs.existsSync(target) && fs.statSync(target).size > 0) {
     return target;
@@ -119,7 +130,7 @@ async function ensureDownloaded(artifact, packageVersion) {
   await downloadTo(url, target);
 
   const actual = await sha256File(target);
-  const expected = await expectedChecksum(assetName(artifact));
+  const expected = await expectedChecksum(artifactFileName(artifact));
   if (!expected) {
     // No published checksum for this asset: refuse to cache an unverified
     // binary rather than silently trusting the download.
@@ -137,4 +148,10 @@ async function ensureDownloaded(artifact, packageVersion) {
   return target;
 }
 
-module.exports = { ensureDownloaded, cacheRoot, checksumsUrl, artifactUrl };
+module.exports = {
+  ensureDownloaded,
+  cacheRoot,
+  checksumsUrl,
+  artifactFileName,
+  artifactUrl,
+};

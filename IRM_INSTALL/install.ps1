@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Seed Code CLI v9.2.1 - official Windows remote installer.
+    Seed Code CLI v9.3.2 - official Windows remote installer.
 
 .DESCRIPTION
     Installs Seed Code CLI for the CURRENT USER. No administrator rights, no
@@ -31,10 +31,10 @@
 
     Or, to pass options, download-then-run:
 
-        & ([scriptblock]::Create((irm https://seedcode-cli.vercel.app/install.ps1))) -Version 9.2.1
+        & ([scriptblock]::Create((irm https://seedcode-cli.vercel.app/install.ps1))) -Version 9.3.2
 
 .PARAMETER Version
-    Release version to install. Defaults to 9.2.1 (the current stable release).
+    Release version to install. Defaults to 9.3.2 (the current stable release).
 
 .PARAMETER InstallDir
     Install directory. Defaults to %LOCALAPPDATA%\Programs\SeedCode.
@@ -63,7 +63,7 @@
 #>
 [CmdletBinding()]
 param(
-    [string] $Version = "9.2.1",
+    [string] $Version = "9.3.2",
     [string] $InstallDir = "",
     [switch] $NoPathUpdate,
     [switch] $NoShortcuts,
@@ -105,15 +105,17 @@ $symNode   = $(if ($UiUnicode) { [string][char]0x25CF } else { "*" })
 $symBranch = $(if ($UiUnicode) { [string][char]0x251C } else { "|" })
 $symLast   = $(if ($UiUnicode) { [string][char]0x2514 } else { '`' })
 $symDot    = $(if ($UiUnicode) { [string][char]0x2022 } else { "|" })
+$symCross  = $(if ($UiUnicode) { [string][char]0x2715 } else { "x" })
 $symFull   = $(if ($UiUnicode) { [string][char]0x2588 } else { "#" })
 $symEmpty  = $(if ($UiUnicode) { [string][char]0x2591 } else { "." })
 $Sym = @{
     Rule = $symRule; Tick = $symTick; Node = $symNode; Branch = $symBranch
     Last = $symLast; Dot = $symDot; Full = $symFull; Empty = $symEmpty
+    Cross = $symCross
 }
 $RuleText = ($Sym.Rule * 38)
 
-$AnsiFg = @{ Gray = "90"; Green = "92"; Yellow = "93"; Red = "91"; Cyan = "96"; DarkGray = "37" }
+$AnsiFg = @{ White = "97"; Gray = "90"; Green = "92"; Yellow = "93"; Red = "91"; Cyan = "96"; DarkGray = "37" }
 
 function Write-Ui {
     param([string] $Text, [string] $Color = "Gray", [switch] $NoNewline)
@@ -135,14 +137,117 @@ function Write-Ok([string] $Text)      { Write-Ui "  $($Sym.Tick) $Text" "Green"
 function Write-Step([string] $Text)    { Write-Ui "  $($Sym.Branch) $Text" "Gray" }
 function Write-Note([string] $Text)    { Write-Ui "  $Text" "DarkGray" }
 
-function Fail([string] $Text) {
+function Fail([string] $Text, [string] $Code = "INSTALL_FAILED") {
+    $action = switch ($Code) {
+        "DOWNLOAD_FAILED"    { "Check your internet connection and retry." }
+        "CHECKSUM_FAILED"    { "The download may be corrupt or the release incomplete. Retry; if it persists, report it." }
+        "VERIFY_FAILED"      { "Remove any older seedcode on PATH and retry the installation." }
+        "PERMISSION_DENIED"  { "Choose a writable -InstallDir and retry." }
+        "MISSING_DEPENDENCY" { "Install the missing component and retry." }
+        "ENVIRONMENT_FAILED" { "Check the environment (TLS, temp directory, user profile) and retry." }
+        default              { "Retry the installation. If it keeps failing, report it with the error code." }
+    }
     try { [Console]::CursorVisible = $true } catch { }
     Write-Ui ""
-    Write-Ui "  Installer error: $Text" "Red"
+    Write-Ui "  $($Sym.Cross) Installation failed" "Red"
+    Write-Ui ""
+    Write-Ui "  Reason:" "Gray"
+    foreach ($line in ($Text -split "`n")) { Write-Ui "  $line" "Gray" }
+    Write-Ui ""
+    Write-Ui "  Suggested action:" "Gray"
+    Write-Ui "  $action" "Gray"
+    Write-Ui ""
+    Write-Ui "  Error code: $Code" "DarkGray"
     Write-Ui ""
     Write-Ui "  Download manually from: https://github.com/$Repo/releases" "DarkGray"
     Write-Ui ""
     exit 1
+}
+
+function Show-Banner {
+    $width = 80
+    try { if (-not $UiRedirected) { $width = [Console]::WindowWidth } } catch { }
+    Write-Ui ""
+    if ($width -ge 56) {
+        $logo = @(
+            '   _____                _  _____          _',
+            '  / ____|              | |/ ____|        | |',
+            ' | (___   ___  ___   __| | |     ___   __| | ___',
+            '  \___ \ / _ \/ _ \ / _` | |    / _ \ / _` |/ _ \',
+            '  ____) |  __/  __/ (_| | |___| (_) | (_| |  __/',
+            ' |_____/ \___|\___|\__,_|\_____\___/ \__,_|\___|'
+        )
+        foreach ($line in $logo) {
+            Write-Ui "  $line" "Gray"
+        }
+    } else {
+        Write-Ui "  SEED CODE CLI" "White"
+    }
+    Write-Ui "  SEED CODE CLI  $($Sym.Dot)  AI CODING AGENT" "White"
+    Write-Ui "  Version $Version" "Gray"
+    Write-Ui ""
+}
+
+function Write-Status([string] $Text) {
+    Write-Ui "  $($Sym.Node) $Text" "Green"
+}
+
+function Write-Success([string] $Text) {
+    Write-Ui "  $($Sym.Tick) $Text" "Green"
+}
+
+function Write-Warning([string] $Text) {
+    Write-Ui "  ! $Text" "Yellow"
+}
+
+function Write-ErrorMessage([string] $Text) {
+    Write-Ui "  $($Sym.Cross) $Text" "Red"
+}
+
+function Show-Progress {
+    param([int] $Current, [int] $Total = 7, [string] $Label = "")
+    if ($Total -le 0) { $Total = 1 }
+    $barWidth = 24
+    $filled = [int]($barWidth * $Current / $Total)
+    $bar = ($Sym.Full * $filled) + ($Sym.Empty * ($barWidth - $filled))
+    Write-Ui "  [$bar] $Current/$Total  $Label" "Gray"
+}
+
+function Show-Stage {
+    param([int] $Number, [string] $Label)
+    Show-Progress -Current $Number -Total 7 -Label $Label
+}
+
+function Show-Spinner {
+    param([string] $Text, [scriptblock] $Action, [object] $Argument)
+    if ($null -eq $Action) { return $null }
+    if ($UiRedirected -or -not $UiAnsi) { return (& $Action $Argument) }
+    $runspace = $null
+    try {
+        $runspace = [PowerShell]::Create()
+        [void] $runspace.AddScript($Action.ToString())
+        if ($null -ne $Argument) { [void] $runspace.AddArgument($Argument) }
+        $async = $runspace.BeginInvoke()
+        $frames = @('|', '/', '-', '\')
+        $index = 0
+        while (-not $async.IsCompleted) {
+            [Console]::Write("`r  $($frames[$index % 4]) $Text")
+            Start-Sleep -Milliseconds 100
+            $index++
+        }
+        $output = $runspace.EndInvoke($async)
+        try { [Console]::Write("`r" + (" " * 60) + "`r") } catch { }
+        if ($null -ne $output -and $output.Count -gt 0) {
+            return $output[$output.Count - 1]
+        }
+        return $null
+    } catch {
+        # The spinner is cosmetic: never let it break the installation.
+        try { [Console]::Write("`r" + (" " * 60) + "`r") } catch { }
+        return (& $Action $Argument)
+    } finally {
+        if ($null -ne $runspace) { try { $runspace.Dispose() } catch { } }
+    }
 }
 
 function Draw-Progress {
@@ -307,8 +412,8 @@ function Test-InstalledVersion([string] $ExePath, [string] $Expected) {
         return $false
     }
     if (-not $reported) { return $false }
-    # Boundary-checked match, not a substring search: '19.2.1' must not pass
-    # for '9.2.1', '9.2.11' must not pass for '9.2.1', and the optional
+    # Boundary-checked match, not a substring search: '19.3.2' must not pass
+    # for '9.3.2', '9.3.21' must not pass for '9.3.2', and the optional
     # v/V version marker must be a single marker, not part of a longer word.
     # The same rules are implemented in install.sh (version_ok) and
     # setup.iss (VersionInOutput).
@@ -384,45 +489,50 @@ function Install-Shortcuts([string] $TargetExe) {
 }
 
 # --- main --------------------------------------------------------------------
+Show-Banner
+Write-Ui "  Initializing installation..." "DarkGray"
+
+Show-Stage 1 "Checking system requirements"
 $Arch        = Get-Arch
 $AssetName   = "SeedCode-CLI-$Version-windows-$Arch.exe"
 $AssetUrl    = "$ReleaseBase/$AssetName"
 if (-not $InstallDir) { $InstallDir = Get-DefaultInstallDir }
 $TargetExe   = Join-Path $InstallDir $ExeName
-
-Write-Ui ""
-Write-Title "Seed Code CLI"
-Write-Ui "  $RuleText" "DarkGray"
-Write-Ui "  Version $Version  $($Sym.Dot)  Windows $Arch" "Gray"
-Write-Ui "  Per-user installation" "DarkGray"
-
-Write-Section "$($Sym.Node) Checking system"
 Write-Ok "PowerShell $($PSVersionTable.PSVersion) detected"
 Enable-Tls12
 Write-Ok "TLS 1.2 enabled"
 
+Show-Stage 2 "Checking existing installation"
 # Existing installation: upgrade in place, never a second copy.
 $already = Test-InstalledVersion $TargetExe $Version
 if ($already -and -not $Force) {
-    Write-Section "$($Sym.Tick) Already installed"
-    Write-Ok "Seed Code CLI $Version is already installed at $TargetExe"
+    Write-Success "Seed Code CLI $Version is already installed"
+    Write-Ui "  $TargetExe" "DarkGray"
     Write-Ui ""
     # The binary is already current, but a missing desktop icon is exactly the
     # reported upgrade symptom - restore the shortcuts before exiting.
     Install-Shortcuts $TargetExe
     Write-Ui "  $RuleText" "DarkGray"
-    Write-Ui "  $($Sym.Tick) Nothing to do" "Green"
+    Write-Ui "  $($Sym.Tick) Nothing to do - the requested version is current" "Green"
     Write-Ui ""
     Write-Ui "  Run:" "Gray"
-    Write-Ui "      seedcode" "Gray"
+    Write-Ui "      seedcode" "White"
     Write-Ui ""
     exit 0
 }
 if (Test-Path -LiteralPath $TargetExe) {
     Write-Ok "Existing installation found - upgrading in place"
+} else {
+    Write-Ok "No previous installation found"
 }
 
-Write-Section "Downloading"
+Show-Stage 3 "Preparing installation directory"
+if (-not (Test-Path -LiteralPath $InstallDir)) {
+    New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
+}
+Write-Ok "Install directory ready: $InstallDir"
+
+Show-Stage 4 "Downloading SeedCode CLI"
 Write-Step $AssetName
 $tempDir = Join-Path ([IO.Path]::GetTempPath()) ("seedcode-install-" + [Guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
@@ -431,9 +541,9 @@ $tempExe = Join-Path $tempDir $AssetName
 try {
     Save-RemoteFileWithProgress $AssetUrl $tempExe $AssetName
     $sizeMb = [math]::Round((Get-Item -LiteralPath $tempExe).Length / 1MB, 1)
-    Write-Ui "  $($Sym.Last) Download complete ($sizeMb MB)" "Gray"
+    Write-Ok "Downloaded $AssetName ($sizeMb MB)"
 
-    Write-Section "Verifying"
+    Show-Stage 5 "Verifying package integrity"
     # ONE authoritative checksum source: the release's SHA256SUMS.txt, which the
     # release pipeline generates from the FINAL artifacts (after the last
     # artifact is written). The expected digest is looked up for the exact file
@@ -442,45 +552,44 @@ try {
     # abort; verification is never bypassed.
     $sums = Get-RemoteText $SumsUrl
     if (-not $sums) {
-        Fail "Could not download SHA256SUMS.txt from $SumsUrl. Refusing to install an unverified binary."
+        Fail "Could not download SHA256SUMS.txt from $SumsUrl. Refusing to install an unverified binary." "CHECKSUM_FAILED"
     }
     $expected = Get-ExpectedHash $sums $AssetName
     if (-not $expected) {
-        Fail "No SHA256 checksum for $AssetName in the release's SHA256SUMS.txt. Refusing to install an unverified binary."
+        Fail "No SHA256 checksum for $AssetName in the release's SHA256SUMS.txt. Refusing to install an unverified binary." "CHECKSUM_FAILED"
     }
-    $actual = (Get-FileHash -LiteralPath $tempExe -Algorithm SHA256).Hash.ToLowerInvariant()
+    $actual = ([string](Show-Spinner "Computing SHA-256..." { param($item) (Get-FileHash -LiteralPath $item -Algorithm SHA256).Hash } $tempExe)).ToLowerInvariant()
     if ($actual -ne $expected) {
-        Fail "Checksum mismatch for $AssetName.`n      expected $expected`n      actual   $actual"
+        Fail "Checksum mismatch for $AssetName.`n      expected $expected`n      actual   $actual" "CHECKSUM_FAILED"
     }
     Write-Ok "SHA-256 checksum verified ($($actual.Substring(0, 12))...)"
 
-    Write-Section "Installing"
-    if (-not (Test-Path -LiteralPath $InstallDir)) {
-        New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
-    }
+    Show-Stage 6 "Installing and configuring PATH"
     try {
         Copy-Item -LiteralPath $tempExe -Destination $TargetExe -Force
     } catch {
-        Fail "Could not write $TargetExe. If Seed Code is running, close it and try again.`n      $($_.Exception.Message)"
+        Fail "Could not write $TargetExe. If Seed Code is running, close it and try again.`n      $($_.Exception.Message)" "PERMISSION_DENIED"
     }
     Write-Ok "Seed Code CLI installed"
 } finally {
     Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-if (-not $NoPathUpdate) { Add-ToUserPath $InstallDir }
-
-Write-Section "Shortcuts"
+if (-not $NoPathUpdate) {
+    Add-ToUserPath $InstallDir
+} else {
+    Write-Note "PATH update skipped (-NoPathUpdate)."
+}
 Install-Shortcuts $TargetExe
 
-Write-Section "Verifying"
+Show-Stage 7 "Verifying installation"
 # Verify the file THIS run installed, by absolute path - a `seedcode` already
 # on PATH could be an older copy, and a stale binary must never be reported as
 # this install's success.
 $reported = ""
 try { $reported = (& $TargetExe --version 2>&1 | Out-String).Trim() } catch { $reported = "(failed to run)" }
 if ($reported -notlike "*$Version*") {
-    Fail "The installed binary did not report version $Version (it said: '$reported')."
+    Fail "The installed binary did not report version $Version (it said: '$reported')." "VERIFY_FAILED"
 }
 Write-Ok "seedcode --version  ->  $reported"
 
@@ -501,27 +610,37 @@ try {
 # loud instead of letting the user believe the upgrade took effect.
 if ($onPath -and $resolvedTo -and -not ($resolvedTo -like "$InstallDir\*")) {
     Write-Ui ""
-    Write-Ui "  ! Another seedcode is earlier on PATH:" "Yellow"
+    Write-Warning "Another seedcode is earlier on PATH:"
     Write-Ui "      $resolvedTo" "DarkGray"
     Write-Ui "      (this install: $TargetExe)" "DarkGray"
     Write-Ui "    Remove the older copy, or run this one directly:" "DarkGray"
     Write-Ui "      & `"$TargetExe`" --version" "DarkGray"
 }
 
+try { [Console]::CursorVisible = $true } catch { }
 Write-Ui ""
 Write-Ui "  $RuleText" "DarkGray"
-Write-Ui "  $($Sym.Tick) Installation complete" "Green"
+Write-Ui "  $($Sym.Tick) Seed Code CLI installed successfully!" "Green"
 Write-Ui ""
+Write-Ui "  Version: $Version" "Gray"
+Write-Ui ""
+Write-Ui "  Get started:" "Gray"
 if ($NoPathUpdate) {
-    Write-Ui "  Run:" "Gray"
-    Write-Ui "      & `"$TargetExe`"" "Gray"
+    Write-Ui "      & `"$TargetExe`" --version" "White"
+    Write-Ui "      & `"$TargetExe`"" "White"
 } elseif ($onPath) {
-    Write-Ui "  Run:" "Gray"
-    Write-Ui "      seedcode" "Gray"
+    Write-Ui "      seedcode --version" "White"
+    Write-Ui "      seedcode" "White"
 } else {
-    Write-Ui "  Restart your terminal, then run:" "Gray"
-    Write-Ui "      seedcode" "Gray"
-    Write-Ui "  (PATH changes only apply to new sessions)" "DarkGray"
+    Write-Ui "      seedcode --version   (after restarting your terminal)" "White"
+    Write-Ui "      seedcode" "White"
+    Write-Ui "  PATH changes apply to new sessions." "DarkGray"
 }
+Write-Ui ""
+Write-Ui "  Documentation:" "Gray"
+Write-Ui "  https://seedcode-cli.vercel.app/" "DarkGray"
+Write-Ui ""
+Write-Ui "  Happy coding!" "Green"
+Write-Ui ""
 Write-Ui "  License: PolyForm Noncommercial License 1.0.0" "DarkGray"
 Write-Ui ""

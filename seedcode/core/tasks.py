@@ -131,6 +131,14 @@ class Task:
     started_at: float | None = None
     finished_at: float | None = None
     verification: str = ""
+    # --- hierarchy (v9.3.1) --------------------------------------------------
+    #: The parent task's id (``None`` for a top-level task). A task with
+    #: children is a *container*: it is never scheduled itself (its children
+    #: are), and its state is derived from theirs — a parent can never be
+    #: completed while a child remains incomplete.
+    parent_id: int | None = None
+    #: Nesting level in the plan (0 = top level), used only for rendering.
+    depth: int = 0
 
     # --- scheduling ----------------------------------------------------------
     def ready(self, completed: set[int]) -> bool:
@@ -243,6 +251,8 @@ class Task:
             "started_at": self.started_at,
             "finished_at": self.finished_at,
             "verification": self.verification,
+            "parent_id": self.parent_id,
+            "depth": self.depth,
         }
 
     @classmethod
@@ -280,6 +290,8 @@ class Task:
             started_at=_stamp("started_at"),
             finished_at=_stamp("finished_at"),
             verification=str(data.get("verification", "")),
+            parent_id=_parent_id(data.get("parent_id")),
+            depth=int(data.get("depth", 0) or 0),
         )
 
 
@@ -291,11 +303,17 @@ class PlanItem:
     detail: str = ""
     acceptance: list[str] = field(default_factory=list)
     depends_on: list[int] = field(default_factory=list)
+    #: Nesting level read from the plan's own indentation (v9.3.1).
+    depth: int = 0
 
 
 # --- plan parsing ------------------------------------------------------------
 _PLAN_BLOCK = re.compile(r"```(?:plan|tasks|todo)\s*\n(.*?)```", re.DOTALL | re.IGNORECASE)
-_NUMBERED = re.compile(r"^\s*(\d+)[.)]\s+(.*)$")
+#: A numbered plan line, with its leading indentation captured so the plan's
+#: own nesting becomes a real parent/child shape (v9.3.1).
+_NUMBERED = re.compile(r"^([ \t]*)(\d+)[.)]\s+(.*)$")
+#: Cells of indentation that make one nesting level (a tab counts as 4).
+_INDENT_PER_LEVEL = 2
 _ACCEPTANCE_RE = re.compile(r"\bacceptance(?:\s+criteria)?\s*[:\-]\s*(.+)$", re.IGNORECASE)
 _DEPENDS_RE = re.compile(r"\bdepends(?:\s+on)?\s*[:\-]?\s*([0-9,\s]+)", re.IGNORECASE)
 
@@ -373,12 +391,17 @@ def _parse_plan_json(body: str) -> list[PlanItem]:
             str(c).strip() for c in entry.get("acceptance") or [] if str(c).strip()
         ]
         depends = entry.get("depends_on") or entry.get("depends") or []
+        try:
+            depth = max(0, min(5, int(entry.get("depth") or 0)))
+        except (TypeError, ValueError):
+            depth = 0
         items.append(
             PlanItem(
                 title=title,
                 detail=str(entry.get("detail") or entry.get("description") or ""),
                 acceptance=acceptance,
                 depends_on=[int(d) for d in depends if str(d).strip().isdigit()],
+                depth=depth,
             )
         )
     return items
@@ -391,7 +414,9 @@ def _parse_numbered(text: str) -> list[PlanItem]:
         match = _NUMBERED.match(line)
         if match is None:
             continue
-        body = match.group(2).strip()
+        indent = match.group(1).expandtabs(4)
+        depth = max(0, min(5, len(indent) // _INDENT_PER_LEVEL))
+        body = match.group(3).strip()
         if not body:
             continue
         body, depends = _split_depends(body)
@@ -401,7 +426,18 @@ def _parse_numbered(text: str) -> list[PlanItem]:
         body = re.sub(r"[\s:—–-]+$", "", body).strip("#* \t")
         if not body:
             continue
-        items.append(PlanItem(title=body, acceptance=criteria, depends_on=depends))
+        items.append(
+            PlanItem(
+                title=body, acceptance=criteria, depends_on=depends, depth=depth
+            )
+        )
+    # A plan's first entry defines the top level: a whole list indented under a
+    # single heading is not a hierarchy of its own.
+    if items:
+        base = min(item.depth for item in items)
+        if base:
+            for item in items:
+                item.depth -= base
     # Guard against swallowing an unrelated numbered list of prose (a summary
     # like "1. Done. 2. Done."): a plan has substance, not one-word items.
     if items and all(len(item.title) < 8 for item in items):
@@ -421,7 +457,15 @@ class TaskGraph:
     @classmethod
     def from_plan(cls, request: str, items: Iterable[PlanItem]) -> "TaskGraph":
         tasks: list[Task] = []
+        # One entry per open level: (depth, task id). A deeper line becomes a
+        # child of the nearest shallower line before it, so the plan's own
+        # indentation is preserved as a real parent/child relationship.
+        stack: list[tuple[int, int]] = []
         for index, item in enumerate(items, start=1):
+            depth = max(0, int(getattr(item, "depth", 0) or 0))
+            while stack and stack[-1][0] >= depth:
+                stack.pop()
+            parent_id = stack[-1][1] if stack else None
             tasks.append(
                 Task(
                     id=index,
@@ -429,8 +473,11 @@ class TaskGraph:
                     detail=item.detail,
                     acceptance=list(item.acceptance),
                     depends_on=[d for d in item.depends_on if 0 < d < index],
+                    parent_id=parent_id,
+                    depth=len(stack),
                 )
             )
+            stack.append((depth, index))
         return cls(request=request, tasks=tasks)
 
     @classmethod
@@ -459,9 +506,16 @@ class TaskGraph:
         return sum(1 for t in self.tasks if t.state in RESOLVED_STATES)
 
     def next_task(self) -> Task | None:
-        """The next runnable task, honouring dependencies (dependency-first)."""
+        """The next runnable task, honouring dependencies (dependency-first).
+
+        A container task (one with subtasks) is never scheduled itself: its
+        children are the work, and its own state is derived from theirs.
+        """
+        self.refresh_parents()
         completed = self.completed_ids()
         for task in self.tasks:
+            if self.is_container(task):
+                continue
             if task.ready(completed):
                 return task
         return None
@@ -493,11 +547,16 @@ class TaskGraph:
     def all_completed(self) -> bool:
         """Whether the plan is finished.
 
+        Container states are re-derived first: a parent is completed only when
+        every one of its subtasks is resolved, so an unfinished child can never
+        leave the plan looking complete.
+
         Every task must be resolved (completed *or* consciously skipped), and
         at least one task must have been genuinely verified with evidence: a
         project is never "complete" from skips alone. A skipped task never
         counts as completed work.
         """
+        self.refresh_parents()
         if not self.tasks:
             return False
         if not all(t.state in RESOLVED_STATES for t in self.tasks):
@@ -516,11 +575,22 @@ class TaskGraph:
         ]
 
     def progress(self) -> tuple[int, int]:
+        self.refresh_parents()
         return self.completed_count(), self.total
 
+    def leaf_tasks(self) -> list[Task]:
+        """Tasks that carry real work: every task without subtasks."""
+        leaves = [t for t in self.tasks if not self.is_container(t)]
+        return leaves or list(self.tasks)
+
     def percent(self) -> int:
-        done, total = self.progress()
-        return int(round(100 * done / total)) if total else 0
+        """Verified-work percentage over the leaves (containers are summaries)."""
+        self.refresh_parents()
+        leaves = self.leaf_tasks()
+        if not leaves:
+            return 0
+        done = sum(1 for t in leaves if t.state is TaskState.COMPLETED)
+        return int(round(100 * done / len(leaves)))
 
     # --- mutation ------------------------------------------------------------
     def mark(self, task: Task, state: TaskState, note: str = "") -> None:
@@ -548,7 +618,95 @@ class TaskGraph:
     # --- rendering -----------------------------------------------------------
     def checklist(self, *, limit: int = 12) -> list[tuple[TaskState, str]]:
         """``(state, title)`` rows for the compact task view."""
+        self.refresh_parents()
         return [(t.state, t.title) for t in self.tasks[: max(1, limit)]]
+
+    # --- hierarchy (v9.3.1) --------------------------------------------------
+    def children_of(self, task_id: int) -> list[Task]:
+        """The tasks directly beneath ``task_id`` (plan order)."""
+        return [t for t in self.tasks if t.parent_id == task_id]
+
+    def is_container(self, task: Task) -> bool:
+        """Whether ``task`` has subtasks and is therefore a summary row."""
+        return any(t.parent_id == task.id for t in self.tasks)
+
+    def refresh_parents(self) -> None:
+        """Re-derive every container task's state from its subtasks.
+
+        This is the rule that makes a parent honest: it is completed only when
+        every child is resolved and at least one was really verified. A failed
+        or blocked child fails/blocks its parent, so an unfinished subtree can
+        never read as done. Idempotent and cheap (plans are small).
+        """
+        for task in reversed(self.tasks):
+            kids = self.children_of(task.id)
+            if not kids:
+                continue
+            states = [kid.state for kid in kids]
+            if all(s in RESOLVED_STATES for s in states) and any(
+                s is TaskState.COMPLETED for s in states
+            ):
+                derived = TaskState.COMPLETED
+            elif any(s in (TaskState.FAILED, TaskState.CANCELLED) for s in states):
+                derived = TaskState.FAILED
+            elif any(s is TaskState.BLOCKED for s in states):
+                derived = TaskState.BLOCKED
+            elif any(
+                s in (TaskState.RUNNING, TaskState.VERIFYING, TaskState.RECOVERING)
+                for s in states
+            ):
+                derived = TaskState.RUNNING
+            elif any(s in RESOLVED_STATES for s in states):
+                # Some subtasks are resolved but the rest are still open: the
+                # parent is in progress, never pending again.
+                derived = TaskState.RUNNING
+            else:
+                derived = TaskState.PENDING
+            if task.state is derived:
+                continue
+            task.mark(derived, f"derived from {len(kids)} subtask(s)")
+            if derived is TaskState.COMPLETED and task.started_at and not task.finished_at:
+                task.finished_at = time.time()
+
+    def tree_rows(
+        self, *, limit: int = 40, collapsed: Iterable[int] = ()
+    ) -> list[tuple[TaskState, str, int, int, bool]]:
+        """The plan as display rows: ``(state, title, depth, id, has_children)``.
+
+        Rows are ordered depth-first in plan order, skipping the children of a
+        collapsed container. Every row is the graph's real state — the panel
+        never invents a task or a status.
+        """
+        self.refresh_parents()
+        hidden = {int(value) for value in collapsed}
+        rows: list[tuple[TaskState, str, int, int, bool]] = []
+        seen: set[int] = set()
+
+        def walk(parent: int | None, level: int) -> None:
+            for task in self.tasks:
+                if task.id in seen or task.parent_id != parent:
+                    continue
+                seen.add(task.id)
+                kids = bool(self.children_of(task.id))
+                rows.append((task.state, task.title, level, task.id, kids))
+                if kids and task.id not in hidden:
+                    walk(task.id, level + 1)
+
+        walk(None, 0)
+        # Only a task whose *parent is missing from the plan* is an orphan; a
+        # row hidden by a collapsed container must stay hidden.
+        known = {t.id for t in self.tasks}
+        for task in self.tasks:
+            if task.id in seen:
+                continue
+            if task.parent_id is not None and task.parent_id in known:
+                continue
+            rows.append((task.state, task.title, 0, task.id, False))
+        return rows[: max(1, int(limit))]
+
+    def collapsed_ids(self) -> list[int]:
+        """Ids of every container task (the set the UI can collapse)."""
+        return [t.id for t in self.tasks if self.is_container(t)]
 
     # --- serialization -------------------------------------------------------
     def to_dict(self) -> dict[str, Any]:
@@ -810,8 +968,21 @@ def evidence_summary(task: Task) -> str:
     return "; ".join(parts) or "no tool activity recorded"
 
 
+def _readonly_ok(evidence: TurnEvidence, read_only: bool) -> bool:
+    """Whether a READ-ONLY task's evidence proves real work (v9.3.2).
+
+    ``inspected`` entries are recorded only when a read-only tool really
+    SUCCEEDED (a failed call records an error instead), so a non-empty list
+    with no unresolved error is observed progress, not a claimed one. A task
+    that never touched a tool still fails — talking without looking at the
+    workspace proves nothing.
+    """
+    return bool(read_only and evidence.inspected and not evidence.errors)
+
+
 def _criterion_check(
-    criterion: str, evidence: TurnEvidence, workspace: Path | None
+    criterion: str, evidence: TurnEvidence, workspace: Path | None,
+    *, read_only: bool = False,
 ) -> tuple[bool, str]:
     """Check one acceptance criterion; returns (met, description)."""
     text = criterion.strip()
@@ -861,13 +1032,14 @@ def _criterion_check(
     if low.startswith(_CRITERION_NO_ERRORS) or low in ("no errors", "no unresolved errors"):
         # "No errors" is a *guard*, not evidence of work. An empty error list is
         # exactly what a model that did nothing produces, so the criterion also
-        # requires concrete progress (a file written, a command that succeeded).
+        # requires concrete progress (a file written, a command that succeeded,
+        # or — for a read-only task — real inspection of the workspace).
         # Without this, a plan whose only criterion was "no-errors" verified
         # instantly and reported "Task completed" / "Project completed" while
         # the requested files were never created.
         if evidence.errors:
             return False, f"unresolved error: {evidence.errors[-1][:120]}"
-        if not evidence.any_success:
+        if not evidence.any_success and not _readonly_ok(evidence, read_only):
             return False, (
                 "no concrete progress observed (a clean error log is not "
                 "evidence that the requested work was done)"
@@ -876,27 +1048,39 @@ def _criterion_check(
 
     # Free-text criterion: it cannot be machine-checked, so it is only counted
     # when the task produced real, verified work — a documented limitation,
-    # never a silent pass.
-    if evidence.any_success:
-        return True, f"{text} (requires concrete progress: recorded)"
+    # never a silent pass. A READ-ONLY task's real inspection counts.
+    if evidence.any_success or _readonly_ok(evidence, read_only):
+        return True, f"{text} (observed progress: recorded)"
     return False, f"{text} (no concrete evidence of progress yet)"
 
 
 def verify_task(
-    task: Task, evidence: TurnEvidence, workspace: Path | None = None
+    task: Task, evidence: TurnEvidence, workspace: Path | None = None,
+    *, read_only: bool = False,
 ) -> VerificationOutcome:
     """Check a task's acceptance criteria against observed evidence.
 
     A task with no machine-checkable criteria still has to prove progress:
     at least one file changed or one command succeeded during the task, with no
-    unresolved errors. A failing test run always fails the task.
+    unresolved errors. A READ-ONLY task (``read_only=True``, classified by the
+    session from the task's intent — no modify verbs, at least one research
+    verb) may instead prove progress with real succeeded read-only tool calls.
+    A mutating task is NEVER relaxed: a file-modification task without a file
+    operation can never verify, no matter what the reply claims.
+    A failing test run always fails the task.
+
+    ``read_only`` only relaxes the *progress backstops*; explicit machine-
+    checkable criteria (``file:``/``run:``/``tests``) keep their exact meaning
+    for both intents.
     """
     criteria = [c for c in task.acceptance if c.strip()]
     checked: list[str] = []
     unmet: list[str] = []
 
     for criterion in criteria:
-        met, description = _criterion_check(criterion, evidence, workspace)
+        met, description = _criterion_check(
+            criterion, evidence, workspace, read_only=read_only
+        )
         if met:
             checked.append(description)
         else:
@@ -905,7 +1089,7 @@ def verify_task(
     if not criteria:
         if evidence.errors:
             unmet.append(f"unresolved error: {evidence.errors[-1][:120]}")
-        elif not evidence.any_success:
+        elif not evidence.any_success and not _readonly_ok(evidence, read_only):
             unmet.append("no file change or successful command was observed")
         else:
             checked.append("concrete progress observed")
@@ -914,18 +1098,37 @@ def verify_task(
     # the hard backstop behind the per-criterion checks above, so no criterion
     # wording (a plan the model wrote itself, free text, an empty list) can turn
     # "the model talked about it" into "the task is done". A task whose criteria
-    # are all satisfied *and* which changed/ran nothing cannot pass.
+    # are all satisfied *and* which changed/ran nothing cannot pass. A read-only
+    # task may satisfy this with real (succeeded) workspace inspection instead:
+    # enforcement understands task intent, not just write counts.
     if not unmet and not evidence.any_success:
-        unmet.append(
-            "no file was created/modified and no command succeeded — "
-            "the requested work was not actually performed"
-        )
+        if _readonly_ok(evidence, read_only):
+            checked.append(
+                "read-only task answered from real workspace inspection "
+                f"({len(evidence.inspected)} item(s) inspected, no errors)"
+            )
+        else:
+            unmet.append(
+                "no file was created/modified and no command succeeded — "
+                "the requested work was not actually performed"
+            )
 
     if evidence.tests and not evidence.tests_passed:
         failed = next(c for c in evidence.tests if not c.ok)
         unmet.append(f"test run failed: {failed.command[:80]}")
 
     return VerificationOutcome(ok=not unmet, checked=checked, unmet=unmet)
+
+
+def _parent_id(value: Any) -> int | None:
+    """Normalize a stored ``parent_id`` (absent/garbage -> top level)."""
+    if value is None or value == "":
+        return None
+    try:
+        parent = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parent if parent > 0 else None
 
 
 __all__ = [

@@ -141,11 +141,11 @@ def test_plan_panel_clears_after_the_finish() -> None:
 # ChatTUI: thinking panel bounds + scroll semantics
 # ---------------------------------------------------------------------------
 def test_thinking_panel_reserves_bounded_headroom_only_with_content() -> None:
-    tui = _tui()  # height=40 → 30% = 12 rows
+    tui = _tui()  # height=40 → compact cap (v9.3.2): 6 rows
     assert tui._thinking_height() == 0  # nothing to show, nothing reserved
     for i in range(30):
         tui.state.append_thinking(f"reasoning line {i}\n")
-    assert tui._thinking_height() == 12
+    assert tui._thinking_height() == 6
 
 
 def test_thinking_panel_auto_scrolls_to_the_newest_content() -> None:

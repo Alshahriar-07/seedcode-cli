@@ -32,7 +32,7 @@ htmlcov/
 /installed app/
 *.exe
 seedcode-cli-setup.exe
-
+SeedCode-CLI-v9.3.1-Update-Plan/
 # Volatile outputs of scripts/windows/build_assets.py (regenerated every
 # build). The stable brand assets (seedcode.ico, wizard*.bmp) STAY committed:
 # tests and manual ISCC compiles depend on them existing in the repo.
