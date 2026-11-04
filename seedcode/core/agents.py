@@ -59,6 +59,12 @@ class AgentProfile:
     groups: tuple[str, ...] | None = None
     #: Optional per-turn step-budget cap (None = engine default).
     steps: int | None = None
+    #: Optional per-agent model routing (OpenCode agent schema parity): when
+    #: set, a turn with this profile — including any subagent spawned from a
+    #: task delegated to it — is served by this provider/model instead of the
+    #: session's active one. ``None`` keeps the session routing unchanged.
+    provider: str | None = None
+    model: str | None = None
     #: Where the definition came from (builtin / user / project).
     source: str = "builtin"
 
@@ -249,6 +255,8 @@ def _parse_agents_file(path: Path, source: str) -> dict[str, AgentProfile]:
                     raise ValueError('"steps" must be a positive integer')
             floor_raw = str(entry.get("permission") or "workspace").strip().lower()
             PermissionLevel.parse(floor_raw)  # validate the level early
+            provider_raw = str(entry.get("provider") or "").strip()
+            model_raw = str(entry.get("model") or "").strip()
             profiles[aid] = AgentProfile(
                 id=aid,
                 name=name,
@@ -257,6 +265,8 @@ def _parse_agents_file(path: Path, source: str) -> dict[str, AgentProfile]:
                 tools=tools,
                 groups=groups,
                 steps=steps,
+                provider=provider_raw or None,
+                model=model_raw or None,
                 source=source,
             )
         except (TypeError, ValueError) as exc:
@@ -311,6 +321,9 @@ def describe(profile: AgentProfile) -> str:
         bits.append(f"{len(profile.tools)} whitelisted tools")
     if profile.steps is not None:
         bits.append(f"≤{profile.steps} steps/turn")
+    routing = " / ".join(v for v in (profile.provider, profile.model) if v)
+    if routing:
+        bits.append(f"model {routing}")
     if profile.source != "builtin":
         bits.append(profile.source)
     tail = f" ({', '.join(bits)})" if bits else ""

@@ -34,6 +34,9 @@ from typing import Any, Callable
 
 from . import events as event_stream
 from .agents import AgentProfile, AgentRegistry, DEFAULT_AGENT_ID
+from .calls import CallTracker, ToolCallState
+from ..tools.subagent import on_delegate as _child_delegate
+from ..tools.subagent import register_delegate
 from .chat import ChatEngine, ChatError
 from .identity import build_system_prompt
 from .intent import Intent, IntentKind, classify
@@ -41,6 +44,7 @@ from .models import AppConfig, Message, ToolCallRecord, clean_values
 from .project import detect_project
 from .providers import provider_label
 from .providers.base import (
+    ProviderError,
     TextDelta,
     ThinkingDelta,
     ToolCallEvent,
@@ -381,6 +385,7 @@ class AgentEngine(ChatEngine):
         on_step: Callable[[dict[str, Any]], None] | None = None,
         max_steps: int | None = None,
         agent_id: str | None = None,
+        subagent_depth: int = 0,
     ) -> None:
         super().__init__(config)
         self.permissions = permissions
@@ -396,6 +401,10 @@ class AgentEngine(ChatEngine):
         # Code Mode session verifies tasks against this, never against the
         # model's own claim of success.
         self.last_evidence = TurnEvidence()
+        # Tool-call state (OpenCode session-tool parity): unique ids, timing,
+        # duplicate-call prevention. One tracker instance = one turn; the
+        # engine resets it in :meth:`run_turn`.
+        self.calls = CallTracker()
         # The resolved need behind the turn in flight (v9.1.1). ``None`` until
         # a turn (or an explicit :meth:`set_intent`) sets it, in which case the
         # engine keeps the pre-9.1.1 behaviour of carrying full context.
@@ -407,6 +416,17 @@ class AgentEngine(ChatEngine):
         # engine). ``build`` — the default — is behaviour-neutral.
         self._registry = AgentRegistry(self.permissions.workspace)
         self._agent_id = (agent_id or DEFAULT_AGENT_ID).strip().lower()
+        # Subagent delegation (OpenCode parity): this engine registers itself
+        # as the session's spawn callback, so the ``subagent`` tool can create
+        # a fresh child engine. ``subagent_depth`` counts how many delegation
+        # hops separate this engine from the user's request (0 = main agent);
+        # children deeper than the guard are refused with a plain tool error.
+        self.subagent_depth = max(0, int(subagent_depth))
+        # Only the MAIN engine is the session's spawn callback: a child must
+        # never overwrite it with its own (depth-limited) handler, and the
+        # main engine re-registers itself after a delegation returns.
+        if self.subagent_depth == 0:
+            register_delegate(self._spawn_subagent)
         # Code Mode gets a generous per-turn budget (the session continues
         # the task afterwards); callers may override it explicitly, and so may
         # the active profile (a caller's explicit value always wins).
@@ -506,6 +526,86 @@ class AgentEngine(ChatEngine):
         profile_steps = self.profile.steps
         base = CODEMODE_MAX_STEPS if self._codemode_active() else MAX_STEPS
         self.max_steps = profile_steps if profile_steps else base
+
+    # --- subagent delegation (OpenCode parity) --------------------------------
+    def _spawn_subagent(self, task: str, agent_id: str | None = None) -> str:
+        """Run a delegated task on a FRESH child engine, return its report.
+
+        OpenCode reference: ``packages/core/src/tool/plugin/subagent.ts``. The
+        child gets an isolated message history (only the delegated task), the
+        SAME PermissionManager (delegation never grants duties), an explicit
+        profile id, and cannot spawn further subagents — OpenCode's depth
+        guard, ported: hovering one hop costs context trust, two already
+        nests sessions.
+
+        When the chosen profile carries its own provider/model routing, the
+        child is served through that backend (a copy of the session config —
+        the session's own selection is untouched); otherwise it inherits the
+        session's routing.
+
+        The whole child transcript is a side conversation: only its final
+        report becomes the ``subagent`` tool result. Failures surface as a
+        plain tool error so this (parent) turn survives and can reason over
+        what happened.
+        """
+        if self.subagent_depth >= 1:
+            raise ToolError(
+                "Subagent delegation is one level deep: the delegated agent "
+                "may not spawn further subagents. Decompose the task on this "
+                "level instead."
+            )
+        if not str(task or "").strip():
+            raise ToolError("the delegated task is empty.")
+        child_profile = self._registry.resolve(agent_id or "general")
+        if child_profile.provider or child_profile.model:
+            # Deep copy: the model setter writes the active provider's entry,
+            # and this child must never move the SESSION's selected model.
+            config = self.config.model_copy(deep=True)
+            if child_profile.provider:
+                config.provider = child_profile.provider
+            if child_profile.model:
+                config.model = child_profile.model
+        else:
+            config = self.config
+        child_event = (
+            (lambda kind, detail: _child_delegate(
+                f"[subagent:{child_profile.id}] {kind}: {detail}"
+            ))
+            if _child_delegate is not None
+            else None
+        )
+        child = AgentEngine(
+            config,
+            self.permissions,
+            on_event=child_event,
+            max_steps=child_profile.steps or 20,
+            agent_id=child_profile.id,
+            subagent_depth=self.subagent_depth + 1,
+        )
+        if _child_delegate is not None:
+            _child_delegate(f"Starting {child_profile.name} agent …")
+        try:
+            report = child.run_turn(task)
+            # A child construction during the child's own run could have
+            # replaced the session delegate; the main engine stays the owner.
+            if self.subagent_depth == 0:
+                register_delegate(self._spawn_subagent)
+        except Exception as exc:
+            # Any child failure — provider outage, budget exhaustion, a broken
+            # tool — is isolated to a plain tool error; the parent's turn
+            # continues and shows the model what actually went wrong.
+            if self.subagent_depth == 0:
+                register_delegate(self._spawn_subagent)
+            raise ToolError(
+                f"Subagent ({child_profile.id}) failed before completing the "
+                f"task: {exc}"
+            ) from exc
+        if not str(report or "").strip():
+            raise ToolError(
+                f"Subagent ({child_profile.id}) returned no report — it may "
+                "have hit its step budget. Try a narrower task."
+            )
+        return report
 
     # --- intent (v9.1.1) ------------------------------------------------------
     def set_intent(self, intent: Intent | None) -> None:
@@ -666,6 +766,7 @@ class AgentEngine(ChatEngine):
         evidence ``incomplete`` instead of ending a Code Mode task.
         """
         self.last_evidence = TurnEvidence()
+        self.calls.reset()
         # v9.1.1: understand the request before choosing anything. The intent
         # decides which context and which tools this turn may use, so the agent
         # never scans the workspace for a song or a browser task. Classification
@@ -1025,12 +1126,18 @@ class AgentEngine(ChatEngine):
         except Exception:
             _log.exception("step observer failed")
 
-    def _execute_one(self, call: ToolCall) -> ToolResult:
+    def _execute_one(
+        self, call: ToolCall, state: ToolCallState | None = None
+    ) -> ToolResult:
         """Run one tool call through the registry, converting failures.
 
         Terminal commands get a structured per-line observer for the duration
         of the call, so ``terminal_output`` events reach the UI while the
         command is still running instead of only when it exits.
+
+        When ``state`` is given, the call's real start/finish time and
+        terminal status (completed/failed/blocked) are recorded in the turn's
+        tracker (see :mod:`seedcode.core.calls`).
 
         Two gates run BEFORE the tool, both feeding a plain error back to the
         model (never a crash, never a silent success):
@@ -1040,6 +1147,8 @@ class AgentEngine(ChatEngine):
         * the tool-lifecycle hooks (:meth:`~seedcode.tools.hooks.HookManager
           .run_before`), which may veto an execution (a plugin, a policy).
         """
+        if state is not None:
+            self.calls.begin(state)
         profile = self.profile
         if profile.tools is not None and call.tool not in profile.tools:
             return ToolResult(
@@ -1075,6 +1184,13 @@ class AgentEngine(ChatEngine):
                     ToolHookResult(result.ok, result.output, result.diff, result.exit_code),
                 )
         assert result is not None
+        if state is not None:
+            self.calls.finish(
+                state,
+                result.ok,
+                result.output,
+                blocked=result.output.startswith("Blocked:"),
+            )
         return result
 
     def _execute_calls(self, calls: list[ToolCall]) -> tuple[list[str], bool]:
@@ -1090,15 +1206,35 @@ class AgentEngine(ChatEngine):
         any_failed = False
 
         # Narrate every call up-front (in issue order) so the transcript reads
-        # the same whether execution was parallel or not.
-        runnable: list[tuple[int, ToolCall]] = []
+        # the same whether execution was parallel or not. A provider call id
+        # that was ALREADY answered this turn (a provider resend) is recorded
+        # as deduped and its earlier result replayed — never executed again.
+        runnable: list[tuple[int, ToolCall, ToolCallState]] = []
+        states: dict[int, ToolCallState] = {}
+        deduped: dict[int, ToolCallState] = {}
         for index, call in enumerate(calls):
             if call.error:
                 continue
+            prior = self.calls.duplicate_of(call.call_id)
+            if prior is not None:
+                dup_state = self.calls.start(call.tool, call.args, call.call_id)
+                self.calls.finish(
+                    dup_state, prior.ok or False, prior.output, prior.error,
+                    deduped=True,
+                )
+                deduped[index] = dup_state
+                self._on_event(
+                    "call", f"{call.tool}(duplicate call id {call.call_id} — replayed)"
+                )
+                continue
+            state = self.calls.start(call.tool, call.args, call.call_id)
             label = f"{call.tool}({json.dumps(call.args, ensure_ascii=False)[:120]})"
             self._on_event("call", label)
-            self._notify("tool_start", name=call.tool, args=call.args)
-            runnable.append((index, call))
+            self._notify(
+                "tool_start", name=call.tool, args=call.args, call_id=state.call_id
+            )
+            runnable.append((index, call, state))
+            states[index] = state
 
         outcomes: dict[int, ToolResult] = {}
         parallel = (
@@ -1106,20 +1242,20 @@ class AgentEngine(ChatEngine):
             and all(
                 (tool := TOOL_REGISTRY.get(call.tool)) is not None
                 and not tool.mutates
-                for _, call in runnable
+                for _index, _call, call in runnable
             )
         )
         if parallel:
             with ThreadPoolExecutor(max_workers=min(4, len(runnable))) as pool:
                 futures = {
-                    index: pool.submit(self._execute_one, call)
-                    for index, call in runnable
+                    index: pool.submit(self._execute_one, call, state)
+                    for index, call, state in runnable
                 }
                 for index, future in futures.items():
                     outcomes[index] = future.result()
         else:
-            for index, call in runnable:
-                outcomes[index] = self._execute_one(call)
+            for index, call, state in runnable:
+                outcomes[index] = self._execute_one(call, state)
 
         for index, call in enumerate(calls):
             if call.error:
@@ -1132,9 +1268,25 @@ class AgentEngine(ChatEngine):
                     output=call.error,
                 )
                 continue
+            dup_state = deduped.get(index)
+            if dup_state is not None:
+                # Never re-executed: the model is told its earlier result
+                # still stands so it does not reason as if the call were new.
+                results.append(
+                    f"{call.tool} -> [DUPLICATE call id {dup_state.call_id} was "
+                    f"already executed this turn ({dup_state.status}); recorded "
+                    f"result replayed — do not call it again:\n{dup_state.output[:400]}]"
+                )
+                self._notify(
+                    "tool_done", name=call.tool, args=call.args, ok=dup_state.ok,
+                    output=dup_state.output, call_id=dup_state.call_id,
+                    duration_ms=dup_state.duration_ms,
+                )
+                continue
             result = outcomes[index]
             if not result.ok:
                 any_failed = True
+            state = states[index]
             self._record_evidence(call, result)
             self._on_event("result" if result.ok else "error", result.output[:200])
             path = ""
@@ -1146,6 +1298,7 @@ class AgentEngine(ChatEngine):
             self._notify(
                 "tool_done", name=call.tool, args=call.args, ok=result.ok,
                 output=result.output, diff=result.diff, path=path,
+                call_id=state.call_id, duration_ms=state.duration_ms,
             )
             results.append(f"{call.tool} -> {result.for_model()}")
         return results, any_failed

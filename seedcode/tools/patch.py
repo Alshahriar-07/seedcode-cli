@@ -19,6 +19,7 @@ every edit shape the loop needs.
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING, Any
 
 from .base import ToolResult, register
@@ -27,6 +28,67 @@ from .textio import read_text_file, write_text_file
 
 if TYPE_CHECKING:
     from .permissions import PermissionManager
+
+
+# --- model-text tolerance (OpenCode edit-tool parity) -----------------------
+# Models often retype text with typographic characters that LOOK identical
+# but differ byte-wise (curly quotes from a model's own quoting, en/em dashes
+# in comments, NBSP in pasted strings), or with stray trailing whitespace on
+# lines. An exact byte match then fails even though the edit is obviously
+# correct. When the exact tier finds nothing, the fuzzy tier matches with the
+# same equivalences OpenCode normalizes for: those quote/dash characters,
+# unicode spaces, whitespace runs, and per-line trailing whitespace. The
+# replacement is still exactly what the model gave; it is only the MATCH that
+# becomes forgiving. Uniqueness enforcement is identical in both tiers.
+# Equivalence groups: any character inside a group matches any other
+# member of that group. Whitespace runs collapse to ``\\s+``.
+_QUOTE_GROUPS = (
+    "'‘’‚‛",
+    "\"“”„‟",
+    "‐‑‒–—―−-",
+)
+
+
+def _char_pattern(char: str) -> str:
+    """The regex fragment that matches one source character forgivingly."""
+    for group in _QUOTE_GROUPS:
+        if char in group:
+            return "[" + group + "]"
+    if char.isspace():
+        return "\\s+"
+    return re.escape(char)
+
+
+def fuzzy_pattern(old: str) -> re.Pattern[str] | None:
+    """Compile ``old`` into a tolerance regex for the fuzzy edit tier.
+
+    Each line becomes: quote/dash equivalence classes for lookalikes,
+    ``\\s+`` for whitespace runs, and literals otherwise; lines join on
+    ``[ \\t]*\\n`` for per-line trailing whitespace. ``None`` for text
+    with nothing left to match.
+    """
+    lines = old.replace("\\r\\n", "\n").split("\n")
+    line_patterns: list[str] = []
+    for line in lines:
+        pattern_line = ""
+        for char in line:
+            fragment = _char_pattern(char)
+            # Coalesce: consecutive whitespace chars share ONE \s+ quantifier
+            # ("a  =" must not become \s+\s+, which demands two spaces).
+            if fragment == "\\s+" and pattern_line.endswith("\\s+"):
+                continue
+            pattern_line += fragment
+        line_patterns.append(pattern_line)
+    # Trailing-whitespace tolerance BETWEEN and at the end of lines: the
+    # match stays anchored to the snippet the model supplied.
+    joined = "[ \t]*\n".join(line_patterns)
+    # A whitespace-only snippet matches by coincidence anywhere; refuse it.
+    if not joined or all(not p for p in line_patterns):
+        return None
+    try:
+        return re.compile(joined)
+    except re.error:  # pragma: no cover - pathological input only
+        return None
 
 
 @register(
@@ -61,11 +123,29 @@ def _edit_file(perm: "PermissionManager", args: dict[str, Any]) -> ToolResult:
         return ToolResult(False, f"Could not read {path}: {exc}")
 
     count = tf.text.count(old)
+    fuzzy = False
     if count == 0:
+        # Fuzzy tier (OpenCode-style tolerance): match typographic lookalikes
+        # and trailing whitespace, then behave exactly like the exact tier.
+        pattern = fuzzy_pattern(old)
+        if pattern is not None:
+            try:
+                matches = list(pattern.finditer(tf.text))
+            except re.error:  # pragma: no cover
+                matches = []
+            if matches:
+                count = len(matches)
+                fuzzy = True
+    if count == 0:
+        hint = (
+            " — a fuzzy match for lookalike characters also failed"
+            if fuzzy_pattern(old) is not None
+            else ""
+        )
         return ToolResult(
             False,
-            f"old_text was not found in {path}. Read the file again and copy the "
-            "text exactly (whitespace matters).",
+            f"old_text was not found in {path}{hint}. Read the file again and "
+            "copy the text exactly (whitespace matters).",
         )
 
     raw_all = args.get("replace_all")
@@ -82,7 +162,14 @@ def _edit_file(perm: "PermissionManager", args: dict[str, Any]) -> ToolResult:
         )
 
     before = tf.text
-    tf.text = tf.text.replace(old, new) if replace_all else tf.text.replace(old, new, 1)
+    if fuzzy:
+        pattern = fuzzy_pattern(old)
+        assert pattern is not None  # the fuzzy tier matched above
+        # A lambda replacement is inserted literally (no backslash/\g
+        # interpretation), so the model's new_text lands byte-exactly.
+        tf.text = pattern.sub(lambda _m: new, tf.text, count=(0 if replace_all else 1))
+    else:
+        tf.text = tf.text.replace(old, new) if replace_all else tf.text.replace(old, new, 1)
     replacements = count if replace_all else 1
     expected = tf.text
     try:
