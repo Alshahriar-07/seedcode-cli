@@ -174,16 +174,24 @@ def get_tool(name: str) -> Tool:
     return tool
 
 
-def tool_manifest(groups: tuple[str, ...] = ("core",)) -> str:
+def tool_manifest(
+    groups: tuple[str, ...] = ("core",),
+    *,
+    allowed: "frozenset[str] | None" = None,
+) -> str:
     """Tool documentation injected into the agent system prompt.
 
     Only tools in ``groups`` are listed, so what the model is told matches
     what the session actually allows (e.g. desktop tools only appear when
-    desktop mode is on).
+    desktop mode is on). When ``allowed`` names a whitelist (an agent
+    profile's capability restriction), tools outside it are excluded too —
+    the model is never offered a tool its profile cannot call.
     """
     lines = []
     for tool in sorted(TOOL_REGISTRY.values(), key=lambda t: t.name):
         if tool.group not in groups:
+            continue
+        if allowed is not None and tool.name not in allowed:
             continue
         arg_desc = ", ".join(f'"{a}": {d}' for a, d in tool.args.items()) or "none"
         lines.append(f"- {tool.name}: {tool.description}\n  args: {arg_desc}")
@@ -195,7 +203,11 @@ def tool_manifest(groups: tuple[str, ...] = ("core",)) -> str:
 _SPECS_CACHE: dict[tuple[str, ...], list[dict[str, Any]]] = {}
 
 
-def tool_specs(groups: tuple[str, ...] = ("core",)) -> list[dict[str, Any]]:
+def tool_specs(
+    groups: tuple[str, ...] = ("core",),
+    *,
+    allowed: "frozenset[str] | None" = None,
+) -> list[dict[str, Any]]:
     """Neutral name/description/parameters specs for native tool calling.
 
     Generated from the same registry as :func:`tool_manifest`, so the schema
@@ -203,37 +215,42 @@ def tool_specs(groups: tuple[str, ...] = ("core",)) -> list[dict[str, Any]]:
     ``{"name", "description", "parameters"}`` with ``parameters`` a
     JSON-schema object; args whose description lacks "(optional)" are
     required. Results are cached per ``groups`` (the registry is static after
-    import; the cache is invalidated if a tool is registered).
+    import; the cache is invalidated if a tool is registered). When
+    ``allowed`` names a whitelist (an agent profile's capability
+    restriction), tools outside it are excluded.
     """
+    def _build(grouped: tuple[str, ...]) -> list[dict[str, Any]]:
+        specs: list[dict[str, Any]] = []
+        for tool in sorted(TOOL_REGISTRY.values(), key=lambda t: t.name):
+            if tool.group not in grouped:
+                continue
+            properties: dict[str, Any] = {}
+            required: list[str] = []
+            for arg, desc in tool.args.items():
+                properties[arg] = {
+                    "type": tool.types.get(arg, "string"),
+                    "description": desc,
+                }
+                if "(optional)" not in desc:
+                    required.append(arg)
+            specs.append(
+                {
+                    "name": tool.name,
+                    "description": tool.description,
+                    "parameters": {
+                        "type": "object",
+                        "properties": properties,
+                        "required": required,
+                    },
+                }
+            )
+        return specs
+
     key = tuple(groups)
     cached = _SPECS_CACHE.get(key)
-    if cached is not None and len(cached) == sum(
-        1 for t in TOOL_REGISTRY.values() if t.group in key
-    ):
-        return cached
-    specs: list[dict[str, Any]] = []
-    for tool in sorted(TOOL_REGISTRY.values(), key=lambda t: t.name):
-        if tool.group not in groups:
-            continue
-        properties: dict[str, Any] = {}
-        required: list[str] = []
-        for arg, desc in tool.args.items():
-            properties[arg] = {
-                "type": tool.types.get(arg, "string"),
-                "description": desc,
-            }
-            if "(optional)" not in desc:
-                required.append(arg)
-        specs.append(
-            {
-                "name": tool.name,
-                "description": tool.description,
-                "parameters": {
-                    "type": "object",
-                    "properties": properties,
-                    "required": required,
-                },
-            }
-        )
-    _SPECS_CACHE[key] = specs
-    return specs
+    if cached is None or len(cached) != sum(1 for t in TOOL_REGISTRY.values() if t.group in key):
+        cached = _build(key)
+        _SPECS_CACHE[key] = cached
+    if allowed is None:
+        return list(cached)
+    return [s for s in cached if s["name"] in allowed]

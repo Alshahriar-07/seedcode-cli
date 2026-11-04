@@ -15,6 +15,7 @@ from .base import (
     ToolError,
     ToolResult,
     get_tool,
+    register,
     register_alias,
     tool_manifest,
 )
@@ -62,5 +63,6 @@ __all__ = [
     "ToolError",
     "ToolResult",
     "get_tool",
+    "register",
     "tool_manifest",
 ]

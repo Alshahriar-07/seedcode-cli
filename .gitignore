@@ -101,3 +101,4 @@ WEBSITE/
 
 # NOTE: docs/reports/*.md, *.txt and *.docx are committed release documents
 # (see docs/reports/), so they are deliberately NOT ignored.
+OPENCODE/

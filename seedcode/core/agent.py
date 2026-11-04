@@ -33,6 +33,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from . import events as event_stream
+from .agents import AgentProfile, AgentRegistry, DEFAULT_AGENT_ID
 from .chat import ChatEngine, ChatError
 from .identity import build_system_prompt
 from .intent import Intent, IntentKind, classify
@@ -55,6 +56,7 @@ from ..tools import (
     tool_manifest,
 )
 from ..tools.base import ToolResult, tool_specs
+from ..tools.hooks import MANAGER as tool_hooks, ToolHookResult
 from ..utils.logger import get_logger
 from ..utils.text import safe_text
 
@@ -78,6 +80,28 @@ _CONTINUE_NOTE = (
     "The session will continue it in the next model call — summarise nothing "
     "and keep working when prompted."
 )
+
+# User plugins (custom tools + tool hooks) load once per process, at the
+# first engine construction, with the workspace they serve. Contained: a
+# broken plugin is logged and skipped, never fatal (see tools.hooks).
+_PLUGINS_LOADED = False
+
+
+def _load_plugins_once(workspace) -> None:
+    global _PLUGINS_LOADED
+    if _PLUGINS_LOADED:
+        return
+    from ..tools.hooks import load_plugins
+
+    try:
+        loaded = load_plugins(workspace)
+    except Exception:
+        _log.exception("plugin discovery failed")
+        loaded = []
+    if loaded:
+        _log.info("loaded %d user plugin(s): %s", len(loaded), loaded)
+    _PLUGINS_LOADED = True
+
 
 _TOOL_BLOCK = re.compile(r"```tool\s*\n(.*?)```", re.DOTALL)
 #: A JSON block/object that uses the OpenAI-style ``name`` + ``arguments``
@@ -356,6 +380,7 @@ class AgentEngine(ChatEngine):
         on_event: Callable[[str, str], None] | None = None,
         on_step: Callable[[dict[str, Any]], None] | None = None,
         max_steps: int | None = None,
+        agent_id: str | None = None,
     ) -> None:
         super().__init__(config)
         self.permissions = permissions
@@ -375,12 +400,21 @@ class AgentEngine(ChatEngine):
         # a turn (or an explicit :meth:`set_intent`) sets it, in which case the
         # engine keeps the pre-9.1.1 behaviour of carrying full context.
         self._intent: Intent | None = None
-        # Code Mode gets a generous per-turn budget (the session continues the
-        # task afterwards); callers may override it explicitly.
+        # User plugins: custom tools (registered into TOOL_REGISTRY) and
+        # before/after tool hooks. Loaded once, for this engine's workspace.
+        _load_plugins_once(self.permissions.workspace)
+        # Agent profiles (OpenCode-style selectable personas over this ONE
+        # engine). ``build`` — the default — is behaviour-neutral.
+        self._registry = AgentRegistry(self.permissions.workspace)
+        self._agent_id = (agent_id or DEFAULT_AGENT_ID).strip().lower()
+        # Code Mode gets a generous per-turn budget (the session continues
+        # the task afterwards); callers may override it explicitly, and so may
+        # the active profile (a caller's explicit value always wins).
         if max_steps is not None:
-            self.max_steps = max(1, int(max_steps))
+            self._explicit_steps = max(1, int(max_steps))
         else:
-            self.max_steps = CODEMODE_MAX_STEPS if self._codemode_active() else MAX_STEPS
+            self._explicit_steps = 0
+        self._apply_profile_steps()
         self.messages[0] = Message(role="system", content=self._system_prompt())
 
     def _system_prompt(self) -> str:
@@ -403,6 +437,20 @@ class AgentEngine(ChatEngine):
                 workspace=self.permissions.workspace
             )
             preamble += self._codemode_context()
+        # Agent profile persona: appended AFTER the base preambles so it is
+        # the last, most specific word on how this turn is performed.
+        profile = self.profile
+        preamble += (
+            f"\n\nACTIVE AGENT PROFILE: {profile.name} ({profile.id}).\n"
+            f"{profile.system}"
+        )
+        if profile.tools is not None:
+            preamble += (
+                "\nThis profile may call ONLY these tools: "
+                + ", ".join(sorted(profile.tools))
+                + ". Any other tool call is rejected before it runs; "
+                "work strictly within this restriction."
+            )
         # v9.1.1: an intent-aware preamble keeps a conversational question from
         # turning into a workspace sweep, and a browser task from touching the
         # project at all. The terminal hint is only useful when the task can
@@ -419,10 +467,45 @@ class AgentEngine(ChatEngine):
             instructions = _NATIVE_INSTRUCTIONS
         else:
             instructions = _TEXT_PROTOCOL_INSTRUCTIONS.format(
-                manifest=tool_manifest(self._groups())
+                manifest=tool_manifest(self._groups(), allowed=profile.tools)
             )
         project = self._project_context() if self._workspace_allowed() else ""
         return base_identity + preamble + instructions + project
+
+    # --- agent profile -------------------------------------------------------
+    @property
+    def profile(self) -> AgentProfile:
+        """The active agent profile (resolved; the default when unknown)."""
+        return self._registry.resolve(self._agent_id)
+
+    def set_agent(self, agent_id: str | None) -> AgentProfile:
+        """Select the agent profile for subsequent turns and re-render.
+
+        Returns the profile that is actually active after the change, so a
+        caller (the /agents command) can report it honestly. The step budget
+        is recalculated unless a caller explicitly fixed it.
+        """
+        profile = self._registry.resolve(agent_id)
+        self._agent_id = profile.id
+        self._apply_profile_steps()
+        self.refresh_system_prompt()
+        return profile
+
+    def _apply_profile_steps(self) -> None:
+        """Recalculate ``max_steps``: caller (or profile budget) first.
+
+        An explicit caller budget always wins. Otherwise the profile's budget
+        (when it defines one) replaces the engine default — a read-only
+        planning profile does not need the coding agent's full step budget.
+        Code Mode remains a session loop: exhausting the turn budget there
+        continues the task regardless of which profile is active.
+        """
+        if self._explicit_steps:
+            self.max_steps = self._explicit_steps
+            return
+        profile_steps = self.profile.steps
+        base = CODEMODE_MAX_STEPS if self._codemode_active() else MAX_STEPS
+        self.max_steps = profile_steps if profile_steps else base
 
     # --- intent (v9.1.1) ------------------------------------------------------
     def set_intent(self, intent: Intent | None) -> None:
@@ -543,8 +626,12 @@ class AgentEngine(ChatEngine):
         is usable *and* the task needs it; ``web`` only when the task needs
         current external information. A coding turn therefore never advertises
         browser/desktop/web tools, and a browser turn never advertises web
-        search.
+        search. An agent profile that names its own groups is authoritative
+        instead (``None`` keeps the engine's judgement).
         """
+        profile_groups = self.profile.groups
+        if profile_groups:
+            return tuple(group.strip().lower() for group in profile_groups)
         groups: list[str] = ["core"]
         extra = self._intent.tool_groups if self._intent is not None else ()
         for group in extra:
@@ -703,7 +790,10 @@ class AgentEngine(ChatEngine):
         Returns ("final", text) | ("ok", None) | ("failed", None) |
         ("fallback", None).
         """
-        specs = [ToolSpec(**s) for s in tool_specs(self._groups())]
+        specs = [
+            ToolSpec(**s)
+            for s in tool_specs(self._groups(), allowed=self.profile.tools)
+        ]
         text_parts: list[str] = []
         calls: list[ToolCall] = []
         try:
@@ -941,21 +1031,51 @@ class AgentEngine(ChatEngine):
         Terminal commands get a structured per-line observer for the duration
         of the call, so ``terminal_output`` events reach the UI while the
         command is still running instead of only when it exits.
+
+        Two gates run BEFORE the tool, both feeding a plain error back to the
+        model (never a crash, never a silent success):
+
+        * the active agent profile's whitelist (a read-only profile genuinely
+          cannot mutate — the call is refused here, not merely discouraged);
+        * the tool-lifecycle hooks (:meth:`~seedcode.tools.hooks.HookManager
+          .run_before`), which may veto an execution (a plugin, a policy).
         """
+        profile = self.profile
+        if profile.tools is not None and call.tool not in profile.tools:
+            return ToolResult(
+                False,
+                f"Blocked: the '{profile.name}' agent profile may not call "
+                f"'{call.tool}'. Allowed tools: "
+                + ", ".join(sorted(profile.tools))
+                + ". Switch agents with /agents to change this."
+            )
+        veto = tool_hooks.run_before(call.tool, call.args)
+        if veto:
+            return ToolResult(False, f"Blocked: {veto}.")
+
         previous = self.permissions.on_activity
         if call.tool == "run_command":
             self.permissions.on_activity = lambda line: self._notify(
                 "terminal_output", name="run_command", output=line
             )
+        result: ToolResult | None = None
         try:
-            return get_tool(call.tool).run(self.permissions, call.args)
+            result = get_tool(call.tool).run(self.permissions, call.args)
         except (ToolError, PermissionError_) as exc:
-            return ToolResult(False, str(exc))
+            result = ToolResult(False, str(exc))
         except Exception as exc:  # a tool bug must not kill the loop
             _log.exception("tool crashed: %s", call.tool)
-            return ToolResult(False, f"Tool crashed: {exc}")
+            result = ToolResult(False, f"Tool crashed: {exc}")
         finally:
             self.permissions.on_activity = previous
+            if result is not None:  # observation only; never fails the loop
+                tool_hooks.run_after(
+                    call.tool,
+                    call.args,
+                    ToolHookResult(result.ok, result.output, result.diff, result.exit_code),
+                )
+        assert result is not None
+        return result
 
     def _execute_calls(self, calls: list[ToolCall]) -> tuple[list[str], bool]:
         """Execute parsed calls; returns (results-for-model, any_failed).

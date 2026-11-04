@@ -356,6 +356,7 @@ them with descriptions and filters as you type.
 | `/index` | Show a compact tree of the current project |
 | `/files` | Search project files (`Ctrl+P`) |
 | `/tools` | List the tools available to the coding agent |
+| `/agents` | List agent profiles, or switch (`/agents build|plan|explore|general`) |
 | `/history` | Browse the active provider's saved sessions |
 | `/doctor` | Diagnose configuration, network and provider health |
 | `/settings` | Open interactive settings (or `/settings <name> <value>`) |
@@ -390,6 +391,94 @@ file deletes, git mutations and writes outside the workspace. Answers are
 `Allow once`, `Always` (this category, this session), `Allow All` (everything,
 this session) or `Deny`. Nothing is persisted; a denial is reported to the
 model as a real tool failure, not hidden.
+
+---
+
+## Agent profiles
+
+Seed Code runs one unified agent engine; a *profile* is a focused persona
+capability preset over it — not a mode switch. A profile appends its persona
+instructions, restricts which tools its turns may call (really enforced: an
+out-of-whitelist call is refused before it runs), and may cap the per-turn
+step budget.
+
+| Profile | What it is |
+| --- | --- |
+| `build` | Default, the normal coding-agent behaviour (no restriction). |
+| `plan` | Read-only strategist: investigates, then returns an implementation plan. Inspection tools only. |
+| `explore` | Read-only investigator: maps a codebase, locates features/bugs, cites paths and lines. Inspection tools only. |
+| `general` | Full tool access for work beyond one project's code. |
+
+List and switch with `/agents` (e.g. `/agents plan`; the default is
+`/agents build`).
+
+### Custom agents
+
+Define project-specialised agents in `.seedcode/agents.json` (or user-level
+`agents.json` next to your SeedCode config): a same-id definition overrides
+the built-in, and any new id becomes another `/agents` profile.
+
+```json
+{
+  "reviewer": {
+    "name": "Reviewer",
+    "description": "Audits recent changes for correctness and style",
+    "system": "Review code changes in the workspace. Use git diff and reads only; never modify files. Report findings with file:line references.",
+    "tools": ["read_file", "search_text", "git", "list_dir"],
+    "steps": 10
+  }
+}
+```
+
+Accepted keys: `name`, `description`, `system` (required), `tools`
+(optional whitelist), `groups` (optional tool-group override), `steps`
+(positive integer per-turn budget), `disabled` (`true` skips the entry).
+Invalid definitions are skipped with a logged reason — they never break the
+session.
+
+### Plugins: custom tools and hooks
+
+Python files in `<workspace>/.seedcode/plugins/` and `plugins/` next to your
+SeedCode config are imported at agent startup. A plugin can:
+
+* register a **custom tool** with the same `@register` decorator the built-in
+  tools use — it then appears to the agent like any other tool (`/tools`,
+  schemas, permissions included);
+* add **hooks**: return `False` from a `before_tool` hook to veto a tool call
+  (the veto reason is fed back to the model as a real failure), and observe
+  every completed call through `after_tool`.
+
+```python
+# .seedcode/plugins/my_plugin.py
+from seedcode.tools import ToolResult, register
+from seedcode.tools.hooks import MANAGER
+
+
+@register(
+    "team_note",
+    "Append an entry to TEAM_NOTES.md",
+    {"text": "note to append"},
+    mutates=True,
+)
+def team_note(permissions, args):
+    path = permissions.workspace / "TEAM_NOTES.md"
+    permissions.check_write(path)
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(args["text"] + "\n")
+    return ToolResult(True, f"appended to {path.name}")
+
+
+def block_asset_writes(tool: str, args: dict) -> bool:
+    path = str(args.get("path") or "").replace("\\", "/")
+    return not (tool.startswith("write") and path.startswith("assets/"))
+
+
+MANAGER.add_before(block_asset_writes)  # return False = veto the call
+```
+
+One broken plugin is skipped with a logged traceback; the others still load.
+Plugins run with the session's own permission level — the permission system,
+not the loader, is the gate on what plugins may do.
 
 Set the level with `/permission workspace` (or `read_only`, `full_system`).
 

@@ -105,7 +105,7 @@ def dispatch(ctx: CommandContext, text: str) -> CommandResult:
 # /desktop) and the non-coding /play & /youtube commands are gone; the unified
 # workspace/capability module registers /workspace, /permission, /index,
 # /tools and /memory instead.
-from . import about, clear, doctor, help, history, palette, provider, session, status, theme, workspace  # noqa: E402,F401
+from . import about, agent, clear, doctor, help, history, palette, provider, session, status, theme, workspace  # noqa: E402,F401
 
 __all__ = [
     "CommandContext",
