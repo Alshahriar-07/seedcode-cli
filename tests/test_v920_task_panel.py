@@ -39,10 +39,10 @@ def test_plan_panel_lines_match_the_spec_glyphs() -> None:
         ("failed", "Verify implementation"),
     ]
     lines = taskpanel.plan_panel_lines(rows, width=40)
-    assert lines[0].strip().startswith("✓")
-    assert lines[2].strip().startswith("●")
-    assert lines[3].strip().startswith("○")
-    assert lines[5].strip().startswith("✗")
+    assert lines[0].strip().startswith("[+]")
+    assert lines[2].strip().startswith("[>]")
+    assert lines[3].strip().startswith("[ ]")
+    assert lines[5].strip().startswith("[!]")
     assert "2 / 6 completed" in lines[-1]
 
 
@@ -70,10 +70,10 @@ def test_empty_plan_renders_nothing() -> None:
 
 
 def test_glyphs_survive_ascii_consoles() -> None:
-    assert taskpanel.task_glyph("pending", legacy=True) == "o"
-    assert taskpanel.task_glyph("completed", legacy=True) == "+"
-    assert taskpanel.task_glyph("failed", legacy=True) == "x"
-    assert taskpanel.task_glyph("running", legacy=True) == ">"
+    assert taskpanel.task_glyph("pending", legacy=True) == "[ ]"
+    assert taskpanel.task_glyph("completed", legacy=True) == "[+]"
+    assert taskpanel.task_glyph("failed", legacy=True) == "[!]"
+    assert taskpanel.task_glyph("running", legacy=True) == "[>]"
 
 
 # ---------------------------------------------------------------------------
@@ -122,8 +122,8 @@ def test_plan_panel_renders_rows_and_progress_in_real_state() -> None:
     height = tui._plan_height()
     assert height == 4  # one row per task + the progress line
     text = _plain(tui._plan_fragments(30, height))
-    assert "✓" in text and "Analyze project" in text
-    assert "●" in text and "Inspect dependencies" in text
+    assert "[+]" in text and "Analyze project" in text
+    assert "[>]" in text and "Inspect dependencies" in text
     assert "1 / 3 completed" in text
     dim = tui._plan_dimension()
     assert dim.min == height and dim.max == height
@@ -140,20 +140,22 @@ def test_plan_panel_clears_after_the_finish() -> None:
 # ---------------------------------------------------------------------------
 # ChatTUI: thinking panel bounds + scroll semantics
 # ---------------------------------------------------------------------------
-def test_thinking_panel_reserves_bounded_headroom_only_with_content() -> None:
-    tui = _tui()  # height=40 → compact cap (v9.3.2): 6 rows
-    assert tui._thinking_height() == 0  # nothing to show, nothing reserved
+def test_reasoning_panel_reserves_bounded_headroom_only_with_reasoning() -> None:
+    tui = _tui()  # height=40 → at most a third of the screen
+    assert tui._thinking_height() == 0  # no reasoning → no section
+    tui.state.add_activity("action", "Reading file 0")
+    assert tui._thinking_height() == 0  # tool activity is not reasoning
     for i in range(30):
         tui.state.append_thinking(f"reasoning line {i}\n")
-    assert tui._thinking_height() == 6
+    assert tui._thinking_height() == 8
 
 
-def test_thinking_panel_auto_scrolls_to_the_newest_content() -> None:
+def test_reasoning_panel_auto_scrolls_to_the_newest_line() -> None:
     tui = _tui()
     for i in range(30):
         tui.state.append_thinking(f"reasoning line {i}\n")
     text = _plain(tui._thinking_fragments(40, tui._thinking_height()))
-    assert "reasoning line 29" in text  # the newest line is visible
+    assert "reasoning line 29" in text  # the newest reasoning is visible
     assert "reasoning line 0" not in text
 
 
@@ -170,7 +172,8 @@ def test_manual_scroll_keeps_the_users_position() -> None:
 
 def test_collapsed_panels_free_the_terminal() -> None:
     tui = _tui()
-    tui.state.append_thinking("some reasoning\n")
+    tui.state.append_thinking("I should read the source file.")
+    assert tui._thinking_height() > 0
     tui.state.collapse_thinking()  # turn end auto-collapses
     assert tui._thinking_height() == 0
     tui.state.toggle_thinking()  # Ctrl+B re-expands

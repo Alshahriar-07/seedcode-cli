@@ -13,19 +13,16 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-# The one decorative mark the v6.2.5 UI allows: a short horizontal rule that
-# separates a heading from its values. It is a single dim glyph run (never a
-# box, never a full-width banner) and falls back to ASCII hyphens on legacy
-# Windows consoles that cannot draw it.
+# Compact horizontal rule used to separate a heading from its values.
 RULE_WIDTH = 44
 
 
-# Glyphs the UI draws: the rule, the state marks, the separator dot.
-UI_GLYPHS = "─●○✓✗■·–↑↓│…"
+# Punctuation the UI draws: rules, ASCII state markers, and selectors.
+UI_GLYPHS = "-+|[]()<>.!_"
 
 
 def supports_unicode(console) -> bool:
-    """Whether ``console``'s stream can actually encode the UI's glyphs.
+    """Whether ``console``'s stream can encode the UI's text marks.
 
     A raster-font cmd.exe cannot *draw* them (``legacy_windows``), and a
     redirected stream on a cp1252 host cannot even *encode* them — writing

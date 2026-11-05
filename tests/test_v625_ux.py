@@ -241,9 +241,9 @@ def test_max_retries_env_is_clamped(monkeypatch) -> None:
     monkeypatch.setenv("SEEDCODE_MAX_RETRIES", "-1")
     assert _max_retries() == 0
     monkeypatch.setenv("SEEDCODE_MAX_RETRIES", "banana")
-    assert _max_retries() == 2
+    assert _max_retries() == 3
     monkeypatch.delenv("SEEDCODE_MAX_RETRIES")
-    assert _max_retries() == 2
+    assert _max_retries() == 3
 
 
 # --- SEEDCODE_PROVIDER / SEEDCODE_MODEL preseeding ---------------------------------

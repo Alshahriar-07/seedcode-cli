@@ -2,15 +2,12 @@
 
 Everything locked in here is behaviour a user can observe:
 
-* the header is a live dashboard — the fixed Seed Code ASCII logo, tagline,
-  provider, model, mode, status, workspace, context budget and the masked key
-  are read from real state, and it adapts to the terminal without ever
-  overflowing or clipping the branding;
+* the header contains only the SeedCode release identity and adapts without
+    overflowing; live configuration belongs in the composer/footer;
 * the three regions are fixed: header, scrolling conversation, fixed composer;
-* the composer is a real, bounded multiline textbox — a prompt_toolkit ``Frame``
-  draws its ``╭─ Message ─╮`` border, so typed text can never escape it — with
-  **no** ``You >`` prefix of its own and no separate Submit control (Enter is
-  the single submission path);
+* the composer is a full-width, bounded multiline textbox with a Seed-green
+    left rail, model/agent metadata and a compact status footer; it has no
+    separate Submit control (Enter is the single submission path);
 * provider, model, mode and status live in the header dashboard exactly once:
   there is no second toolbar repeating them;
 * Up/Down move the cursor inside a multiline message and only walk the input
@@ -45,6 +42,7 @@ from seedcode.ui import UI
 from seedcode.ui.content import ContentBuffer, parse_ansi, plain_text, trim_line
 from seedcode.ui.header import MAX_PANEL_WIDTH, header_lines, header_text
 from seedcode.ui.state import AppState, Status, status_fragment
+from seedcode.ui.theme import active_theme_name, set_active_theme
 from seedcode.ui.tasks import TaskFlow
 from seedcode.ui.tui import ChatTUI, TuiUI
 
@@ -89,7 +87,7 @@ def _configured() -> AppConfig:
 
 # --- the version --------------------------------------------------------------
 def test_header_reports_the_release_version() -> None:
-    assert __version__ == "9.3.2"
+    assert __version__ == "10.2.1"
     out = header_text(AppState(provider="OpenRouter", model="m", mode="Chat"), 80)
     assert f"v{__version__}" in out
 
@@ -151,7 +149,8 @@ def test_header_shows_every_live_value() -> None:
         api_key="sk-or-v1...e031",
     )
     out = header_text(state, 100)
-    for expected in (
+    assert out == "SeedCode CLI v10.2.1"
+    for hidden in (
         "OpenRouter",
         "nex-agi/nex-n2.5-mini:free",
         "Agent",
@@ -160,7 +159,7 @@ def test_header_shows_every_live_value() -> None:
         "16,384",
         "sk-or-v1...e031",
     ):
-        assert expected in out, expected
+        assert hidden not in out
 
 
 def test_header_never_exceeds_the_terminal_width() -> None:
@@ -188,13 +187,13 @@ def test_header_is_bounded_by_its_design_width() -> None:
 
 def test_status_marks_and_labels_are_truthful() -> None:
     for status, mark, label in (
-        (Status.READY, "\u25cf", "Ready"),
-        (Status.THINKING, "\u25cc", "Thinking"),
-        (Status.WORKING, "\u25cc", "Working"),
-        (Status.EXECUTING, "\u25cf", "Running"),
-        (Status.WAITING, "\u25cc", "Waiting"),
-        (Status.COMPLETED, "\u2713", "Completed"),
-        (Status.ERROR, "\u26a0", "Error"),
+        (Status.READY, "+", "Ready"),
+        (Status.THINKING, ".", "Thinking"),
+        (Status.WORKING, ".", "Working"),
+        (Status.EXECUTING, ">", "Running"),
+        (Status.WAITING, "...", "Waiting"),
+        (Status.COMPLETED, "+", "Completed"),
+        (Status.ERROR, "!", "Error"),
     ):
         style, text = status_fragment(status)
         assert text.startswith(mark), text
@@ -203,26 +202,19 @@ def test_status_marks_and_labels_are_truthful() -> None:
 
 
 # --- branding -----------------------------------------------------------------
-def test_header_keeps_the_compact_wordmark_as_branding() -> None:
-    """v9.2.0: a small one-line brand instead of a huge framed ASCII logo.
-
-    The block logo moved to the startup dashboard only; the fixed header is
-    reclaimed vertical space (the compact bar), so it stays present but small
-    and the box glyphs, borders and logo are gone from the chat interface.
-    """
+def test_header_keeps_only_the_seedcode_release_identity() -> None:
     from seedcode.ui.dashboard import LOGO_LINES
 
     out = header_text(AppState(provider="OpenRouter", model="m", mode="Chat"), 80)
     lines = out.splitlines()
-    assert "Seed Code CLI v" + __version__ in out  # branding, one line
-    assert len(lines) <= 2  # compact: identity + optional status bar
+    assert "SeedCode CLI v" + __version__ in out
+    assert len(lines) == 1
     for line in LOGO_LINES:
         assert line not in out, line  # no block art in the header any more
     assert "\u256d" not in out and "\u256e" not in out  # no box borders
 
 
-def test_header_height_is_bounded_at_every_width() -> None:
-    """The compact bar never grows beyond two rows at any terminal size."""
+def test_header_height_is_one_row_at_every_terminal_width() -> None:
     state = AppState(
         provider="OpenRouter",
         model="nex-agi/nex-n2.5-mini:free",
@@ -234,7 +226,7 @@ def test_header_height_is_bounded_at_every_width() -> None:
     )
     for width in (20, 24, 30, 40, 52, 80, 96, 120, 200):
         lines = header_lines(state, width)
-        assert len(lines) <= 2, width
+        assert len(lines) == 1, width
 
 
 def test_narrow_headers_clip_values_instead_of_overflowing() -> None:
@@ -247,57 +239,47 @@ def test_narrow_headers_clip_values_instead_of_overflowing() -> None:
         # The version survives wherever it can actually fit (>= 21 columns).
         if width >= 21:
             assert f"v{__version__}" in out, width
-        # The essentials survive the fallback; the branding is never clipped
-        # into noise: provider/model stay on the >= 24 two-line form.
-        if width >= 24:
-            assert "OpenRouter" in out, width
+        assert "OpenRouter" not in out
 
 
 def test_legacy_consoles_get_the_wordmark_instead_of_block_art() -> None:
     out = header_text(
         AppState(provider="OpenRouter", model="m", mode="Chat"), 80, ascii_only=True
     )
-    assert "SEED CODE" in out
+    assert "SeedCode CLI" in out
     assert "\u2588" not in out
 
 
-# --- the thinking indicator ---------------------------------------------------
-def test_thinking_indicator_animates_before_any_output() -> None:
-    from seedcode.ui.tui import _THINK_INTERVAL_S
-
+# --- the live activity panel -------------------------------------------------
+def test_no_thinking_ui_before_the_first_real_reasoning_chunk() -> None:
+    """The reasoning section exists only when the model itself reasoned."""
     with _session() as (tui, _state, _pipe):
-        tui.start_thinking("Thinking")
-        first = plain_text(tui.buffer.lines())
-        # Clean design: no ``AI >`` on the activity line, spinner + label only.
-        assert "Thinking" in first
-        assert "AI >" not in first
-        assert first.strip().startswith("\u280b")  # the animated spinner frame
-        time.sleep(_THINK_INTERVAL_S * 2.5)
-        animated = plain_text(tui.buffer.lines())
-        assert animated != first  # the indicator really animated
-        assert "Thinking" in animated
-        assert "AI >" not in animated
+        tui.start_thinking("Waiting for model response")
+        assert tui._thinking_fragments(80, tui._thinking_height()) == []
+        assert tui._thinking_height() == 0
+        assert not plain_text(tui.buffer.lines())
         tui.stop_thinking()
-        assert "Thinking" not in plain_text(tui.buffer.lines())
+        # A generic wait label is never rendered as reasoning.
+        assert "Waiting for model response" not in plain_text(
+            tui._thinking_fragments(80, 4)
+        )
 
 
-def test_the_spinner_shows_the_real_current_operation() -> None:
-    """The spinner line follows the operation the backend published.
-
-    ``state.operation`` is written by real tool events ("Reading README.md",
-    "waiting for the model response"); the spinner must show that, not a
-    generic "Working" that hides what the agent is doing.
-    """
+def test_tool_activity_and_status_are_never_shown_as_reasoning() -> None:
+    """Tool/status events belong to the conversation, never the reasoning UI."""
     with _session() as (tui, state, _pipe):
         state.set_status(Status.EXECUTING, "reading README.md")
+        state.add_activity("action", "Reading README.md")
+        state.set_briefing(active=True, status="Executing", activity="Running a command")
         tui.start_thinking("Working")
-        line = plain_text(tui.buffer.lines())
-        assert "Reading README.md..." in line
-        assert "AI >" not in line
-        state.set_status(Status.WORKING, "waiting for the model response")
-        tui._render_thinking()
-        line = plain_text(tui.buffer.lines())
-        assert "Waiting for the model response..." in line
+        assert tui._thinking_fragments(80, tui._thinking_height()) == []
+        # Real reasoning is the only thing that turns the section on.
+        state.append_thinking("I should read the README before editing.")
+        line = plain_text(tui._thinking_fragments(80, tui._thinking_height()))
+        assert "I should read the README before editing." in line
+        assert "Reading README.md" not in line
+        assert "Running a command" not in line
+        tui.stop_thinking()
         tui.stop_thinking()
 
 
@@ -306,12 +288,18 @@ def test_real_output_replaces_the_thinking_indicator() -> None:
         ui = TuiUI(tui)
         with ui.thinking("Thinking"):
             assert state.status is Status.THINKING
-            assert "Thinking" in plain_text(tui.buffer.lines())
+            # Nothing to show until the model emits its first reasoning delta.
+            assert tui._thinking_fragments(80, tui._thinking_height()) == []
+            state.append_thinking("The user asked for a real answer.")
+            assert "The user asked for a real answer." in plain_text(
+                tui._thinking_fragments(80, tui._thinking_height())
+            )
         with ui.streaming() as renderer:
             renderer.feed("real answer")
         content = plain_text(tui.buffer.lines())
         assert "AI > real answer" in content
-        assert "Thinking" not in content
+        # The completed reasoning is preserved in the conversation.
+        assert "The user asked for a real answer." in content
         tui.stop_thinking()  # a late stop must not wipe the committed answer
         assert "AI > real answer" in plain_text(tui.buffer.lines())
 
@@ -329,7 +317,7 @@ def test_composer_has_no_prompt_prefix() -> None:
         assert not hasattr(tui, "_input_line_prefix")
 
 
-def test_composer_is_a_bounded_frame_without_a_submit_button() -> None:
+def test_composer_is_bounded_without_a_submit_button() -> None:
     """The composer is a real bounded editor — no separate Submit control."""
     with _session() as (tui, _state, _pipe):
         tui._build_app()
@@ -339,6 +327,56 @@ def test_composer_is_a_bounded_frame_without_a_submit_button() -> None:
         assert not hasattr(tui, "_submit_fragments")
         # Long lines wrap inside the field, not outside the border.
         assert tui._input_window.wrap_lines()
+
+
+def test_composer_uses_seed_rail_metadata_and_reference_footer() -> None:
+    previous_theme = active_theme_name()
+    set_active_theme("seed")
+    try:
+        tui = ChatTUI(
+            AppState(
+                provider="OpenRouter",
+                model="model-x",
+                mode="Agent",
+                agent_state="Build",
+            ),
+            width=100,
+            height=24,
+        )
+        tui._reallocate_rows()
+        accent_style, accent_text = tui._composer_accent()[0]
+        metadata = "".join(text for _style, text in tui._composer_metadata())
+        footer = "".join(text for _style, text in tui._composer_bottom())
+
+        assert "3b82f6" in accent_style.lower()  # thin blue structural rail
+        assert "│" in accent_text
+        assert "Build" in metadata and "model-x" in metadata and "OpenRouter" in metadata
+        assert metadata.index("Build") < metadata.index("model-x") < metadata.index("OpenRouter")
+        # Minimal footer: keyboard hints only (no status dashboard).
+        assert "tab agents" in footer and "ctrl+p commands" in footer
+        assert "Ready" not in footer and "Workspace" not in footer
+
+        tui._busy = True
+        footer = "".join(text for _style, text in tui._composer_bottom())
+        assert "Esc interrupt" in footer
+        tui.append_user("hello")
+        assert "│ You > hello" in plain_text(tui.buffer.lines())
+    finally:
+        set_active_theme(previous_theme)
+
+
+def test_workspace_row_is_muted_clipped_and_outside_the_composer() -> None:
+    state = AppState(workspace="C:/Users/example/projects/a-very-long-workspace-name")
+    tui = ChatTUI(state, width=32, height=18)
+    tui._reallocate_rows()
+    fragments = tui._workspace_fragments()
+    text = "".join(value for _style, value in fragments)
+
+    assert tui._workspace_window is None  # built with the app, not during sizing
+    # The full path never takes a permanent bottom row; /status shows it.
+    assert tui._workspace_rows == 0
+    assert text == ""
+    assert state.workspace == "C:/Users/example/projects/a-very-long-workspace-name"
 
 
 def test_the_buffer_accept_handler_is_the_single_submission_path(monkeypatch) -> None:
@@ -352,16 +390,18 @@ def test_the_buffer_accept_handler_is_the_single_submission_path(monkeypatch) ->
 
 
 # --- the header is the single source of truth ----------------------------------
-def test_provider_model_mode_and_status_appear_once_in_the_header() -> None:
-    """Each persistent value is rendered in exactly one place (no toolbar)."""
+def test_provider_model_agent_and_status_live_below_the_header() -> None:
     state = AppState(
         provider="OpenRouter", model="m", mode="Chat Mode", status=Status.READY
     )
-    text = header_text(state, 100)
-    assert text.count("OpenRouter") == 1
-    assert text.count("Chat Mode") == 1
-    assert text.count("Ready") == 1
-    # There is no second toolbar window repeating them.
+    tui = ChatTUI(state, width=100, height=24)
+    tui._reallocate_rows()
+    metadata = "".join(text for _style, text in tui._composer_metadata())
+    footer = "".join(text for _style, text in tui._composer_bottom())
+    assert "OpenRouter" in metadata and "m" in metadata and "Chat Mode" not in metadata
+    assert "tab agents" in footer and "Ready" not in footer
+    assert "OpenRouter" not in header_text(state, 100)
+    # There is no second toolbar window repeating the composer values.
     with _session() as (tui, _state, _pipe):
         tui._build_app()
         assert not hasattr(tui, "_toolbar_window")
@@ -400,8 +440,8 @@ def test_multiline_message_keeps_its_continuation_aligned() -> None:
 def test_activity_lines_bear_no_ai_prefix() -> None:
     """Activity is indented under the turn — the ``AI >`` prefix is gone.
 
-    Only real operations are displayed, each with its own marker: ⚙ started,
-    ✓ succeeded, ✗ failed. User input keeps ``You >``; activity is clean.
+    Only real operations are displayed with compact text labels. User input
+    keeps ``You >``; activity is clean.
     """
     with _session() as (tui, _state, _pipe):
         tui.append_activity("action", "Reading package.json")
@@ -410,9 +450,9 @@ def test_activity_lines_bear_no_ai_prefix() -> None:
         tui.append_activity("note", "Analyzing the task...")
     content = plain_text(tui.buffer.lines())
     assert "AI > " not in content  # the repeated prefix is gone for good
-    assert "\u2699 Reading package.json" in content
-    assert "\u2713 Tests passed" in content
-    assert "\u2715 Reading config.json" in content
+    assert "ACTION: Reading package.json" in content
+    assert "DONE: Tests passed" in content
+    assert "ERROR: Reading config.json" in content
     assert "\u2139 Analyzing the task..." in content
     # Consistent two-space indent for every activity line (visual hierarchy
     # under the ``You > `` prompt).
@@ -528,13 +568,6 @@ def test_newline_binding_keeps_a_multiline_message() -> None:
         tui._input.insert_text("\nline two")
         assert tui._input.text.count("\n") == 1
         assert tui._input_height() == 2
-
-
-def test_composer_title_reflects_a_pending_confirmation() -> None:
-    with _session() as (tui, _state, _pipe):
-        assert tui._composer_title() == " Message "
-        tui._confirm_prompt = ("Agent Action", "Run command")
-        assert "Agent Action" in tui._composer_title()
 
 
 # --- scrolling ----------------------------------------------------------------

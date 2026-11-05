@@ -23,6 +23,7 @@ from ..streaming import iter_stream
 from .. import http as pooled_http
 from ...utils.logger import get_logger
 from .base import (
+    FinishEvent,
     ModelInfo,
     Provider,
     ProviderError,
@@ -32,6 +33,8 @@ from .base import (
     ToolCallEvent,
     ToolSpec,
     ValidationResult,
+    stream_idle_timeout,
+    stream_timeout,
 )
 
 if TYPE_CHECKING:
@@ -314,15 +317,16 @@ class OpenRouterProvider(Provider):
         from openai import OpenAI
 
         api_key = config.get_api_key("openrouter")
-        if self._client is None or self._client_key != api_key:
+        cache_key = f"{api_key}|{stream_idle_timeout(config)}"
+        if self._client is None or self._client_key != cache_key:
             self._client = OpenAI(
                 api_key=api_key,
                 base_url=_BASE_URL,
                 default_headers=_HEADERS,
-                timeout=_CHAT_TIMEOUT,
+                timeout=stream_timeout(config),
                 max_retries=0,  # the engine owns retry policy
             )
-            self._client_key = api_key
+            self._client_key = cache_key
         return self._client
 
 
@@ -377,11 +381,19 @@ def _iter_tool_stream(stream: Any) -> Iterator[StreamEvent]:
     call is emitted once, after the stream ends, when its JSON is whole.
     """
     pending: dict[int, dict[str, str]] = {}  # index -> {id, name, args}
+    finish_reason = ""
     for chunk in stream:
         choices = getattr(chunk, "choices", None) or []
         if not choices:
             continue
-        delta = choices[0].delta
+        choice = choices[0]
+        # v10.2.0: remember the provider's real terminal reason. A "length"
+        # stop means the answer was cut off at the output-token ceiling, which
+        # the agent must continue instead of treating as a completed reply.
+        reason = getattr(choice, "finish_reason", None)
+        if reason:
+            finish_reason = str(reason)
+        delta = choice.delta
         # Model-exposed reasoning (v9.2.1): OpenRouter-compatible backends
         # stream a reasoning channel as ``delta.reasoning`` (and some
         # OpenAI-compatible servers use ``reasoning_content``). It is its own
@@ -417,6 +429,8 @@ def _iter_tool_stream(stream: Any) -> Iterator[StreamEvent]:
                 id=slot["id"], name=slot["name"], arguments={},
                 error=f"Tool call arguments were not valid JSON: {exc}",
             )
+    if finish_reason:
+        yield FinishEvent(finish_reason)
 
 
 def _reasoning_text(delta: Any) -> str:

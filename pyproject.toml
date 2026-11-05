@@ -74,10 +74,29 @@ require-runtime-dependencies = false
 # toolchain round-trips.
 [tool.hatch.build.targets.wheel]
 packages = ["seedcode"]
+exclude = [
+    "seedcode/tui-next",
+    "seedcode/tui-next/**",
+    "seedcode/tui/node_modules",
+    "seedcode/tui/node_modules/**",
+    "**/node_modules",
+    "**/node_modules/**",
+]
 core-metadata-version = "2.4"
+
+[tool.hatch.build.targets.wheel.force-include]
+"seedcode/tui/dist/index.cjs" = "seedcode/tui/dist/index.cjs"
 
 [tool.hatch.build.targets.sdist]
 # The build hook ships in the sdist: pip rebuilds the wheel from the
 # extracted sdist, and hatchling must be able to load the hook there.
 include = ["seedcode", "scripts/pyproject_build_hook.py", "README.md", "LICENSE"]
+exclude = [
+    "seedcode/tui-next",
+    "seedcode/tui-next/**",
+    "seedcode/tui/node_modules",
+    "seedcode/tui/node_modules/**",
+    "**/node_modules",
+    "**/node_modules/**",
+]
 core-metadata-version = "2.4"

@@ -50,6 +50,9 @@ from pathlib import Path
 from typing import Any, Callable
 
 from ..utils.logger import get_logger
+from .context import ProjectContext
+from .events import NormalizedEvent, normalize_event
+from .session_store import SessionStore, new_session_id as _new_session_id
 from .tasks import (
     RESOLVED_STATES,
     Task,
@@ -440,6 +443,9 @@ class CodeSession:
         reconnect_attempts: int = DEFAULT_RECONNECT_ATTEMPTS,
         reconnect_backoff_s: float = DEFAULT_RECONNECT_BACKOFF_S,
         sleep: Callable[[float], None] | None = None,
+        session_id: str | None = None,
+        session_store: Any = None,
+        context: Any = None,
     ) -> None:
         self.agent = agent
         self.workspace = Path(workspace)
@@ -469,6 +475,23 @@ class CodeSession:
         self.task_evidence = TurnEvidence()
         self.session_evidence = TurnEvidence()
         self._seen_failures: dict[str, int] = {}
+        # v10.2.0: the session owns its own durable memory. ``session_id`` names
+        # .seedcode/sessions/<id>/; the store writes todo/progress/execution
+        # there, and the project context is the summarized workspace memory
+        # shared across sessions.
+        self.session_id = str(session_id or "")
+        self.session_store = session_store
+        if self.session_store is None and store is not None and getattr(store, "root", None):
+            self.session_store = SessionStore(self.workspace, root=store.root)
+        if not self.session_id:
+            self.session_id = str(getattr(self.session_store, "session_id", ""))
+        if not self.session_id:
+            self.session_id = _new_session_id()
+        self.context = context
+        #: Structured events emitted by this session (bounded, oldest dropped).
+        self.events: list[NormalizedEvent] = []
+        #: Optional consumer of normalized events (the CLI/UI may subscribe).
+        self._on_structured: Callable[[NormalizedEvent], None] | None = None
 
     # --- public API ----------------------------------------------------------
     @property
@@ -486,6 +509,33 @@ class CodeSession:
                 self._on_event_impl(kind, detail)
         except Exception:
             _log.exception("session observer failed")
+        self._emit_structured(kind, detail)
+
+    def _emit_structured(self, kind: str, detail: str) -> None:
+        """Normalize one real session event and persist it (v10.2.0).
+
+        The legacy ``(kind, detail)`` observer is unchanged, so no consumer
+        breaks; the normalized envelope adds the session id, a stable event id,
+        a timestamp, the task id and a payload, and is what execution.json
+        records. Event construction can never stop the work.
+        """
+        try:
+            event = normalize_event(kind, detail, session_id=self.session_id)
+        except Exception:
+            return
+        self.events.append(event)
+        del self.events[:-200]
+        if self.session_store is not None:
+            try:
+                self.session_store.append_execution(event)
+            except Exception:
+                _log.exception("could not append the execution event")
+        callback = self._on_structured
+        if callback is not None:
+            try:
+                callback(event)
+            except Exception:
+                _log.exception("structured event observer failed")
 
     # --- the persistent loop -------------------------------------------------
     def run(self) -> SessionStatus:
@@ -496,9 +546,14 @@ class CodeSession:
             self._cancel_open_tasks()
             return self.status
         try:
+            self._load_project_context()
             if not self.graph.tasks:
                 self._plan()
             self.status = SessionStatus.RUNNING
+            self.event(
+                "session_started",
+                f"{self.graph.total} task(s) in the plan",
+            )
             self._work_loop()
             if self.graph.all_completed():
                 self._final_verification()
@@ -710,6 +765,7 @@ class CodeSession:
                     f"Task {task.id}/{self.graph.total} completed — {outcome.detail} "
                     f"• {evidence_summary(task)}",
                 )
+                self._record_verified_task(task)
                 return True
 
             task.mark(TaskState.RUNNING, "verification failed; continuing")
@@ -740,6 +796,7 @@ class CodeSession:
                 )
                 task.finish(TaskState.BLOCKED, blocker, outcome.detail)
                 self.state.note_blocker(blocker)
+                self._note_context_issue(blocker)
                 self._checkpoint()
                 self.event("task_blocked", blocker)
                 self.reason = blocker
@@ -759,6 +816,7 @@ class CodeSession:
                     f"Task {task.id} could not be verified: {outcome.detail}",
                 )
                 self.reason = f"Task {task.id} failed verification: {outcome.detail}"
+                self._note_context_issue(self.reason)
                 return False
 
             self.recoveries += 1
@@ -835,6 +893,28 @@ class CodeSession:
                 self.store.clear_checkpoint()
             except Exception:
                 pass
+        if self.context is not None:
+            try:
+                self.context.save(self.workspace)
+            except Exception:
+                _log.exception("could not save the project context")
+        # v10.2.0: the session's own progress file must record the terminal
+        # state too. `_checkpoint` is skipped for a completed session (there is
+        # nothing to resume), so the final sync happens here.
+        if self.session_store is not None:
+            try:
+                self.session_store.sync(
+                    self.graph,
+                    self.state,
+                    status=self.status.value,
+                    current_task=None,
+                    model_calls=self.model_calls,
+                    tool_calls=self.tool_calls,
+                    reason=self.reason,
+                    next_action="",
+                )
+            except Exception:
+                _log.exception("could not sync the completed session")
 
     def _cancel_open_tasks(self) -> None:
         for task in self.graph.tasks:
@@ -952,12 +1032,16 @@ class CodeSession:
 
     # --- persistence ---------------------------------------------------------
     def _save_plan(self) -> None:
-        if self.store is None:
-            return
-        try:
-            self.store.save_plan(self.graph.to_dict())
-        except Exception:
-            _log.exception("could not save the Code Mode plan")
+        if self.store is not None:
+            try:
+                self.store.save_plan(self.graph.to_dict())
+            except Exception:
+                _log.exception("could not save the Code Mode plan")
+        if self.session_store is not None:
+            try:
+                self.session_store.save_todo(self.graph)
+            except Exception:
+                _log.exception("could not save the session todo")
 
     def checkpoint(self) -> dict[str, Any]:
         """The resumable state of this session (never a raw transcript)."""
@@ -997,12 +1081,79 @@ class CodeSession:
         }
 
     def _checkpoint(self) -> None:
-        if self.store is None:
+        if self.store is not None:
+            try:
+                self.store.save_checkpoint(self.checkpoint())
+            except Exception:
+                _log.exception("could not save the Code Mode checkpoint")
+        # v10.2.0: the session's own memory is independent of the legacy
+        # checkpoint file, so it is written even when no store is configured.
+        if self.session_store is not None:
+            try:
+                self.session_store.sync(
+                    self.graph,
+                    self.state,
+                    status=self.status.value,
+                    current_task=self._current_task_payload(),
+                    model_calls=self.model_calls,
+                    tool_calls=self.tool_calls,
+                    reason=self.reason,
+                    next_action=self._next_action(),
+                )
+            except Exception:
+                _log.exception("could not sync the session state")
+
+    def _current_task_payload(self) -> dict[str, Any] | None:
+        """The task in flight (or next), as progress.json records it."""
+        active = self.graph.active() or self.graph.next_task()
+        if active is None:
+            return None
+        return {"id": active.id, "title": active.title, "state": active.state.value}
+
+    def _next_action(self) -> str:
+        """One honest line describing what happens next."""
+        active = self.graph.active() or self.graph.next_task()
+        if active is not None:
+            return f"continue Task {active.id}: {active.title}"
+        if self.graph.all_completed():
+            return "run final verification"
+        return "wait for a runnable task"
+
+    # --- persistent project context -----------------------------------------
+    def _load_project_context(self) -> None:
+        """Load ``.seedcode/context.json`` (reconstructed when absent).
+
+        Existing documents are a single small read; the workspace is scanned
+        only when the file is missing or corrupt.
+        """
+        if self.context is not None:
             return
         try:
-            self.store.save_checkpoint(self.checkpoint())
+            self.context = ProjectContext.load(self.workspace, refresh=False)
         except Exception:
-            _log.exception("could not save the Code Mode checkpoint")
+            _log.exception("could not load the project context")
+            self.context = None
+
+    def _record_verified_task(self, task: Task) -> None:
+        """Fold a verified task into the persistent project memory."""
+        if self.context is None:
+            return
+        try:
+            self.context.note_task_completed(task)
+            self.context.merge_evidence(self.task_evidence)
+            self.context.save(self.workspace)
+        except Exception:
+            _log.exception("could not update the project context")
+
+    def _note_context_issue(self, text: str) -> None:
+        """Record a real blocker/failure so a resumed run knows about it."""
+        if self.context is None or not text:
+            return
+        try:
+            self.context.note_issue(text)
+            self.context.save(self.workspace)
+        except Exception:
+            _log.exception("could not record the project issue")
 
     @classmethod
     def resume(

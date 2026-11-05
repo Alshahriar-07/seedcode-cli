@@ -37,12 +37,11 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from .. import http as pooled_http  # noqa: F401  (kept for parity with siblings)
-from .base import STATUS_NO_KEY, ValidationResult
+from .base import STATUS_NO_KEY, ValidationResult, stream_idle_timeout, stream_timeout
 from .openrouter import (
     MODE_FREE,
     OpenRouterProvider,
     _BASE_URL,
-    _CHAT_TIMEOUT,
     _HEADERS,
 )
 
@@ -145,13 +144,14 @@ class DefaultProvider(OpenRouterProvider):
         from openai import OpenAI
 
         api_key, _ = self.resolve_key(config)
-        if self._client is None or self._client_key != api_key:
+        cache_key = f"{api_key}|{stream_idle_timeout(config)}"
+        if self._client is None or self._client_key != cache_key:
             self._client = OpenAI(
                 api_key=api_key,
                 base_url=_BASE_URL,
                 default_headers=_HEADERS,
-                timeout=_CHAT_TIMEOUT,
+                timeout=stream_timeout(config),
                 max_retries=0,  # the engine owns retry policy
             )
-            self._client_key = api_key
+            self._client_key = cache_key
         return self._client

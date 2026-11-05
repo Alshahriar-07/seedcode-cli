@@ -26,9 +26,12 @@ from .tasks import is_test_command
 
 __all__ = [
     "ActivityEvent",
+    "NormalizedEvent",
     "build_event",
     "event_type_for",
     "next_event_id",
+    "normalize_event",
+    "protocol_type",
 ]
 
 _SEQ = itertools.count(1)
@@ -314,4 +317,127 @@ def build_event(
         lines_removed=int(details.get("removed") or 0),
         hunks=list(details.get("hunks") or []),
         metadata=metadata,
+    )
+
+
+# --- normalized protocol (v10.2.0) ------------------------------------------
+#: Legacy session kinds -> the normalized event protocol. The UI and the
+#: session's execution.json consume these names; an unknown kind degrades to
+#: ``session.updated`` rather than inventing an event category.
+_PROTOCOL_TYPES: dict[str, str] = {
+    "session_started": "session.started",
+    "session_running": "session.updated",
+    "session_completed": "session.completed",
+    "session_paused": "execution.paused",
+    "session_cancelled": "execution.cancelled",
+    "session_failed": "session.failed",
+    "plan": "analysis.started",
+    "plan_ready": "plan.created",
+    "task_start": "todo.updated",
+    "task_done": "todo.completed",
+    "task_failed": "todo.updated",
+    "task_blocked": "todo.updated",
+    "task_skipped": "todo.updated",
+    "continue": "todo.updated",
+    "verify": "verification.started",
+    "final_verify": "verification.started",
+    "final_ok": "verification.completed",
+    "recovery": "repair.started",
+    "complete": "session.completed",
+    "retry": "model.waiting",
+    "reconnect": "model.waiting",
+    "reconnected": "model.connected",
+    # v10.4.0: the agent's own execution protocol. These names are stable for
+    # embedders; the frontend renders them and never drives the loop.
+    "agent_started": "agent.started",
+    "agent_completed": "agent.completed",
+    "agent_failed": "agent.failed",
+    "agent_cancelled": "agent.cancelled",
+    "iteration": "agent.iteration",
+    "thinking": "agent.reasoning",
+    "waiting_model": "model.waiting",
+    "model_response": "model.response.completed",
+    "stream_completed": "model.response.completed",
+    "stream_failed": "model.response.failed",
+    "network_lost": "model.response.failed",
+    "error": "session.failed",
+    "tool_start": "tool.started",
+    "tool_done": "tool.completed",
+    "say": "model.text.delta",
+    "terminal_output": "tool.updated",
+}
+
+_TASK_ID_RE = re.compile(r"\bTask\s+(\d+)", re.IGNORECASE)
+
+
+@dataclass(slots=True)
+class NormalizedEvent:
+    """One session event in the stable wire protocol.
+
+    Every event carries the session id, its own stable id, a real timestamp,
+    the task it belongs to (0 when it is session-scoped) and a structured
+    payload. Events are only constructed from an operation that happened.
+    """
+
+    event_id: str
+    session_id: str
+    type: str
+    timestamp: float
+    task_id: int
+    message: str
+    payload: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "event_id": self.event_id,
+            "session_id": self.session_id,
+            "type": self.type,
+            "timestamp": self.timestamp,
+            "task_id": self.task_id,
+            "message": self.message,
+            "payload": dict(self.payload),
+        }
+
+
+def protocol_type(kind: str) -> str:
+    """The normalized event type for a legacy or already-normalized kind."""
+    key = (kind or "").strip()
+    if "." in key:
+        return key
+    return _PROTOCOL_TYPES.get(key, "session.updated")
+
+
+def normalize_event(
+    kind: str,
+    detail: str = "",
+    *,
+    session_id: str = "",
+    task_id: int = 0,
+    payload: dict[str, Any] | None = None,
+) -> NormalizedEvent:
+    """Normalize one real session event (never a simulated one).
+
+    ``kind`` is the session's own event kind; the mapping gives it a stable
+    protocol type. The task id is taken from the explicit value, otherwise from
+    the real ``Task <id>`` the message names.
+    """
+    message = _one_line(detail)[:400]
+    resolved_task = int(task_id or 0)
+    if not resolved_task:
+        match = _TASK_ID_RE.search(detail or "")
+        if match:
+            resolved_task = int(match.group(1))
+    data = dict(payload or {})
+    data.setdefault("source", "session")
+    data.setdefault("kind", (kind or "").strip())
+    if message:
+        data.setdefault("detail", message)
+    return NormalizedEvent(
+        event_id=next_event_id(),
+        session_id=str(session_id or ""),
+        type=protocol_type(kind),
+        timestamp=time.time(),
+        task_id=resolved_task,
+        message=message,
+        payload=data,
     )

@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![Release](https://img.shields.io/badge/release-v10.1.0-0b6623?style=flat-square)
+![Release](https://img.shields.io/badge/release-v10.2.1-22C55E?style=flat-square)
 ![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey?style=flat-square)
 ![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-informational?style=flat-square)
@@ -21,7 +21,7 @@
 [How a task runs](#how-a-task-runs) · [Commands](#command-reference) ·
 [Permissions](#permissions) · [Config](#configuration-and-local-data) ·
 [Internet](#internet-access) · [Build](#building-from-source) ·
-[Artifacts](#release-artifacts-v1010) · [Troubleshooting](#troubleshooting) ·
+[Artifacts](#release-artifacts-v1021) · [Troubleshooting](#troubleshooting) ·
 [Security](#security-model) · [License](#license)
 
 ---
@@ -32,7 +32,7 @@ reads your project, plans the work, writes and edits real files, runs real
 commands, reads their output, searches the web for documentation, fixes what
 fails, and reports honestly on what it actually did.
 
-`seedcode --version` → `Seed Code CLI 10.1.0`
+`seedcode --version` → `Seed Code CLI 10.2.1`
 
 ---
 
@@ -89,10 +89,25 @@ fails, and reports honestly on what it actually did.
   after the turn (toggle with `Ctrl+B`). No model/provider metadata is shown;
   a provider that exposes no reasoning records the honest line
   `Reasoning stream unavailable for this model.`
-- **A right-side task plan panel.** The agent's TODO list renders live on the
-  right (`○` pending, `●` in progress, `✓` done, `✗` failed, `↻` retrying) and
-  is driven only by real orchestrator task events — the current task is
+- **Inline task progress.** The agent's TODO list renders in the conversation
+  timeline as `Task Progress` (`○` pending, `●` in progress, `✓` done,
+  `✗` failed, `↻` retrying), full width and with no reserved sidebar. It is
+  driven only by real orchestrator task events — the current task is
   highlighted and progress is shown as `N / M completed`.
+- **Model-aware execution.** Three execution profiles — `small`, `standard`
+  and `advanced` — control prompt size, step and tool-call budgets, output
+  caps, history compaction and the tool protocol. Auto-detection uses local
+  model metadata; `prompt_profile` and a per-model `model_profiles` map let
+  you override it. A small local model gets short sequential instructions and
+  the explicit `TOOL_CALL:` protocol; a strong model keeps the full context.
+- **Responses are continued, not truncated.** If a provider stops at the
+  output-token limit, SeedCode preserves what was written, continues from that
+  point and returns the whole answer. A completion claim after a failed tool
+  is sent back for one verification step instead of being taken at face value.
+- **Safe recovery.** Transient failures retry with bounded jittered backoff,
+  then try the next configured fallback model, then another provider. A
+  local Ollama session is never silently moved to a cloud provider: that
+  requires the explicit `allow_local_to_cloud` opt-in.
 - **Real file operations and diffs.** File reads, creations, updates and
   deletions are reported with the path, the line counts, the affected line
   range and a bounded unified-diff preview; `Ctrl+E` expands the last diff.
@@ -151,14 +166,14 @@ Installs for the current user (no administrator rights, no Python) into
 creates Desktop and Start Menu shortcuts (`seedcode --install-shortcuts`
 recreates them at any time; `-NoShortcuts` skips them), and
 verifies the installed binary reports exactly the requested version. It
-downloads the official `SeedCode-CLI-10.1.0-windows-x64.exe` and the release's
+downloads the official `SeedCode-CLI-10.2.1-windows-x64.exe` and the release's
 `SHA256SUMS.txt`, and **refuses to install** if the checksum entry is missing,
 the checksum file is unreachable, or the digest does not match.
 
 ### Windows — Setup installer
 
-Download `SeedCode-CLI-Setup-10.1.0.exe` from the
-[Releases page](https://github.com/Alshahriar-07/seedcode-cli/releases/tag/v10.1.0)
+Download `SeedCode-CLI-Setup-10.2.1.exe` from the
+[Releases page](https://github.com/Alshahriar-07/seedcode-cli/releases/tag/v10.2.1)
 and run it. The wizard installs Seed Code, adds it to `PATH`, creates a Start
 Menu shortcut, creates a Desktop shortcut (checked by default), verifies that
 the installed `seedcode.exe` reports the installer's own version, and ships an
@@ -166,7 +181,7 @@ uninstaller that never deletes your project data silently.
 
 ### Windows — portable executable
 
-Download `SeedCode-CLI-10.1.0-windows-x64.exe` and run it directly. It is fully
+Download `SeedCode-CLI-10.2.1-windows-x64.exe` and run it directly. It is fully
 self-contained (no Python, no installation, no `PATH` changes).
 
 ### Linux / macOS — remote installer
@@ -192,7 +207,7 @@ seedcode
 After installing by any route:
 
 ```bash
-seedcode --version    # -> Seed Code CLI 10.1.0
+seedcode --version    # -> Seed Code CLI 10.2.1
 ```
 
 > **`seedcode` not recognized?** Open a *new* terminal. `PATH` changes only
@@ -229,7 +244,7 @@ keeps the launch directory.
 You then land in the persistent interface:
 
 ```text
-Seed Code CLI v10.1.0 · Ollama · qwen3:4b · Agent
+Seed Code CLI v10.2.1 · Ollama · qwen3:4b · Agent
 ● Ready · Workspace D:\Projects\demo · Context 16,384 tokens
 
 You > read README.md
@@ -305,7 +320,21 @@ If the server is not running, Seed Code starts `ollama serve` for you and waits
 for it to become reachable. The default host is `http://localhost:11434`. A
 request that fails is reported as a failure — Seed Code never silently switches
 to a cloud provider when you selected Ollama (automatic failover is off unless
-you enable `auto_failover`).
+you enable `auto_failover`, and local→cloud failover additionally requires
+`allow_local_to_cloud: true`).
+
+### Model-aware execution profiles
+
+| Profile | Used for | Behaviour |
+| --- | --- | --- |
+| `small` | Small local models | Short sequential prompt, `TOOL_CALL:` protocol, ≤3 calls/step, bounded output, aggressive compaction. |
+| `standard` | General coding models | Native tools when available, normal budgets. |
+| `advanced` | Strong coding models | Full context, more steps, native orchestration. |
+
+`prompt_profile` pins a profile (`auto`, `small`, `standard`, `advanced`);
+`model_profiles` pins individual models (`{"qwen3:4b": "small"}`). With
+`auto`, a local provider model whose tag declares a small parameter size
+(e.g. `:4b`) gets the compact profile; everything else is `standard`.
 
 ---
 
@@ -313,15 +342,21 @@ you enable `auto_failover`).
 
 1. **Your request** is classified by a deterministic, model-free classifier
    (`seedcode/core/intent.py`): conversation, research or coding.
-2. **The engine selects tools** for that intent — filesystem, terminal, git and
+2. **The model-aware profile is resolved** from your model metadata and the
+   optional `prompt_profile` / `model_profiles` configuration, setting the
+   prompt style, step/call budgets, output cap and preferred tool protocol.
+3. **The engine selects tools** for that intent — filesystem, terminal, git and
    search for coding; the web tools for research. Nothing else is offered.
-3. **Every tool call performs a real operation.** A read reads, a write writes,
+4. **Every tool call performs a real operation.** A read reads, a write writes,
    a command runs in the workspace shell; the result (including its error) is
-   returned to the model, which continues from the real output.
-4. **The loop continues** until the task is complete or genuinely blocked —
-   bounded so it can never spin forever, streamed so the UI never freezes, and
-   cancellable at any moment with `Ctrl+C`.
-5. **A report is produced** from the operations that actually happened: files
+   returned to the model, which continues from the real output. Names,
+   required arguments and types are validated before execution; recognized
+   call JSON is never shown as assistant text.
+5. **The loop continues** until the task is complete or genuinely blocked —
+   bounded so it can never spin forever, streamed so the UI never freezes,
+   continued automatically after an output-token stop, and cancellable at any
+   moment with `Ctrl+C`.
+6. **A report is produced** from the operations that actually happened: files
    created/modified/deleted, commands executed with exit codes, tests run and
    their results, and anything still incomplete.
 
@@ -344,8 +379,10 @@ them with descriptions and filters as you type.
 | --- | --- |
 | `/help` | Show available commands |
 | `/status` | Show the live runtime status |
-| `/provider` | Select the active provider |
+| `/provider` | Select the active provider; `/provider manage` opens the provider screen |
+| `/provider test` / `/provider failover on|off` | Test the active connection / enable automatic provider failover |
 | `/model` | Browse and select a model for the active provider |
+| `/models` | Manage models: custom ids, fallback models, and execution profiles |
 | `/custom` | Manage custom providers (add, edit, test, reorder, enable, delete) |
 | `/apikey` | View, replace, remove, or validate the active provider's key |
 | `/workspace` | Show the active project, or select a different folder |
@@ -368,6 +405,18 @@ them with descriptions and filters as you type.
 | `/config` | Show the current configuration |
 | `/about` / `/version` | About / version |
 | `/exit` | Leave the session (back to the main menu) |
+
+### Model and provider management
+
+`/models` is the model management screen: switch from the provider's live
+catalogue, enter a custom model id, maintain the ordered `fallback_models`
+list, clear the active model, and choose an execution profile (or pin one to
+the active model). `/provider manage` is the provider screen: select a
+provider, run a real connection test, see each provider's status/model/key
+state, toggle automatic failover, and manage custom providers or the active
+key. `/provider failover on` enables failover for the running session and is
+persisted; the default remains off. Local sessions never fail over to a cloud
+provider unless `allow_local_to_cloud` is explicitly enabled.
 
 Aliases: `quit`, `q`, `menu` → `/exit`; `keys` → `/shortcuts`; `commands` →
 `/palette`; `search` → `/files`; `providers`/`custom-providers` → `/custom`;
@@ -510,6 +559,11 @@ settings, keys and history live outside the install directory and are never
 deleted by an installer. `default_api`/`OPENROUTER_API_KEY` environment
 variables are honoured for the Default provider.
 
+Execution settings (all optional): `prompt_profile` (`auto` by default),
+`model_profiles`, `max_agent_steps`, `max_tool_calls_per_step`,
+`continue_truncated` (`true`), `fallback_models` and `allow_local_to_cloud`
+(`false`).
+
 Environment variables: `SEEDCODE_WORKSPACE`, `SEEDCODE_NO_WORKSPACE_PROMPT`,
 `SEEDCODE_NO_TUI`, `SEEDCODE_PLAIN`, `SEEDCODE_PROVIDER`, `SEEDCODE_MODEL`,
 `SEEDCODE_SHELL`, `SEEDCODE_DISABLE_INTERNET`, `SEEDCODE_MAX_RETRIES`,
@@ -524,7 +578,7 @@ Environment variables: `SEEDCODE_WORKSPACE`, `SEEDCODE_NO_WORKSPACE_PROMPT`,
 
 ```bash
 python -m pip install build twine
-python -m build                     # dist/seedcode_cli-10.1.0-*.whl and *.tar.gz
+python -m build                     # dist/seedcode_cli-10.2.1-*.whl and *.tar.gz
 python -m twine check dist/*
 ```
 
@@ -542,17 +596,17 @@ Requirements: Python 3.10+, PyInstaller, Inno Setup 6 or 7.
 
 ---
 
-## Release artifacts (v10.1.0)
+## Release artifacts (v10.2.1)
 
-Release: [v10.1.0](https://github.com/Alshahriar-07/seedcode-cli/releases/tag/v10.1.0)
+Release: [v10.2.1](https://github.com/Alshahriar-07/seedcode-cli/releases/tag/v10.2.1)
 
 | File | What it is |
 | --- | --- |
-| `SeedCode-CLI-Setup-10.1.0.exe` | Windows Setup installer (Inno Setup; uninstaller, Start Menu entry). |
-| `SeedCode-CLI-10.1.0-windows-x64.exe` | Standalone Windows executable — downloaded by the Windows IRM installer. |
-| `seedcode_cli-10.1.0-py3-none-any.whl` | Python wheel — downloaded by the Linux IRM installer. |
-| `seedcode_cli-10.1.0.tar.gz` | Python source distribution. |
-| `seedcode-cli-10.1.0.tgz` | npm package tarball (launcher that downloads the official binary). |
+| `SeedCode-CLI-Setup-10.2.1.exe` | Windows Setup installer (Inno Setup; uninstaller, Start Menu entry). |
+| `SeedCode-CLI-10.2.1-windows-x64.exe` | Standalone Windows executable — downloaded by the Windows IRM installer. |
+| `seedcode_cli-10.2.1-py3-none-any.whl` | Python wheel — downloaded by the Linux IRM installer. |
+| `seedcode_cli-10.2.1.tar.gz` | Python source distribution. |
+| `seedcode-cli-10.2.1.tgz` | npm package tarball (launcher that downloads the official binary). |
 | `SHA256SUMS.txt` | SHA-256 of every artifact above. |
 
 Verify a download before using it:
@@ -562,8 +616,9 @@ sha256sum -c SHA256SUMS.txt              # Linux / macOS
 Get-FileHash <file> -Algorithm SHA256    # Windows PowerShell
 ```
 
-All release artifacts are staged in `dist/release/v10.1.0/` by the build pipeline;
+All release artifacts are staged in `dist/release/v10.2.1/` by the build pipeline;
 digests are computed from the final files, never copied from an older release.
+This source change does not build, publish or upload any release artifact.
 
 ---
 

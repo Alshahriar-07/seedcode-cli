@@ -75,16 +75,16 @@ _STATE_STYLES = {
     "cancelled": "seed.warning",
 }
 _STATE_MARKS = {
-    "ready": ("●", "o"),
-    "planning": ("●", ">"),
-    "running": ("●", ">"),
-    "verifying": ("●", ">"),
-    "recovering": ("↻", ">"),
-    "paused": ("‖", "||"),
-    "blocked": ("■", "!"),
-    "failed": ("✗", "x"),
-    "completed": ("✓", "[ok]"),
-    "cancelled": ("■", "!"),
+    "ready": ("+", "+"),
+    "planning": (">", ">"),
+    "running": (">", ">"),
+    "verifying": (">", ">"),
+    "recovering": ("~", "~"),
+    "paused": ("||", "||"),
+    "blocked": ("!", "!"),
+    "failed": ("X", "X"),
+    "completed": ("+", "+"),
+    "cancelled": ("!", "!"),
 }
 
 
@@ -183,12 +183,12 @@ def task_checklist(
 
 
 def live_action_line(action: str, *, legacy: bool = False) -> Text | None:
-    """The single live activity line (``→ Editing src/auth/session.ts``)."""
+    """The single live activity line (``-> Editing src/auth/session.ts``)."""
     action = " ".join(str(action or "").split())
     if not action:
         return None
     line = Text(no_wrap=True, overflow="crop")
-    line.append("-> " if legacy else "→ ", style="seed.accent")
+    line.append("-> ", style="seed.accent")
     line.append(_clip(action, 64), style="seed.text")
     return line
 
@@ -242,7 +242,7 @@ class CodeModeHeader:
 
     # --- rendering -----------------------------------------------------------
     def _mark(self) -> tuple[str, str]:
-        marks = _STATE_MARKS.get(self.state, ("●", ">"))
+        marks = _STATE_MARKS.get(self.state, ("+", ">"))
         return (marks[1], marks[0]) if self.legacy else (marks[0], marks[0])
 
     def _status_text(self) -> Text:

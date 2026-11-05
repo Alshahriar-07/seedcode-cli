@@ -69,20 +69,20 @@ class TaskState(str, enum.Enum):
     SKIPPED = "skipped"
 
 
-# Unicode / ASCII glyphs per state, so a legacy Windows console stays readable.
+# Compact monochrome state markers.
 _GLYPHS: dict[TaskState, str] = {
-    TaskState.PENDING: "○",
-    TaskState.RUNNING: "●",
-    TaskState.COMPLETED: "✓",
-    TaskState.FAILED: "✗",
-    TaskState.SKIPPED: "–",
+    TaskState.PENDING: "[ ]",
+    TaskState.RUNNING: "[>]",
+    TaskState.COMPLETED: "[+]",
+    TaskState.FAILED: "[!]",
+    TaskState.SKIPPED: "[-]",
 }
 _GLYPHS_ASCII: dict[TaskState, str] = {
-    TaskState.PENDING: "-",
-    TaskState.RUNNING: ">",
-    TaskState.COMPLETED: "[ok]",
+    TaskState.PENDING: "[ ]",
+    TaskState.RUNNING: "[>]",
+    TaskState.COMPLETED: "[+]",
     TaskState.FAILED: "[x]",
-    TaskState.SKIPPED: "-",
+    TaskState.SKIPPED: "[-]",
 }
 
 _STYLES: dict[TaskState, str] = {

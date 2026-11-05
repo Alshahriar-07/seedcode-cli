@@ -65,6 +65,15 @@ def _agent(ctx: CommandContext, arg: str) -> CommandResult:
         ui.warning("This engine has no agent-profile support; nothing was switched.")
         return CommandResult()
     profile = set_agent(wanted)
+    ctx.config.agent_profile = profile.id
+    from ..config.manager import save_config
+
+    save_config(ctx.config)
+    state = getattr(ui, "state", None) or getattr(
+        getattr(ui, "tui", None), "state", None
+    )
+    if state is not None:
+        state.update(agent_state=profile.name)
     ui.success(f"Agent profile set to {profile.name} ({profile.id}).")
     if profile.tools is not None:
         ui.dim(

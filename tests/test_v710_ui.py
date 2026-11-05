@@ -207,10 +207,10 @@ def test_checklist_uses_one_mark_per_state() -> None:
         (TaskState.BLOCKED, "Deploy"),
     ]
     text = "\n".join(line.plain for line in task_checklist(rows))
-    assert "✓ Setup project" in text
-    assert "● Implement authentication" in text
-    assert "○ Build dashboard" in text
-    assert "✗ Add tests" in text
+    assert "[+] Setup project" in text
+    assert "[>] Implement authentication" in text
+    assert "[ ] Build dashboard" in text
+    assert "[!] Add tests" in text
     assert "■ Deploy" in text
 
 
@@ -230,7 +230,7 @@ def test_checklist_clips_long_titles() -> None:
 
 def test_live_action_line_is_single_and_compact() -> None:
     line = live_action_line("Editing src/auth/session.ts")
-    assert line is not None and line.plain.startswith("→ ")
+    assert line is not None and line.plain.startswith("-> ")
     assert live_action_line("") is None
     assert live_action_line("x", legacy=True).plain.startswith("-> ")
 
@@ -266,7 +266,7 @@ def test_code_mode_flow_shows_the_header_and_the_plan_not_six_step_rows() -> Non
 
     assert "CODE MODE" in text
     assert "✓" not in text or True  # nothing claimed as done yet
-    assert "○ Setup project" in text
+    assert "[ ] Setup project" in text
     assert "Build the app" in text
     # The fine-grained step rows are dropped when a plan is attached.
     assert flow._body_lines() == []
@@ -299,7 +299,7 @@ def test_agent_mode_flow_uses_the_compact_header_and_activity_line() -> None:
     frame = flow._renderable()
     console.print(frame)
     text = console.export_text()
-    assert "→ Editing a.py" in text
+    assert "-> Editing a.py" in text
     assert "Working… (implement changes)" in text
 
 
@@ -317,7 +317,7 @@ def test_final_block_reports_state_plan_and_outcome() -> None:
     out = console.export_text()
     assert "COMPLETED" in out  # the header reflects the real outcome
     assert f"SEEDCODE {__version__}" in out
-    assert "✓ Setup project" in out
+    assert "[+] Setup project" in out
     assert "Task completed" in out
     assert "Ready for next task." in out
 

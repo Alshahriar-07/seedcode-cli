@@ -47,6 +47,39 @@ class TestParsing:
         stripped = strip_tool_blocks(text)
         assert "Before." in stripped and "After." in stripped and "```tool" not in stripped
 
+    def test_pythonic_bracketed_call(self):
+        calls = parse_tool_calls('[read_file(path="a.py")]')
+        assert len(calls) == 1
+        assert calls[0].tool == "read_file" and calls[0].args == {"path": "a.py"}
+
+    def test_pythonic_bare_call_is_executable(self):
+        calls = parse_tool_calls('list_dir()')
+        assert [call.tool for call in calls] == ["list_dir"]
+
+    def test_lfm_tool_tags_accept_json_and_pythonic(self):
+        assert [
+            call.tool
+            for call in parse_tool_calls(
+                '<|tool_call_start|>{"tool": "list_dir", "args": {}}<|tool_call_end|>'
+            )
+        ] == ["list_dir"]
+        assert [
+            call.tool
+            for call in parse_tool_calls(
+                '<|tool_call_start|>[read_file(path="a.py")]<|tool_call_end|>'
+            )
+        ] == ["read_file"]
+
+    def test_code_examples_are_never_executable(self):
+        text = 'Example:\n```python\n[read_file(path="a.py")]\n```\n'
+        assert parse_tool_calls(text) == []
+        assert "read_file" in strip_tool_blocks(text)
+
+    def test_strip_pythonic_call(self):
+        cleaned = strip_tool_blocks('Checking.\n[read_file(path="a.py")]\nDone.')
+        assert "read_file" not in cleaned
+        assert "Checking." in cleaned and "Done." in cleaned
+
 
 # --- the loop -----------------------------------------------------------------
 class ScriptedAgent(AgentEngine):
@@ -137,14 +170,32 @@ class TestAgentLoop:
         feedback = [m for m in agent.messages if m.content.startswith("[TOOL RESULTS]")]
         assert feedback and "Read Only" in feedback[0].content
 
+    def test_narrated_tool_call_is_requested_once(self, workspace):
+        agent = ScriptedAgent(
+            workspace,
+            [
+                "I will call list_dir to inspect the workspace.",
+                tool_block('{"tool": "list_dir", "args": {"path": "."}}'),
+                "The workspace contains hello.txt.",
+            ],
+        )
+        final = agent.run_turn("list the files in this folder")
+        assert "hello.txt" in final
+        assert agent.requests == 3
+        prompts = [m for m in agent.messages if m.content.startswith("[SYSTEM] You described")]
+        assert len(prompts) == 1
+
     def test_step_budget_bounds_the_loop(self, workspace):
         from seedcode.core import agent as agent_mod
 
         endless = [tool_block('{"tool": "list_dir", "args": {}}')] * (agent_mod.MAX_STEPS + 1)
         agent = ScriptedAgent(workspace, endless)
         final = agent.run_turn("loop forever")
-        assert "step limit" in final
-        assert agent.requests == agent_mod.MAX_STEPS
+        # v10.4.0: identical repeated work is now stopped by the no-progress
+        # guard before the full budget; either honest bound is acceptable, but
+        # the endless loop must never exceed the configured maximum.
+        assert "step limit" in final or "No progress" in final
+        assert agent.requests <= agent_mod.MAX_STEPS
 
     def test_system_prompt_lists_tools_and_mode(self, workspace):
         agent = ScriptedAgent(workspace, ["ok"])
@@ -247,7 +298,7 @@ class TestNativeToolCalling:
     def test_first_native_failure_falls_back_to_text(self, workspace):
         agent = NativeScriptedAgent(
             workspace,
-            [ChatError("tools are not supported by this model")],
+            [ChatError("tools are not supported by this model", fallback_to_text=True)],
             text_replies=[
                 tool_block('{"tool": "read_file", "args": {"path": "hello.txt"}}'),
                 "Recovered over text.",
@@ -258,6 +309,18 @@ class TestNativeToolCalling:
         assert agent.native_requests == 1 and agent.text_requests == 2
         # After the downgrade the system prompt carries the manifest again.
         assert "```tool" in agent.messages[0].content
+
+    def test_first_native_network_failure_is_not_hidden_by_fallback(self, workspace):
+        agent = NativeScriptedAgent(
+            workspace,
+            [ChatError("connection timed out")],
+            text_replies=["must not be requested"],
+        )
+        with pytest.raises(ChatError, match="connection timed out"):
+            agent.run_turn("read it")
+        assert agent.native_requests == 1
+        assert agent.text_requests == 0
+        assert agent._native is None
 
     def test_native_error_after_success_propagates(self, workspace):
         agent = NativeScriptedAgent(

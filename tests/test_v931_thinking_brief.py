@@ -101,14 +101,21 @@ def test_completed_thinking_is_preserved_after_the_turn() -> None:
 # ---------------------------------------------------------------------------
 # minimal presentation: label + content only, never metadata
 # ---------------------------------------------------------------------------
-def test_the_panel_shows_a_compact_label_and_the_reasoning() -> None:
+def test_the_panel_shows_the_models_real_reasoning_only() -> None:
+    """The panel renders the model's own stream, never a status message."""
     tui = _tui()
     tui.state.reset_thinking()
-    tui.state.set_briefing(active=True, status="Working")  # a turn in flight
-    tui.state.append_thinking("Inspecting the existing components...\n")
+    tui.state.set_briefing(
+        active=True, status="Working", activity="Reading project files"
+    )
+    tui.state.add_activity("action", "Reading project files")
+    tui.state.append_thinking("The user wants the login page fixed.\nI should read the form first.")
     text = _plain(tui._thinking_fragments(40, tui._thinking_height()))
-    assert "Thinking..." in text
-    assert "Inspecting the existing components..." in text
+    assert "Thinking" in text
+    assert "The user wants the login page fixed." in text
+    assert "I should read the form first." in text
+    # Tool activity is not reasoning and must stay out of this section.
+    assert "Reading project files" not in text
 
 
 def test_the_panel_never_carries_headings_badges_or_model_metadata() -> None:
@@ -121,46 +128,45 @@ def test_the_panel_never_carries_headings_badges_or_model_metadata() -> None:
         task="Task 1/3 Create login page",
         activity="Editing tui.py",
     )
-    tui.state.append_thinking("Reading the existing components first...\n")
+    tui.state.add_activity("action", "Reading source files")
+    tui.state.append_thinking("The project uses Python and TypeScript.\nNow I will check the composer.")
     text = _plain(tui._thinking_fragments(80, tui._thinking_height()))
     assert "LIVE" not in text
     assert "AI THINKING" not in text
     assert "BRIEFING" not in text
     assert "DeepSeek" not in text and "OpenRouter" not in text
     assert "Status:" not in text and "Current task" not in text
+    assert "The project uses Python and TypeScript." in text
+    assert "Reading source files" not in text
 
 
-def test_completed_thinking_keeps_the_same_minimal_presentation() -> None:
+def test_completed_reasoning_remains_available_after_the_turn() -> None:
     tui = _tui()
     tui.state.reset_thinking()
+    tui.state.append_thinking("I verified the existing login component; it needs a label.")
     tui.state.set_briefing(active=True, status="Working")
-    tui.state.append_thinking("Reusing the existing login component...\n")
     tui.state.reset_briefing()  # the turn is over
     text = _plain(tui._thinking_fragments(80, tui._thinking_height()))
-    assert "Thinking..." in text  # same small label — no LIVE badge appears
+    assert "Thinking" in text
     assert "LIVE" not in text
-    assert "Reusing the existing login component..." in text  # record preserved
+    assert "it needs a label" in text
 
 
 # ---------------------------------------------------------------------------
 # presentation: dim/faded and visually quieter than normal responses
 # ---------------------------------------------------------------------------
-def test_the_reasoning_stream_renders_dim() -> None:
+def test_reasoning_uses_muted_secondary_text() -> None:
     tui = _tui()
     tui.state.reset_thinking()
-    tui.state.append_thinking("reasoning line\n")
+    tui.state.append_thinking("Read the config, then the composer.")
     from seedcode.ui.theme import active_palette
 
     dim_style = f"fg:{active_palette().dim}"
     fragments = tui._thinking_fragments(40, tui._thinking_height())
-    assert all(style == dim_style for styles in fragments for style, _t in styles)
+    assert any(style == dim_style for styles in fragments for style, _t in styles)
 
 
-def test_the_fallback_renders_in_the_panel() -> None:
+def test_no_activity_is_fabricated_when_idle() -> None:
     tui = _tui()
     tui.state.reset_thinking()
-    tui.state.collapse_thinking()
-    tui.state.toggle_thinking()  # re-expand to read the completed record
-    height = tui._thinking_height()
-    assert height > 0
-    assert _FALLBACK in _plain(tui._thinking_fragments(60, height))
+    assert tui._thinking_height() == 0

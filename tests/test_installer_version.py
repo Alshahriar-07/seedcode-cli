@@ -1,7 +1,7 @@
-"""Installer version-verification regression tests (v9.3.2).
+"""Installer version-verification regression tests (v10.2.1).
 
 All three installation verifiers must accept the CLI's real output —
-``Seed Code CLI 9.3.2`` — while still rejecting anything that is not the
+``Seed Code CLI 10.2.1`` — while still rejecting anything that is not the
 requested version. The one historical bug this locks down:
 
 * ``setup.iss`` required a literal ``v`` in the output
@@ -15,10 +15,10 @@ The three verifiers share one contract, implemented per language
 ``install.ps1``, ``VersionInOutput`` in ``setup.iss``):
 
 * the version must appear at a token boundary — never directly after a digit
-  (``19.3.2`` does not pass for ``9.3.2``), never directly before a digit or a
-  dot (``9.3.21`` / ``9.3.2.1`` do not pass for ``9.3.2``);
-* a lone ``v``/``V`` version marker is accepted (``v9.3.2``); a marker inside a
-  longer word is not (``rev9.3.2`` is refused);
+  (``110.2.1`` does not pass for ``10.2.1``), never directly before a digit or a
+  dot (``10.2.11`` / ``10.2.1.1`` do not pass for ``10.2.1``);
+* a lone ``v``/``V`` version marker is accepted (``v10.2.1``); a marker inside a
+  longer word is not (``rev10.2.1`` is refused);
 * an empty or malformed output is always refused.
 
 The bash and PowerShell matchers are executed here in full; the Inno Pascal
@@ -47,21 +47,21 @@ POWERSHELL = shutil.which("pwsh") or shutil.which("powershell") or shutil.which(
     "powershell.exe"
 )
 
-VERSION = "9.3.2"
+VERSION = "10.2.1"
 
 # (reported output, should the expected version count as verified?)
 BOUNDARY_CASES: list[tuple[str, bool]] = [
-    ("Seed Code CLI 9.3.2", True),  # the CLI's actual --version output
-    ("Seed Code CLI v9.3.2", True),  # v-marker variant
-    ("v9.3.2", True),  # bare version with marker
-    ("Seed Code CLI 9.3.2 (build 123)", True),  # trailing extra text
-    ("9.3.2", True),  # bare version, no marker
-    ("Seed Code CLI 19.3.2", False),  # longer build number
-    ("Seed Code CLI 9.3.21", False),
-    ("Seed Code CLI 9.3.2.1", False),
-    ("SeedCodeCLI9.3.2", False),  # no boundary at all
-    ("rev9.3.2", False),  # v-marker inside a longer word
-    ("9.3.2RC1", True),  # pre-release suffix is still version 9.3.2
+    ("Seed Code CLI 10.2.1", True),  # the CLI's actual --version output
+    ("Seed Code CLI v10.2.1", True),  # v-marker variant
+    ("v10.2.1", True),  # bare version with marker
+    ("Seed Code CLI 10.2.1 (build 123)", True),  # trailing extra text
+    ("10.2.1", True),  # bare version, no marker
+    ("Seed Code CLI 110.2.1", False),  # longer build number
+    ("Seed Code CLI 10.2.11", False),
+    ("Seed Code CLI 10.2.1.1", False),
+    ("SeedCodeCLI10.2.1", False),  # no boundary at all
+    ("rev10.2.1", False),  # v-marker inside a longer word
+    ("10.2.1RC1", True),  # pre-release suffix is still version 10.2.1
     ("", False),  # missing output
     ("(no output)", False),
     ("unrelated error text", False),
@@ -279,7 +279,7 @@ def test_setup_iss_version_matcher_contract() -> None:
 
     Historically the verification was ``Pos('v{#MyAppVersion}', Reported) > 0``
     — the exact bug that rejected a correctly installed binary that reported
-    ``Seed Code CLI 9.3.2``.
+    ``Seed Code CLI 10.2.1``.
     """
     text = ISS_INSTALLER.read_text(encoding="utf-8")
     assert "Pos('v{#MyAppVersion}'" not in text, (

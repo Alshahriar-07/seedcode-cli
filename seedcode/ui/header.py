@@ -48,7 +48,7 @@ MAX_PANEL_WIDTH = 96
 
 _TEST = " \u00b7 "
 _ASCII_TEST = "  -  "
-_BRAND = f"{APP_NAME} CLI v{__version__}"
+_BRAND = f"SeedCode CLI v{__version__}"
 _WORDMARK = APP_NAME.upper()  # SEED CODE (legacy-console fallback only)
 
 
@@ -183,24 +183,10 @@ def _status_bar_fragments(state: AppState, legacy: bool) -> list[tuple[str, str]
 
 # --- public API ---------------------------------------------------------------
 def header_lines(state: AppState, width: int, *, ascii_only: bool = False) -> list[list[tuple[str, str]]]:
-    """Render the compact header for ``state`` at ``width`` columns."""
+    """Render only the SeedCode product identity at ``width`` columns."""
     width = max(1, int(width or 80))
-
-    identity = _hard_clip(
-        _identity_fragments(state, ascii_only, detail=width >= _PLAIN_WIDTH), width
-    )
-    lines = [identity]
-    if width < _PLAIN_WIDTH:
-        # Narrow (but >= 24): the second line carries status/provider/model/mode
-        # so the essentials never fight the truncated brand for cells.
-        if width >= _MODE_MIN_WIDTH:
-            lines.append(_hard_clip(_status_line(state, ascii_only), width))
-        return [_hard_clip(line, width) for line in lines]
-
-    # Two-row compact bar: churn-free branding above, live status bar below.
-    bar = _hard_clip(_status_bar_fragments(state, ascii_only), width)
-    lines.append(bar)
-    return [_hard_clip(line, width) for line in lines]
+    brand = _hard_clip([(_role("primary", bold=True), _BRAND)], width)
+    return [brand]
 
 
 def _status_line(state: AppState, legacy: bool) -> list[tuple[str, str]]:

@@ -4,6 +4,65 @@ All notable changes to Seed Code CLI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [10.2.0] — 2026-11-04
+
+**Execution reliability, model-aware profiles and a rebuilt Seed interface.**
+
+The model makes decisions; SeedCode now controls execution. This release adds
+the backend rules that keep a small local model on track and a truncated or
+falsely-completed answer from being presented as finished.
+
+### Added
+
+- **Model-aware execution profiles** (`seedcode/core/model_profiles.py`):
+  `small` / `standard` / `advanced` profiles drive prompt style, step and
+  tool-call budgets, output caps, history compaction and the tool protocol.
+  Resolution uses `prompt_profile`, then `model_profiles`, then local model
+  metadata (declared parameter size) — never a hardcoded name list.
+- **`TOOL_CALL:` text protocol** for models without reliable native function
+  calling, alongside the legacy fenced `tool` block. Markers inside a
+  documentation/code fence are ignored. Strict name/required-argument/type
+  validation runs before dedupe, permission checks or execution.
+- **Automatic response continuation**: providers report a terminal
+  `FinishEvent`; an output-limit stop preserves the generated prefix and
+  continues the answer instead of finalising a truncated reply.
+- **Completion gate**: a completion claim after a failed tool call gets one
+  bounded verification step rather than acceptance.
+- **Model failover** via `fallback_models`, before provider failover.
+- **`/models` management screen**: switch from the live catalogue, enter a
+  custom model id, maintain the ordered fallback list, clear the active
+  model, and choose or pin a `small`/`standard`/`advanced` execution profile.
+- **`/provider manage` screen**: select, test the active connection, inspect
+  provider status/model/key state, toggle automatic failover on the live
+  engine, manage custom providers and the active API key. `/provider test`
+  and `/provider failover on|off` are direct shortcuts.
+- **Local-to-cloud privacy gate**: local sessions are never silently moved to
+  a cloud provider; `allow_local_to_cloud` (default `false`) is required.
+
+### Changed
+
+- **Seed palette** now uses the specified pure-black / Seed-Green identity
+  (`#22C55E`, `#16A34A`, `#4ADE80`, `#FAFAFA`, `#A1A1AA`, `#71717A`, `#27272A`,
+  `#EF4444`, `#F59E0B`, `#3B82F6`).
+- **Full-width conversation**: the permanent right-side task panel is gone;
+  the live plan renders inline in the conversation as `Task Progress`.
+- **Retry policy** uses bounded exponential backoff with jitter (~1s, 3s,
+  7s) while continuing to honour a provider's `Retry-After` within the cap.
+- **Version 10.2.0** across package metadata, npm launcher, IRM installers,
+  Setup script and docs. The v10.1.0 notes are preserved in
+  `docs/releases/v10.1.0.md`.
+
+### Tests
+
+- New `tests/test_v102_agent_reliability.py` coverage: profile resolution and
+  output caps, the `TOOL_CALL:` protocol (including fenced examples),
+  malformed JSON, strict argument validation, raw-JSON filtering, truncated
+  continuation without duplication, the completion gate, failover privacy,
+  the Seed palette, inline plan rendering and the reported version.
+- New `tests/test_v102_management.py` coverage: `/models` registration and
+  fallback/profile helpers, live provider-failover control, and output-limit
+  finish reasons for FreeModel Claude/Codex and AeroLink.
+
 ## [9.3.2] — 2026-11-03
 
 **Quieter interface, and a coding agent that provably writes the code it

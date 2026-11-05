@@ -11,7 +11,10 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from dataclasses import dataclass, field
+import math
 from typing import TYPE_CHECKING
+
+import httpx
 
 if TYPE_CHECKING:
     from ..models import AppConfig, Message
@@ -28,11 +31,33 @@ class ProviderError(Exception):
     """
 
     def __init__(
-        self, message: str, *, transient: bool = False, retry_after: float | None = None
+        self,
+        message: str,
+        *,
+        transient: bool = False,
+        retry_after: float | None = None,
+        fallback_to_text: bool = False,
     ) -> None:
         super().__init__(message)
         self.transient = transient
         self.retry_after = retry_after
+        self.fallback_to_text = fallback_to_text
+
+
+def stream_idle_timeout(config: "AppConfig") -> float:
+    """Return the configured stream-idle limit, clamped to a safe range."""
+    try:
+        value = float(getattr(config, "stream_idle_timeout", 120.0))
+    except (TypeError, ValueError):
+        value = 120.0
+    if not math.isfinite(value):
+        return 120.0
+    return max(1.0, min(value, 1800.0))
+
+
+def stream_timeout(config: "AppConfig", *, connect: float = 20.0) -> httpx.Timeout:
+    """Build a request timeout with the configured inter-chunk read limit."""
+    return httpx.Timeout(connect, read=stream_idle_timeout(config))
 
 
 @dataclass(slots=True)
@@ -122,7 +147,29 @@ class ToolCallEvent:
     error: str = ""
 
 
-StreamEvent = TextDelta | ThinkingDelta | ToolCallEvent
+@dataclass(slots=True)
+class FinishEvent:
+    """The provider's own terminal reason for a stream (v10.2.0).
+
+    ``reason`` is the provider's finish reason (``stop``, ``length``, ...) or
+    ``"interrupted"`` when a stream ended without one. An output-token stop
+    (``length``) is NOT a completed answer: the agent uses it to continue the
+    response instead of presenting a truncated reply as final.
+    """
+
+    reason: str
+
+    @property
+    def truncated(self) -> bool:
+        """Whether generation stopped because of the output-token limit."""
+        return (self.reason or "").strip().lower() in {
+            "length",
+            "max_tokens",
+            "max_output_tokens",
+        }
+
+
+StreamEvent = TextDelta | ThinkingDelta | ToolCallEvent | FinishEvent
 
 
 @dataclass

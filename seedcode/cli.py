@@ -10,7 +10,11 @@ traceback. Heavy imports are deferred into :func:`main` so ``--version``
 from __future__ import annotations
 
 import os
+import json
+import shutil
+import subprocess
 import sys
+from pathlib import Path
 
 
 def _interactive() -> bool:
@@ -49,6 +53,50 @@ def _prepare_console() -> None:
             pass  # exotic streams (tests, embedders) — never fatal
 
 
+def _legacy_ts_tui_requested() -> bool:
+    """Whether the retired TypeScript menu screen was explicitly requested.
+
+    v10.3.0: ``seedcode`` must open the real terminal interface directly. The
+    bundled TypeScript program is a *pre-session menu* (workspace / provider /
+    model / agents screens) that used to intercept interactive launches before
+    the Python TUI existed; it is kept only as an explicit opt-in for users who
+    still want that menu (``SEEDCODE_LEGACY_TS_TUI=1``).
+    """
+    value = (os.environ.get("SEEDCODE_LEGACY_TS_TUI") or "").strip().lower()
+    return value in {"1", "true", "yes", "on"}
+
+
+def _launch_typescript_tui(log) -> bool:
+    """Launch the legacy TS menu only when explicitly opted in.
+
+    Default-off is the fix for the startup regression: the bundled menu ran
+    before the TUI and asked for workspace/provider/model, so the new intro
+    screen was never reached on a machine that had the bundle installed.
+    """
+    if not _legacy_ts_tui_requested():
+        return False
+    if os.environ.get("SEEDCODE_FORCE_PYTHON_TUI") or not _interactive():
+        return False
+    node = shutil.which(os.environ.get("SEEDCODE_NODE", "node"))
+    script = Path(
+        os.environ.get("SEEDCODE_TUI_SCRIPT")
+        or (Path(__file__).parent / "tui" / "dist" / "index.cjs")
+    ).resolve()
+    if not node or not script.is_file():
+        return False
+    backend_command = [sys.executable]
+    if not getattr(sys, "frozen", False):
+        backend_command.extend(["-m", "seedcode"])
+    env = os.environ.copy()
+    env["SEEDCODE_BACKEND_COMMAND"] = json.dumps(backend_command)
+    try:
+        completed = subprocess.run([node, str(script)], env=env, check=False)
+    except OSError:
+        log.exception("could not start the TypeScript terminal UI; using Python UI")
+        return False
+    return completed.returncode == 0
+
+
 _HELP = """\
 Seed Code - a terminal-based AI coding assistant. Plant ideas. Grow code.
 
@@ -67,6 +115,11 @@ Docs: https://github.com/Alshahriar-07/seedcode-cli
 
 def main() -> None:
     """Console-script entry point (``seedcode``)."""
+    if len(sys.argv) > 1 and sys.argv[1] == "--tui-backend":
+        from .tui_backend import serve
+
+        serve()
+        return
     # --version/--help must work non-interactively and fast (installers and
     # scripts verify with them), so handle both before any UI, config, or
     # logging work happens.
@@ -115,6 +168,9 @@ def main() -> None:
     setup_logging()
     log = get_logger("cli")
 
+    if _launch_typescript_tui(log):
+        return
+
     from . import __version__
     from .utils.terminal_title import (
         restore_terminal_title,
@@ -140,14 +196,13 @@ def main() -> None:
     terminal = detect_terminal()
     log.info("terminal: %s", terminal.describe())
     try:
-        # v9.1.0: pick the project workspace explicitly instead of silently
-        # treating the launch directory as the project. Non-interactive hosts
-        # (pipelines, CI, scripts) skip the prompt and keep the launch
-        # directory; `SEEDCODE_WORKSPACE` selects one directly. Everything
-        # below — Agent Mode, file I/O, .seedcode, indexing, terminal
-        # commands, verification — resolves against whatever this returns.
-        workspace = ensure_workspace(interactive=_interactive())
-        log.info("workspace selected: %s", workspace)
+        # v10.3.0: the launch directory IS the workspace — no startup picker.
+        # `ensure_workspace(interactive=False)` still honours an explicit
+        # ``SEEDCODE_WORKSPACE`` (the only override) and otherwise keeps the
+        # current directory, exactly like a terminal-native coding tool. The
+        # picker itself remains available at runtime through /workspace.
+        workspace = ensure_workspace(interactive=False)
+        log.info("workspace: %s", workspace)
 
         from .app import run
         from .ui import UI

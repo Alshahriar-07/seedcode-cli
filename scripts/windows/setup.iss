@@ -29,7 +29,7 @@
 #ifdef AppVersionFromBuild
   #define MyAppVersion AppVersionFromBuild
 #else
-  #define MyAppVersion "10.1.0"
+  #define MyAppVersion "10.2.1"
 #endif
 ; Refuse to compile without the build outputs - packaging nothing (or a
 ; leftover) must fail loudly, not "succeed".
@@ -115,6 +115,9 @@ Source: "..\..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 ; the postinstall check below reports the resulting capability honestly.
 Source: "..\..\vendor\tesseract\*"; DestDir: "{app}\tesseract"; \
     Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
+; The VS Code extension VSIX bundled for automatic post-install integration.
+; Extracted to {tmp}\vsce so the installer does not depend on the source tree.
+Source: "..\..\vsce\Release\*.vsix"; DestDir: "{tmp}\vsce"; Flags: ignoreversion
 
 [Icons]
 ; IconFilename pins every shortcut to the Seed Code .ico explicitly (belt and
@@ -277,6 +280,219 @@ begin
   Result := VersionInOutput(Reported, '{#MyAppVersion}');
 end;
 
+// ---------------------------------------------------------------------------
+// VS Code Extension Auto-Installation
+// ---------------------------------------------------------------------------
+function FindVsixFile(const SearchDir: string; var VsixPath: string): Boolean;
+var
+  FindRec: TFindRec;
+begin
+  Result := False;
+  VsixPath := '';
+  if DirExists(SearchDir) and FindFirst(AddBackslash(SearchDir) + '*.vsix', FindRec) then
+  begin
+    try
+      repeat
+        if (FindRec.Attributes and FILE_ATTRIBUTE_DIRECTORY) = 0 then
+        begin
+          VsixPath := AddBackslash(SearchDir) + FindRec.Name;
+          Result := True;
+          break;
+        end;
+      until not FindNext(FindRec);
+    finally
+      FindClose(FindRec);
+    end;
+  end;
+end;
+
+function FindVsCodeCli(var CodeExe: string): Boolean;
+var
+  Candidate: string;
+  ResultCode: Integer;
+  TempFile: string;
+  Output: AnsiString;
+begin
+  Result := False;
+  CodeExe := '';
+
+  // 1. Check PATH via where code.cmd
+  TempFile := ExpandConstant('{tmp}\vscode-where.txt');
+  if Exec(ExpandConstant('{cmd}'), '/C where code.cmd > "' + TempFile + '" 2>&1',
+      '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0) then
+  begin
+    if LoadStringFromFile(TempFile, Output) then
+    begin
+      Candidate := Trim(String(Output));
+      if Pos(#13, Candidate) > 0 then
+        Candidate := Trim(Copy(Candidate, 1, Pos(#13, Candidate) - 1));
+      if Pos(#10, Candidate) > 0 then
+        Candidate := Trim(Copy(Candidate, 1, Pos(#10, Candidate) - 1));
+      if (Candidate <> '') and FileExists(Candidate) then
+      begin
+        CodeExe := Candidate;
+        Result := True;
+        if FileExists(TempFile) then DeleteFile(TempFile);
+        exit;
+      end;
+    end;
+  end;
+
+  // 1b. Check PATH via where code
+  if Exec(ExpandConstant('{cmd}'), '/C where code > "' + TempFile + '" 2>&1',
+      '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0) then
+  begin
+    if LoadStringFromFile(TempFile, Output) then
+    begin
+      Candidate := Trim(String(Output));
+      if Pos(#13, Candidate) > 0 then
+        Candidate := Trim(Copy(Candidate, 1, Pos(#13, Candidate) - 1));
+      if Pos(#10, Candidate) > 0 then
+        Candidate := Trim(Copy(Candidate, 1, Pos(#10, Candidate) - 1));
+      if (Candidate <> '') and FileExists(Candidate) then
+      begin
+        CodeExe := Candidate;
+        Result := True;
+        if FileExists(TempFile) then DeleteFile(TempFile);
+        exit;
+      end;
+    end;
+  end;
+  if FileExists(TempFile) then DeleteFile(TempFile);
+
+  // 2. Common User installation: %LOCALAPPDATA%\Programs\Microsoft VS Code\bin\code.cmd
+  Candidate := ExpandConstant('{localappdata}\Programs\Microsoft VS Code\bin\code.cmd');
+  if FileExists(Candidate) then
+  begin
+    CodeExe := Candidate;
+    Result := True;
+    exit;
+  end;
+
+  // 3. Common System installation (64-bit and 32-bit Program Files)
+  Candidate := ExpandConstant('{commonpf}\Microsoft VS Code\bin\code.cmd');
+  if FileExists(Candidate) then
+  begin
+    CodeExe := Candidate;
+    Result := True;
+    exit;
+  end;
+
+  Candidate := ExpandConstant('{commonpf64}\Microsoft VS Code\bin\code.cmd');
+  if FileExists(Candidate) then
+  begin
+    CodeExe := Candidate;
+    Result := True;
+    exit;
+  end;
+
+  Candidate := ExpandConstant('{commonpf32}\Microsoft VS Code\bin\code.cmd');
+  if FileExists(Candidate) then
+  begin
+    CodeExe := Candidate;
+    Result := True;
+    exit;
+  end;
+
+  // 4. Registry check (User install)
+  if RegQueryStringValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{77193022-444F-4E77-807B-DD99DD544C86}_is1', 'InstallLocation', Candidate) then
+  begin
+    if (Candidate <> '') and FileExists(AddBackslash(Candidate) + 'bin\code.cmd') then
+    begin
+      CodeExe := AddBackslash(Candidate) + 'bin\code.cmd';
+      Result := True;
+      exit;
+    end;
+  end;
+
+  // 5. Registry check (System install)
+  if RegQueryStringValue(HKLM, 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{EA457770-0588-424C-AAD2-fa6132f39a88}_is1', 'InstallLocation', Candidate) or
+     RegQueryStringValue(HKLM, 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{F8A2A208-72B3-4D61-95FC-8A65D340C2B4}_is1', 'InstallLocation', Candidate) or
+     RegQueryStringValue(HKLM, 'Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\{EA457770-0588-424C-AAD2-fa6132f39a88}_is1', 'InstallLocation', Candidate) or
+     RegQueryStringValue(HKLM, 'Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\{F8A2A208-72B3-4D61-95FC-8A65D340C2B4}_is1', 'InstallLocation', Candidate) then
+  begin
+    if (Candidate <> '') and FileExists(AddBackslash(Candidate) + 'bin\code.cmd') then
+    begin
+      CodeExe := AddBackslash(Candidate) + 'bin\code.cmd';
+      Result := True;
+      exit;
+    end;
+  end;
+
+  // 6. User profile fallback
+  Candidate := ExpandConstant('{%USERPROFILE}\AppData\Local\Programs\Microsoft VS Code\bin\code.cmd');
+  if FileExists(Candidate) then
+  begin
+    CodeExe := Candidate;
+    Result := True;
+    exit;
+  end;
+end;
+
+procedure InstallVsCodeExtension();
+var
+  CodeCli: string;
+  VsixFile: string;
+  VsixDir: string;
+  ResultCode: Integer;
+  InstallCmd: string;
+  InstallOutFile: string;
+  InstallOutput: AnsiString;
+begin
+  VsixDir := ExpandConstant('{tmp}\vsce');
+  if not FindVsixFile(VsixDir, VsixFile) then
+  begin
+    VsixDir := ExpandConstant('{tmp}');
+    FindVsixFile(VsixDir, VsixFile);
+  end;
+
+  if (VsixFile = '') or not FileExists(VsixFile) then
+  begin
+    Log('VS Code extension VSIX not found in installer temporary directory.');
+    exit;
+  end;
+
+  Log('Found bundled VS Code extension VSIX at: ' + VsixFile);
+
+  if not FindVsCodeCli(CodeCli) then
+  begin
+    WizardForm.StatusLabel.Caption := 'VS Code not detected (Seed Code extension skipped).';
+    Log('VS Code is not installed or "code" command was not found. Seed Code VS Code extension installation skipped (non-fatal).');
+    if FileExists(VsixFile) then
+      DeleteFile(VsixFile);
+    exit;
+  end;
+
+  WizardForm.StatusLabel.Caption := 'VS Code detected.';
+  Log('VS Code detected at: ' + CodeCli);
+
+  WizardForm.StatusLabel.Caption := 'Installing Seed Code VS Code Extension...';
+  Log('Installing Seed Code VS Code Extension using: ' + CodeCli + ' --install-extension "' + VsixFile + '" --force');
+
+  InstallOutFile := ExpandConstant('{tmp}\vsce-install.log');
+  InstallCmd := '/C ""' + CodeCli + '" --install-extension "' + VsixFile + '" --force > "' + InstallOutFile + '" 2>&1"';
+
+  if Exec(ExpandConstant('{cmd}'), InstallCmd, '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0) then
+  begin
+    WizardForm.StatusLabel.Caption := 'Extension installed successfully.';
+    Log('Seed Code VS Code Extension installed successfully.');
+    if LoadStringFromFile(InstallOutFile, InstallOutput) then
+      Log('code CLI output: ' + Trim(String(InstallOutput)));
+  end
+  else
+  begin
+    WizardForm.StatusLabel.Caption := 'Warning: Seed Code VS Code Extension could not be installed.';
+    Log(Format('VS Code extension installation returned code %d (non-fatal).', [ResultCode]));
+    if LoadStringFromFile(InstallOutFile, InstallOutput) then
+      Log('code CLI output: ' + Trim(String(InstallOutput)));
+  end;
+
+  if FileExists(InstallOutFile) then
+    DeleteFile(InstallOutFile);
+  if FileExists(VsixFile) then
+    DeleteFile(VsixFile);
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   Reported: string;
@@ -333,6 +549,9 @@ begin
     else
       Log('OCR engine NOT bundled - the OCR tier will be unavailable. ' +
           'Vendor it at vendor\tesseract\ and rebuild to include it.');
+
+    // Auto-install bundled Seed Code VS Code extension if VS Code is present.
+    InstallVsCodeExtension();
   end;
 end;
 

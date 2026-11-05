@@ -60,6 +60,13 @@ class StreamRenderer:
             self._paint()
             self._last_render = time.monotonic()
 
+    def reset(self) -> None:
+        """Discard the preview (the streamed text was intermediate prose)."""
+        self._buffer = ""
+        self._dirty = True
+        if self._live is not None:
+            self._paint()
+
     def _paint(self) -> None:
         """Update the live frame; a console that cannot encode it never fails.
 

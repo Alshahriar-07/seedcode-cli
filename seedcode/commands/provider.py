@@ -472,6 +472,27 @@ def _set_model(ui, config, model_id: str) -> None:
     ui.success(f"Model set to {model_id}")
 
 
+def set_model(ui, config, model_id: str) -> None:
+    """Set and persist the active provider's model (public command helper)."""
+    _set_model(ui, config, model_id)
+
+
+def set_auto_failover(
+    config, enabled: bool, engine=None, *, persist: bool = True
+) -> None:
+    """Persist automatic provider failover and update the live engine.
+
+    ``ChatEngine`` snapshots the setting at construction, so the running
+    engine must be updated too; otherwise the command would only affect the
+    next process. Explicit selection here is the user's opt-in.
+    """
+    config.auto_failover = bool(enabled)
+    if engine is not None and hasattr(engine, "failover_enabled"):
+        engine.failover_enabled = bool(enabled)
+    if persist:
+        save_config(config)
+
+
 def _match_model(models: list[ModelInfo], text: str) -> ModelInfo | None:
     """Exact id match first, then a unique case-insensitive substring."""
     t = text.strip().lower()
@@ -639,12 +660,93 @@ def select_model(ui, config, target: str = "") -> None:
 # --- command handlers --------------------------------------------------------
 
 
+def provider_status_rows(config) -> list[tuple[str, str, str, str]]:
+    """Visible providers with live status, model and key state (never a key)."""
+    sync_custom_providers(config)
+    rows: list[tuple[str, str, str, str]] = []
+    for pid in visible_provider_ids(config):
+        provider = PROVIDERS.get(pid)
+        if provider is None:
+            continue
+        rows.append(
+            (
+                provider.label,
+                provider.status,
+                _provider_model_column(config, pid),
+                _provider_key_column(provider, config),
+            )
+        )
+    return rows
+
+
+def provider_manage_menu(ui, config, engine=None) -> None:
+    """The dedicated provider screen: select, test, failover, custom, keys."""
+    while True:
+        failover = "on" if getattr(config, "auto_failover", False) else "off"
+        choice = run_menu(
+            [
+                MenuItem("Select provider…", "select", status=config.provider),
+                MenuItem("Test active connection", "test", status=config.provider),
+                MenuItem("Show provider list", "list"),
+                MenuItem("Automatic failover", "failover", status=failover),
+                MenuItem("Manage custom providers…", "custom"),
+                MenuItem("Manage API key…", "key"),
+                MenuItem("Back", "back"),
+            ],
+            title="Providers",
+            hint="↑↓ move   Enter select   Esc back",
+            initial="select",
+        )
+        if choice is None or choice == "back":
+            return
+        if choice == "select":
+            select_provider(ui, config)
+        elif choice == "test":
+            _test_connection(ui, config, config.provider)
+        elif choice == "list":
+            for label, status, model, key in provider_status_rows(config):
+                ui.print(f"  {label}  ·  {status}  ·  {model}  ·  {key}")
+        elif choice == "failover":
+            enabled = not bool(getattr(config, "auto_failover", False))
+            set_auto_failover(config, enabled, engine)
+            ui.success(f"Automatic provider failover {'enabled' if enabled else 'disabled'}.")
+        elif choice == "custom":
+            custom_providers_menu(ui, config)
+        elif choice == "key":
+            apikey_menu(ui, config)
+
+
 @command(
     "provider",
-    "Select the active provider (OpenRouter, Ollama, or a saved custom provider)",
+    "Select the active provider; /provider manage opens the provider screen",
 )
 def _provider_cmd(ctx: CommandContext, arg: str) -> CommandResult:
-    select_provider(ctx.ui, ctx.config, arg.strip())
+    command_arg = arg.strip()
+    lowered = command_arg.lower()
+    if lowered in ("manage", "menu"):
+        provider_manage_menu(ctx.ui, ctx.config, ctx.engine)
+        return CommandResult()
+    if lowered == "list":
+        for label, status, model, key in provider_status_rows(ctx.config):
+            ctx.ui.print(f"  {label}  ·  {status}  ·  {model}  ·  {key}")
+        return CommandResult()
+    if lowered == "test":
+        _test_connection(ctx.ui, ctx.config, ctx.config.provider)
+        return CommandResult()
+    if lowered.startswith(("failover", "fallback")):
+        rest = command_arg.split(maxsplit=1)
+        value = rest[1].strip().lower() if len(rest) > 1 else ""
+        enabled = (
+            True if value in ("on", "enable", "true", "1")
+            else False if value in ("off", "disable", "false", "0")
+            else not bool(getattr(ctx.config, "auto_failover", False))
+        )
+        set_auto_failover(ctx.config, enabled, ctx.engine)
+        ctx.ui.success(
+            f"Automatic provider failover {'enabled' if enabled else 'disabled'}."
+        )
+        return CommandResult()
+    select_provider(ctx.ui, ctx.config, command_arg)
     return CommandResult()
 
 

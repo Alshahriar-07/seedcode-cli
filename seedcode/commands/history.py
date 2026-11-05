@@ -26,6 +26,7 @@ _SETTINGS = {
     "username": str,
     "stream": bool,
     "ollama_host": str,
+    "ollama_num_ctx": int,
     "max_tokens": int,
 }
 
@@ -108,6 +109,8 @@ def _config(ctx: CommandContext, arg: str) -> CommandResult:
         table.add_row(f"{provider.label} model", saved_model or "(none)")
     table.add_row("", "")
     table.add_row("Ollama host", ctx.config.ollama_host)
+    table.add_row("Ollama context", str(ctx.config.ollama_num_ctx))
+    table.add_row("Ollama keep-alive", ctx.config.ollama_keep_alive)
     table.add_row("Theme", ctx.config.theme)
     table.add_row("Username", ctx.config.username)
     table.add_row("Streaming", "on" if ctx.config.stream else "off")
@@ -343,6 +346,13 @@ def settings_menu(ui, config) -> None:
                             ui, config, "ollama_host", config.ollama_host
                         ),
                         status_fn=lambda: config.ollama_host,
+                    ),
+                    TreeNode(
+                        "Ollama Context",
+                        action=lambda: _edit_text_setting(
+                            ui, config, "ollama_num_ctx", str(config.ollama_num_ctx)
+                        ),
+                        status_fn=lambda: str(config.ollama_num_ctx),
                     ),
                     TreeNode("Permission Mode",
                              action=lambda: _choose_permission(ui, config),

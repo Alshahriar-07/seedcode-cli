@@ -79,27 +79,27 @@ STATUS_LABELS: dict[Status, str] = {
     Status.CANCELLED: "Cancelled",
 }
 
-#: The glyph for each status (Unicode; the header falls back to ASCII itself).
+#: Monochrome terminal-safe status marks.
 STATUS_MARKS: dict[Status, str] = {
-    Status.READY: "\u25cf",       # ●
-    Status.INITIALIZING: "\u25cc",  # ◌
-    Status.THINKING: "\u25cc",    # ◌
-    Status.WORKING: "\u25cc",     # ◌
-    Status.EXECUTING: "\u25cf",   # ●
-    Status.WAITING: "\u25cc",     # ◌
-    Status.COMPLETED: "\u2713",   # ✓
-    Status.ERROR: "\u26a0",       # ⚠
-    Status.CANCELLED: "\u25a0",   # ■
+    Status.READY: "+",
+    Status.INITIALIZING: ".",
+    Status.THINKING: ".",
+    Status.WORKING: ".",
+    Status.EXECUTING: ">",
+    Status.WAITING: "...",
+    Status.COMPLETED: "+",
+    Status.ERROR: "!",
+    Status.CANCELLED: "x",
 }
 
 #: ASCII fallbacks for consoles that cannot draw the glyphs.
 STATUS_MARKS_ASCII: dict[Status, str] = {
-    Status.READY: "*",
-    Status.INITIALIZING: "o",
-    Status.THINKING: "o",
-    Status.WORKING: "o",
-    Status.EXECUTING: "*",
-    Status.WAITING: "?",
+    Status.READY: "+",
+    Status.INITIALIZING: ".",
+    Status.THINKING: ".",
+    Status.WORKING: ".",
+    Status.EXECUTING: ">",
+    Status.WAITING: "...",
     Status.COMPLETED: "+",
     Status.ERROR: "!",
     Status.CANCELLED: "=",
@@ -142,7 +142,7 @@ def _role_style(role: str, *, bold: bool = False) -> str:
 
 
 def status_fragment(status: Status, *, legacy: bool = False) -> tuple[str, str]:
-    """``(style, "◉ Working")`` for the header's status cell."""
+    """``(style, "> Working")`` for the status cell."""
     marks = STATUS_MARKS_ASCII if legacy else STATUS_MARKS
     mark = marks.get(status, "?")
     return _role_style(status_role(status)), f"{mark} {STATUS_LABELS.get(status, str(status))}"
@@ -174,9 +174,16 @@ class AppState:
     api_key: str = ""  # always the masked form; the real key never enters here
     key_required: bool = False
     context_limit: int = 0
+    #: Real tokens currently held in the agent transcript (estimated from the
+    #: messages actually sent). 0 before the first turn.
+    context_used: int = 0
     connection: str = ""
     operation: str = ""
     agent_state: str = ""
+    #: The model's reasoning level / effort when the configuration exposes
+    #: one (``high``, ``medium``, …). Empty when it does not — the composer
+    #: simply omits it rather than inventing a level.
+    reasoning: str = ""
     #: True while a mode change is being prepared on a background worker. The
     #: UI is never blocked by it — this only says the work is still going on.
     agent_initializing: bool = False
@@ -474,9 +481,9 @@ class AppState:
         self._notify()
 
     def toggle_thinking(self) -> None:
-        """User action (Ctrl+B): collapse / expand the thinking panel."""
+        """User action (Ctrl+B): collapse / expand the activity panel."""
         with self._lock:
-            if self.thinking_text:
+            if self.activities or self.thinking_text or self.briefing.active:
                 self.thinking_open = not self.thinking_open
                 if self.thinking_open:
                     self.thinking_offset = 0
@@ -553,7 +560,14 @@ class AppState:
         if workspace is not None:
             fields["workspace"] = workspace
         try:
-            fields["context_limit"] = int(config.effective_max_tokens())
+            if provider_id == "ollama" and int(
+                getattr(config, "ollama_num_ctx", 0) or 0
+            ) > 0:
+                # The real context window requested from Ollama, not the
+                # output-token budget (which is a different limit).
+                fields["context_limit"] = int(config.ollama_num_ctx)
+            else:
+                fields["context_limit"] = int(config.effective_max_tokens())
         except Exception:
             fields["context_limit"] = int(getattr(config, "max_tokens", 0) or 0)
         self.update(**fields)

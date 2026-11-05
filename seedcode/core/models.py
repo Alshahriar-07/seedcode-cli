@@ -236,13 +236,49 @@ class AppConfig(BaseModel):
     providers: dict[str, ProviderConfig] = Field(default_factory=_default_providers)
     #: User-defined OpenAI-compatible providers (unbounded count), v7.2.5.
     custom_providers: list[CustomProviderConfig] = Field(default_factory=list)
+    recent_workspaces: list[str] = Field(default_factory=list)
+    agent_profile: str = "build"
     ollama_host: str = "http://localhost:11434"
-    theme: str = "seed"
+    # Keep the model resident between turns. A short keep-alive unloads the
+    # model mid-session, adding a slow reload (and a timeout risk) to the next
+    # request; 30 minutes matches an active coding session.
+    ollama_keep_alive: str = "30m"
+    # Context window requested from Ollama. Setting it explicitly stops a
+    # low default (commonly 2048) from silently truncating long agent history.
+    # 0 leaves Ollama's per-model default untouched.
+    ollama_num_ctx: int = 16384
+    ollama_options: dict[str, Any] = Field(default_factory=dict)
+    theme: str = "dark-gradient"
     username: str = "You"
     stream: bool = True
+    #: Maximum idle time between chunks from a provider stream, in seconds.
+    stream_idle_timeout: float = Field(default=120.0, ge=1.0, le=1800.0)
     # Completion-token budget for chat requests. Users may override in
     # config.json; the value is clamped before every request.
     max_tokens: int = DEFAULT_MAX_TOKENS
+    # --- v10.2.0: model-aware execution ------------------------------------
+    #: Execution profile selection. "auto" resolves from the model's metadata
+    #: (local models with a declared small parameter size get the compact
+    #: profile); an explicit value pins it for every model.
+    #: Stored as a plain string so an older/unknown value can never make the
+    #: whole configuration fail to load; unknown values resolve to "auto".
+    prompt_profile: str = "auto"
+    #: Optional per-model profile overrides: ``{"qwen3:4b": "small"}`` (exact
+    #: name or fnmatch glob). User configuration always beats auto-detection.
+    model_profiles: dict[str, str] = Field(default_factory=dict)
+    #: Extra execution limits (0 = the active profile's own values).
+    max_agent_steps: int = 0
+    max_tool_calls_per_step: int = 0
+    #: Resume an output that stopped at the model's token limit. Off restores
+    #: the old one-shot behaviour.
+    continue_truncated: bool = True
+    #: Model failover candidates, tried in order when the active model fails
+    #: for a transient reason (same provider, same task, same history).
+    fallback_models: list[str] = Field(default_factory=list)
+    #: v10.2.0 privacy gate: a local (Ollama) session is never silently moved
+    #: to a cloud provider. Crossing that boundary requires this explicit
+    #: opt-in; automatic failover cannot override it.
+    allow_local_to_cloud: bool = False
     # v9.2.0: the single unified agent runtime. The old chat/code/agent mode
     # field is retired; every legacy spelling ("chat", "code", "assist") is
     # normalised to "agent" on load so an old config never fails to load and
@@ -639,6 +675,18 @@ class AppConfig(BaseModel):
             max_tokens = AGENT_MAX_TOKENS
         if self.model.endswith(":free"):
             max_tokens = min(max_tokens, DEFAULT_MAX_TOKENS)
+        # v10.2.0: a small-model profile adds its own output ceiling so a tiny
+        # local model is never asked for more than its context can hold. The
+        # import is lazy: model_profiles reads provider metadata at call time,
+        # which would be circular at module-import time.
+        try:
+            from .model_profiles import output_token_cap
+
+            cap = output_token_cap(self)
+            if cap:
+                max_tokens = min(max_tokens, cap)
+        except Exception:
+            pass
         return max_tokens
 
     def masked_key(self, provider_id: str | None = None) -> str:

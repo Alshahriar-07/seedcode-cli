@@ -14,6 +14,7 @@ The thinking panel shows ONLY what the model itself exposes (Ollama's
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -60,12 +61,17 @@ class _FakeStreamResponse:
 class _FakeHttp:
     """Stand-in for ``seedcode.core.http`` (post + a streaming context)."""
 
-    def __init__(self, show_response=None, chat_lines=None, chat_status: int = 200) -> None:
+    def __init__(
+        self, show_response=None, chat_lines=None, chat_status: int = 200,
+        chat_body: bytes = b"",
+    ) -> None:
         self.show_response = show_response
         self.chat_lines = chat_lines or []
         self.chat_status = chat_status
+        self.chat_body = chat_body
         self.show_payloads: list[dict] = []
         self.chat_payloads: list[dict] = []
+        self.chat_timeouts = []
         self.calls = 0
 
     def post(self, url, json=None, timeout=None):
@@ -76,10 +82,13 @@ class _FakeHttp:
 
     def stream(self, method, url, json=None, timeout=None):
         self.chat_payloads.append(json or {})
+        self.chat_timeouts.append(timeout)
 
         class _Ctx:
             def __enter__(self_inner):
-                return _FakeStreamResponse(self.chat_status, self.chat_lines)
+                return _FakeStreamResponse(
+                    self.chat_status, self.chat_lines, self.chat_body
+                )
 
             def __exit__(self_inner, *exc):
                 return False
@@ -91,6 +100,7 @@ class _FakeHttp:
 def ollama_mod(monkeypatch):
     module = providers_mod.ollama
     monkeypatch.setattr(module, "_thinking_cache", {}, raising=False)
+    monkeypatch.setattr(module, "_capability_cache", {}, raising=False)
     return module
 
 
@@ -163,6 +173,117 @@ def test_ollama_stream_yields_thinking_and_text_separately(ollama_mod, monkeypat
     assert not any(isinstance(e, ToolCallEvent) for e in events)
 
 
+def test_ollama_rejects_a_stream_that_ends_without_done(ollama_mod, monkeypatch):
+    from seedcode.core.models import AppConfig
+    from seedcode.core.providers.base import ProviderError
+
+    http = _FakeHttp(chat_lines=['{"message": {"content": "partial"}, "done": false}'])
+    monkeypatch.setattr(ollama_mod, "pooled_http", http)
+    config = AppConfig(provider="ollama", model="partial-model")
+    config.ollama_host = "http://127.0.0.1:11434"
+
+    with pytest.raises(ProviderError, match="ended before completion"):
+        list(ollama_mod.OllamaProvider().stream_chat_with_tools(config, _messages(), []))
+
+
+def test_ollama_marks_explicit_native_tool_rejection_for_text_fallback(
+    ollama_mod, monkeypatch
+):
+    from seedcode.core.models import AppConfig
+    from seedcode.core.providers.base import ProviderError
+
+    http = _FakeHttp(chat_status=400, chat_body=b"model does not support tools")
+    monkeypatch.setattr(ollama_mod, "pooled_http", http)
+    config = AppConfig(provider="ollama", model="plain-model")
+    config.ollama_host = "http://127.0.0.1:11434"
+
+    with pytest.raises(ProviderError) as error:
+        list(ollama_mod.OllamaProvider().stream_chat_with_tools(config, _messages(), []))
+    assert error.value.fallback_to_text is True
+
+
+def test_ollama_uses_configured_stream_idle_timeout(ollama_mod, monkeypatch):
+    from seedcode.core.models import AppConfig
+
+    http = _FakeHttp(chat_lines=['{"message": {"content": "ok"}, "done": true}'])
+    monkeypatch.setattr(ollama_mod, "pooled_http", http)
+    config = AppConfig(
+        provider="ollama", model="plain-model", stream_idle_timeout=17.0
+    )
+    config.ollama_host = "http://127.0.0.1:11434"
+
+    list(ollama_mod.OllamaProvider().stream_chat(config, _messages()))
+    assert http.chat_timeouts[0].read == 17.0
+    assert http.chat_payloads[0]["options"]["num_predict"] == config.effective_max_tokens()
+    assert http.chat_payloads[0]["keep_alive"] == config.ollama_keep_alive
+
+
+def test_ollama_model_capabilities_come_from_show_api(ollama_mod, monkeypatch):
+    from seedcode.core.models import AppConfig
+
+    show = type(
+        "R",
+        (),
+        {"status_code": 200, "json": lambda self: {"capabilities": ["completion", "tools"]}},
+    )()
+    http = _FakeHttp(show_response=show)
+    monkeypatch.setattr(ollama_mod, "pooled_http", http)
+    config = AppConfig(provider="ollama", model="small-model")
+    config.ollama_host = "http://127.0.0.1:11434"
+
+    assert ollama_mod.OllamaProvider().model_capabilities(config, "small-model") == [
+        "completion",
+        "tools",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("arguments", "expected", "error"),
+    [
+        ('{"path":"a.py"}', {"path": "a.py"}, ""),
+        ("{", {}, "incomplete tool-call JSON"),
+    ],
+)
+def test_ollama_normalizes_string_tool_arguments(
+    ollama_mod, monkeypatch, arguments, expected, error
+):
+    from seedcode.core.models import AppConfig
+    from seedcode.core.providers.base import ToolCallEvent
+
+    line = json.dumps(
+        {
+            "message": {
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "read_file",
+                            "arguments": arguments,
+                        }
+                    }
+                ]
+            },
+            "done": True,
+        }
+    )
+    http = _FakeHttp(chat_lines=[line])
+    monkeypatch.setattr(ollama_mod, "pooled_http", http)
+    config = AppConfig(provider="ollama", model="plain-model")
+    config.ollama_host = "http://127.0.0.1:11434"
+
+    calls = [
+        event
+        for event in ollama_mod.OllamaProvider().stream_chat_with_tools(
+            config, _messages(), []
+        )
+        if isinstance(event, ToolCallEvent)
+    ]
+    assert calls[0].arguments == expected
+    if error:
+        assert error in calls[0].error
+    else:
+        assert not calls[0].error
+
+
 def test_ollama_rejected_think_degrades_gracefully(ollama_mod, monkeypatch):
     from seedcode.core.models import AppConfig
     from seedcode.core.providers.base import ProviderError
@@ -210,7 +331,7 @@ def test_ollama_rejected_think_degrades_gracefully(ollama_mod, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Agent: ThinkingDelta is relayed as its own event kind
+# Agent: private ThinkingDelta content is not relayed to UI observers
 # ---------------------------------------------------------------------------
 def _relay_engine(tmp_path: Path, events: list) -> AgentEngine:
     config = AppConfig(provider="openrouter", model="test/model", agent_mode=True)
@@ -220,7 +341,7 @@ def _relay_engine(tmp_path: Path, events: list) -> AgentEngine:
     return engine
 
 
-def test_native_step_relays_thinking_but_not_as_answer(tmp_path: Path) -> None:
+def test_native_step_relays_real_reasoning_to_the_reasoning_channel(tmp_path: Path) -> None:
     from seedcode.core.providers.base import TextDelta
 
     events: list[tuple[str, str]] = []
@@ -241,18 +362,20 @@ def test_native_step_relays_thinking_but_not_as_answer(tmp_path: Path) -> None:
     outcome, reply = engine._native_step(0)
 
     assert outcome == "final" and reply == "Done: patched the dispatcher."
-    thinking_events = [d for k, d in events if k == "thinking"]
-    assert thinking_events == [
-        "read the module layout first",
-        "then patch the dispatcher",
-    ]
-    assert all(d not in (reply or "") for d in thinking_events)
+    # Reasoning is relayed as its own event kind, in order and unmodified…
+    relayed = "".join(detail for kind, detail in events if kind == "thinking")
+    assert relayed == "read the module layout firstthen patch the dispatcher"
+    # …and never leaks into the answer text.
+    assert all(
+        text not in (reply or "")
+        for text in ("read the module layout first", "then patch the dispatcher")
+    )
 
 
 # ---------------------------------------------------------------------------
 # Presenter + AppState thinking buffer
 # ---------------------------------------------------------------------------
-def test_presenter_streams_thinking_into_the_tui_state() -> None:
+def test_presenter_streams_reasoning_into_the_tui_state() -> None:
     state = AppState()
     tui = ChatTUI(state, width=80, height=24)
 
@@ -264,9 +387,22 @@ def test_presenter_streams_thinking_into_the_tui_state() -> None:
     presenter.on_event("thinking", "checking the registry")
     presenter.on_event("thinking", "\nthen the dispatcher")
 
-    assert "checking the registry" in state.thinking_text
-    assert "then the dispatcher" in state.thinking_text
+    # Chunks append in arrival order, and reasoning never becomes an activity.
+    assert state.thinking_text == "checking the registry\nthen the dispatcher"
+    assert state.reasoning_seen is True
+    assert not state.activities
     assert state.thinking_open is True
+
+
+def test_no_reasoning_means_no_thinking_panel() -> None:
+    """A thinking turn with no real delta renders no Thinking container."""
+    state = AppState()
+    tui = ChatTUI(state, width=80, height=24)
+    tui.start_thinking("Thinking")
+    try:
+        assert tui._thinking_fragments(80, 8) == []
+    finally:
+        tui.stop_thinking()
 
 
 def test_thinking_buffer_stays_bounded_and_follows_the_bottom() -> None:

@@ -235,7 +235,7 @@ def test_a_model_without_a_reasoning_channel_produces_no_thinking() -> None:
 # version consistency
 # ---------------------------------------------------------------------------
 def test_version_agrees_in_every_consumer() -> None:
-    assert __version__ == "9.3.2"
+    assert __version__ == "10.2.1"
 
     npm = json.loads((ROOT / "npm" / "package.json").read_text(encoding="utf-8"))
     assert npm["version"] == __version__

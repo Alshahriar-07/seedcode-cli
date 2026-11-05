@@ -7,6 +7,7 @@ event, and nothing may be simulated for the tests.
 
 from __future__ import annotations
 
+import re
 import types
 
 from seedcode.app import _TaskPresenter
@@ -411,22 +412,26 @@ def test_tui_plan_lines_without_a_session_are_silent() -> None:
 def test_thinking_indicator_shows_live_elapsed_time() -> None:
     import time as _time
 
+    # The strip exists only with real reasoning; the clock is the request clock.
     tui = _tui()
+    tui.state.append_thinking("checking the project layout")
     tui.start_thinking("Analyzing the project")
     try:
-        first = plain_text(tui.buffer.lines())
+        first = plain_text(tui._thinking_fragments(tui._width, 8))
     finally:
         tui.stop_thinking()
-    assert "Analyzing the project" in first and "\u00b7 0s" in first
+    assert "Thinking \u00b7 0.0s" in first
+    assert "checking the project layout" in first
     # Higher resolution: the counter tracks the real elapsed time.
+    tui.state.append_thinking("\nand the dispatcher")
     tui.start_thinking("Thinking")
     try:
         _time.sleep(1.1)
         with tui._think_lock:
             tui._think_index = 3  # force a repaint of the frame
             tui._render_thinking()
-        line = plain_text(tui.buffer.lines())
-        assert "\u00b7 1s" in line
+        line = plain_text(tui._thinking_fragments(tui._width, 8))
+        assert re.search(r"\u00b7 1\.\d+s", line)
     finally:
         tui.stop_thinking()
 

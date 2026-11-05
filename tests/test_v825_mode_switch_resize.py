@@ -494,11 +494,15 @@ class TestResizeResponsiveness:
         buffer = io.StringIO()
         output = _ResizablePlainOutput(buffer, rows=6, columns=40)
         with _session(rows=6, columns=40, output=output) as (tui, pipe, _out):
+            tui._input.text = "prompt"
             _schedule(pipe, [(0.25, "\x04")])
             assert tui.run_once() == ("exit", None)
         rendered = buffer.getvalue()
         assert "Window too small" not in rendered
-        assert "Message" in rendered  # the composer's frame is on screen
+        assert "prompt" in rendered
+        # Minimal footer: hints only — there is no "Ready" dashboard row.
+        assert "tab agents" in rendered
+        assert "Ready" not in rendered
 
     def test_a_large_terminal_uses_the_extra_space(self) -> None:
         with _session(rows=50, columns=200) as (tui, _pipe, _out):
@@ -557,19 +561,17 @@ class TestResizeResponsiveness:
         with _session() as (tui, _pipe, _out):
             app = tui._build_app()
             root = app.layout.container
-            # The top level carries exactly the regions, in order (v9.2.0: the
-            # slash-autocomplete row and the content/plan side-by-side pair;
-            # v9.3.2: the compact thinking strip directly above the composer).
+            # The top level carries one full-width conversation and a compact
+            # activity/composer/workspace/footer stack.
             children = root.get_children()
-            pair = children[1]  # the content|plan side-by-side container
-            assert pair.get_children() == [tui._content_window, tui._plan_window]
             assert children == [
                 tui._header_window,
-                pair,
+                tui._content_window,
                 tui._autocomplete_window,
                 tui._permission_window,
                 tui._thinking_window,
-                root.get_children()[5],  # the composer frame
+                children[5],  # the composer
+                tui._workspace_window,
                 tui._hint_window,
             ]
             nodes = list(_walk_tree(root))
@@ -577,9 +579,9 @@ class TestResizeResponsiveness:
                 tui._header_window,
                 tui._thinking_window,
                 tui._content_window,
-                tui._plan_window,
                 tui._input_window,
                 tui._permission_window,
+                tui._workspace_window,
                 tui._hint_window,
             ):
                 assert sum(1 for node in nodes if node is widget) == 1

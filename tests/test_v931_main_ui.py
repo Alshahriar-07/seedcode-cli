@@ -146,8 +146,8 @@ def test_tree_panel_renders_nesting_arrows_and_blocked_state() -> None:
         ("blocked", "Restore the TODO panel", 1, 3, False),
     ]
     lines = taskpanel.tree_panel_lines(rows, width=40, percent=50)
-    assert lines[0].startswith("▼ ● Improve Main Terminal UI")
-    assert lines[1].startswith("  ✓ Inspect the TUI architecture")
+    assert lines[0].startswith("- [>] Improve Main Terminal UI")
+    assert lines[1].startswith("  [+] Inspect the TUI architecture")
     assert lines[2].startswith("  ◷ Restore the TODO panel")
     # Only the leaves are counted (the parent is the summary row).
     assert lines[3] == "Progress: 50% (1 / 2 completed)"
@@ -155,8 +155,8 @@ def test_tree_panel_renders_nesting_arrows_and_blocked_state() -> None:
 
 def test_tree_panel_marks_collapsed_containers() -> None:
     rows = [("pending", "Parent", 0, 7, True)]
-    assert taskpanel.tree_panel_lines(rows, 30, collapsed={7})[0].startswith("▶")
-    assert taskpanel.tree_panel_lines(rows, 30)[0].startswith("▼")
+    assert taskpanel.tree_panel_lines(rows, 30, collapsed={7})[0].startswith("+")
+    assert taskpanel.tree_panel_lines(rows, 30)[0].startswith("-")
 
 
 def test_tree_panel_clips_and_hides_empty_plans() -> None:
@@ -241,8 +241,8 @@ def test_todo_panel_renders_the_hierarchy_on_the_right() -> None:
     tui = _tui()
     _nested_state(tui)
     text = _plain(tui._plan_fragments(34, tui._plan_height()))
-    assert "▼" in text and "Improve Main Terminal UI" in text
-    assert "  ○ Inspect the TUI architecture" in text
+    assert "- [>]" in text and "Improve Main Terminal UI" in text
+    assert "[ ] Inspect the TUI architecture" in text
     assert "Progress: 0% (0 / 3 completed)" in text
     # The panel keeps a real width beside the chat, never replaces it.
     assert 0 < calculated_plan_width(tui.state.plan_nodes, 100) <= 34
@@ -253,7 +253,7 @@ def test_collapsed_todo_tree_still_shows_the_parent_and_progress() -> None:
     graph = _nested_state(tui)
     tui.state.toggle_plan_collapse(graph.tasks[0].id)
     text = _plain(tui._plan_fragments(34, tui._plan_height()))
-    assert "▶" in text
+    assert "+ [ ]" in text
     assert "Inspect the TUI architecture" not in text
     assert "Progress:" in text
 
@@ -276,25 +276,30 @@ def test_the_thinking_strip_sits_directly_above_the_composer() -> None:
     root = app.layout.container
     children = list(root.children)
     thinking_index = children.index(tui._thinking_window)
-    # The composer (Frame) is the very next region; the hint row follows it.
-    assert thinking_index == len(children) - 3
-    assert children[thinking_index + 2] is tui._hint_window
+    # Composer, workspace status, and footer follow in that order.
+    assert thinking_index == len(children) - 4
+    assert children[thinking_index + 2] is tui._workspace_window
+    assert children[thinking_index + 3] is tui._hint_window
 
 
 def test_the_thinking_strip_is_compact_and_shows_no_model_metadata() -> None:
     tui = _tui()
     tui.state.update(provider="OpenRouter", model="DeepSeek V4.1 Flash")
     tui.state.set_briefing(active=True, status="Executing", activity="Editing app.py")
-    tui.state.append_thinking("Checking the composer layout first...\n")
+    tui.state.add_activity("action", "Checking the composer layout")
+    tui.state.append_thinking("The user asked for a compact composer.")
     tui._reallocate_rows()
     rows = tui._thinking_height()
-    assert 0 < rows <= 6  # compact: never a large dedicated dashboard
+    assert 0 < rows <= 8  # bounded: never a large dedicated dashboard
     assert tui.min_layout_rows() + 1 <= tui._rows
     text = _plain(tui._thinking_fragments(tui._width, rows))
-    assert "Thinking..." in text
-    assert "Checking the composer layout first..." in text
+    assert "Thinking" in text
+    assert "The user asked for a compact composer." in text
+    # Tool activity and execution status are not reasoning.
+    assert "Editing app.py" not in text
+    assert "Checking the composer layout" not in text
     assert "DeepSeek" not in text and "OpenRouter" not in text
-    assert "Executing" not in text  # execution status stays in backend state
+    assert "Executing" not in text
 
 
 def test_the_thinking_strip_hides_when_empty_and_short_terminals_stay_usable() -> None:

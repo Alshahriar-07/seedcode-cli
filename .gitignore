@@ -33,6 +33,7 @@ htmlcov/
 *.exe
 seedcode-cli-setup.exe
 SeedCode-CLI-v9.3.1-Update-Plan/
+x.bat
 # Volatile outputs of scripts/windows/build_assets.py (regenerated every
 # build). The stable brand assets (seedcode.ico, wizard*.bmp) STAY committed:
 # tests and manual ISCC compiles depend on them existing in the repo.
@@ -102,3 +103,6 @@ WEBSITE/
 # NOTE: docs/reports/*.md, *.txt and *.docx are committed release documents
 # (see docs/reports/), so they are deliberately NOT ignored.
 OPENCODE/
+vsce/
+node_modules/
+seedcode/tui-next/

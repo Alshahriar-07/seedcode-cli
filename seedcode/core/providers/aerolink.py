@@ -19,6 +19,7 @@ import httpx
 
 from .. import http as pooled_http
 from .base import (
+    FinishEvent,
     ModelInfo,
     Provider,
     ProviderError,
@@ -27,6 +28,7 @@ from .base import (
     ToolCallEvent,
     ToolSpec,
     ValidationResult,
+    stream_timeout,
 )
 
 if TYPE_CHECKING:
@@ -155,7 +157,7 @@ class AeroLinkProvider(Provider):
                 f"{_BASE_URL}/v1/messages",
                 headers=_headers(config.get_api_key("aerolink")),
                 json=payload,
-                timeout=_TIMEOUT,
+                timeout=stream_timeout(config),
             ) as response:
                 if response.status_code in (401, 403):
                     raise ProviderError(
@@ -271,6 +273,10 @@ def _iter_sse_events(response: httpx.Response) -> Iterator[StreamEvent]:
                         id=slot["id"], name=slot["name"], arguments={},
                         error=f"Tool call arguments were not valid JSON: {exc}",
                     )
+        elif kind == "message_delta":
+            reason = str((event.get("delta") or {}).get("stop_reason") or "")
+            if reason in ("max_tokens", "length"):
+                yield FinishEvent(reason)
         elif kind == "error":
             message = (event.get("error") or {}).get("message", "Unknown AeroLink error.")
             raise ProviderError(f"AeroLink error: {message}")

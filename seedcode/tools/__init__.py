@@ -28,7 +28,16 @@ from .permissions import (
 
 # Import tool modules for their registration side effects (same pattern as
 # seedcode.commands): each module's @register calls populate TOOL_REGISTRY.
-from . import filesystem, git, patch, search, terminal, web  # noqa: E402,F401
+from . import (  # noqa: E402,F401
+    filesystem,
+    git,
+    patch,
+    search,
+    skills,
+    task_state,
+    terminal,
+    web,
+)
 
 # v9.2.1: the equivalent tool names the agent contract promises, registered as
 # exact aliases of their real implementation (runner, schema and mutation flag

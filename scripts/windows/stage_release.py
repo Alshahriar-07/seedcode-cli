@@ -70,7 +70,7 @@ def main() -> int:
         print(f"[ERROR] Installer missing or empty: {installer}")
         return 2
 
-    release_dir = dist / "release" / version
+    release_dir = dist / "release" / f"v{version}"
     release_dir.mkdir(parents=True, exist_ok=True)
 
     staged: list[Path] = []

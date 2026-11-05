@@ -74,6 +74,10 @@ async function main() {
   const child = spawn(binaryPath, process.argv.slice(2), {
     stdio: "inherit",
     windowsHide: false,
+    env: {
+      ...process.env,
+      SEEDCODE_TUI_SCRIPT: path.resolve(__dirname, "../tui/dist/index.cjs"),
+    },
   });
   child.on("error", (err) =>
     fail(`failed to launch ${path.basename(binaryPath)}: ${err.message}`)

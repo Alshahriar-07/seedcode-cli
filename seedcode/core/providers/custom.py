@@ -22,8 +22,14 @@ from typing import TYPE_CHECKING, Any
 import httpx
 
 from .. import http as pooled_http
-from .base import ModelInfo, ProviderError, ValidationResult
-from .openrouter import _CHAT_TIMEOUT, _TIMEOUT, OpenRouterProvider
+from .base import (
+    ModelInfo,
+    ProviderError,
+    ValidationResult,
+    stream_idle_timeout,
+    stream_timeout,
+)
+from .openrouter import _TIMEOUT, OpenRouterProvider
 
 if TYPE_CHECKING:
     from ..models import AppConfig, CustomProviderConfig
@@ -144,12 +150,12 @@ class CustomProvider(OpenRouterProvider):
         from openai import OpenAI
 
         api_key = config.get_api_key(self.id).strip() or "seedcode-custom"
-        cache_key = f"{api_key}|{self.base_url}"
+        cache_key = f"{api_key}|{self.base_url}|{stream_idle_timeout(config)}"
         if self._client is None or self._client_key != cache_key:
             self._client = OpenAI(
                 api_key=api_key,
                 base_url=self.base_url,
-                timeout=_CHAT_TIMEOUT,
+                timeout=stream_timeout(config),
                 max_retries=0,  # the engine owns retry policy
             )
             self._client_key = cache_key

@@ -18,6 +18,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from typing import Any
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.key_binding import KeyBindings
@@ -261,6 +262,13 @@ class _TaskPresenter:
         # This turn's observed operations (the final report's data). Every
         # entry comes from a real structured event, never from the model.
         self._turn_ops = self._fresh_turn()
+        # v10.5.0 live answer stream: opened on the first token delta and
+        # closed by _handle_agent. ``_streamed`` is the text already on screen,
+        # so the final answer is never printed a second time.
+        self._stream_cm: Any = None
+        self._stream_renderer: Any = None
+        self._stream_started = False
+        self._streamed = ""
 
     # --- live status (persistent TUI only) ----------------------------------
     def _set_status(self, status: Status, operation: str | None = None) -> None:
@@ -339,6 +347,73 @@ class _TaskPresenter:
             )
         self._echo_lines += 1
 
+    # --- live answer streaming (v10.5.0) -------------------------------------
+    def begin_turn(self) -> None:
+        """Close any stale stream and start this turn with a clean preview."""
+        self.finish_stream()
+        self._streamed = ""
+
+    def on_delta(self, text: str) -> None:
+        """Paint one real model token delta into the live answer block.
+
+        The stream is opened lazily, on the first token, so a turn that only
+        calls tools never flashes an empty answer area. A plain Rich task flow
+        owns the screen for its whole turn, so it is left alone.
+        """
+        if not text or self.flow is not None:
+            return
+        if not self._stream_started:
+            streaming = getattr(self.ui, "streaming", None)
+            if not callable(streaming):
+                return
+            try:
+                self._stream_cm = streaming()
+                self._stream_renderer = self._stream_cm.__enter__()
+            except Exception:
+                self._stream_cm = None
+                self._stream_renderer = None
+                return
+            self._stream_started = True
+        try:
+            self._stream_renderer.feed(text)
+            self._streamed += text
+        except Exception:
+            pass  # display must never end the turn
+
+    def discard_stream(self) -> None:
+        """Clear streamed preview text that turned out not to be the answer."""
+        self._streamed = ""
+        renderer = self._stream_renderer
+        if renderer is None:
+            return
+        reset = getattr(renderer, "reset", None)
+        try:
+            if callable(reset):
+                reset()
+        except Exception:
+            pass
+
+    def finish_stream(self) -> None:
+        """Commit (or discard) the live preview and close its display."""
+        cm = self._stream_cm
+        renderer = self._stream_renderer
+        self._stream_cm = None
+        self._stream_renderer = None
+        self._stream_started = False
+        if cm is None:
+            return
+        try:
+            if renderer is not None:
+                renderer.flush()
+            cm.__exit__(None, None, None)
+        except Exception:
+            pass  # the turn outcome is decided elsewhere
+
+    @property
+    def streamed(self) -> bool:
+        """Whether the final answer is already on screen."""
+        return bool(self._streamed.strip())
+
     # --- turn operation tracking (the final report's data) -------------------
     @staticmethod
     def _fresh_turn() -> dict:
@@ -415,22 +490,65 @@ class _TaskPresenter:
 
     # --- narration (human-readable) -----------------------------------------
     def on_event(self, kind: str, detail: str) -> None:
+        if kind == "context":
+            # Real transcript size reported by the engine (estimated tokens).
+            state = getattr(self.ui, "state", None)
+            if state is None:
+                state = getattr(getattr(self.ui, "tui", None), "state", None)
+            try:
+                used = int(detail)
+            except (TypeError, ValueError):
+                return
+            if state is not None:
+                state.update(context_used=max(0, used))
+            return
+        if kind == "thinking":
+            # Real model reasoning, streamed. It goes to the reasoning buffer
+            # only — never the activity feed, never the answer text.
+            state = getattr(self.ui, "state", None)
+            if state is None:
+                # UI doubles and embedders may only expose the TUI handle.
+                state = getattr(getattr(self.ui, "tui", None), "state", None)
+            append = getattr(state, "append_thinking", None)
+            if callable(append):
+                append(detail)
+            return
+        if kind == "narration":
+            # Intermediate prose that accompanied a real tool call. It is never
+            # the answer: it only advances the plan in a rich task view, and is
+            # one muted line in the persistent TUI.
+            flow = self.flow
+            if flow is not None:
+                flow.observe_text(detail)
+                return
+            if getattr(self.ui, "is_tui", False):
+                self.ui.append_activity("note", detail)
+            else:
+                self.ui.dim(f"  {detail}")
+            return
         flow = self.flow
         if kind == "say" and flow is not None:
             flow.observe_text(detail)
             return
-        if kind == "thinking":
-            # v9.2.0: model-exposed reasoning (real provider channel only).
-            # Streams into the bounded thinking panel; ignored elsewhere.
-            tui = getattr(self.ui, "tui", None)
-            if tui is not None:
-                try:
-                    tui.state.append_thinking(detail)
-                except Exception:  # pragma: no cover - display-only
-                    pass
+        if kind in ("waiting_model", "model_response", "stream_completed"):
+            status, operation = {
+                "waiting_model": (Status.WAITING, "Waiting for model response"),
+                "model_response": (Status.WORKING, "Receiving model response"),
+                "stream_completed": (Status.WORKING, "Processing model response"),
+            }[kind]
+            self._set_status(status, operation)
+            self._brief(active=True, status=operation, activity=operation)
+            if getattr(self.ui, "is_tui", False):
+                self.ui.append_activity("action", operation)
+            return
+        if kind == "stream_failed":
+            self._set_status(Status.ERROR, "model request failed")
+            self._brief(active=True, status="Failed", error=detail or "Model request failed")
+            if getattr(self.ui, "is_tui", False):
+                self.ui.append_activity("error", detail or "Model request failed")
             return
         if kind == "error":
-            self.ui.dim(f"  ✖ {detail.splitlines()[0][:120]}")
+            self.ui.dim(f"  ERROR: {detail.splitlines()[0][:120]}")
             self._set_status(Status.ERROR, "an operation failed")
             self._brief(active=True, status="Error", error=detail.splitlines()[0][:200])
         elif kind == "switching_provider":
@@ -440,8 +558,17 @@ class _TaskPresenter:
             if flow is not None:
                 flow.set_activity("Switching provider")
             self._brief(active=True, status="Retrying", retry=f"Switching provider: {detail}")
+        elif kind == "switching_model":
+            if getattr(self.ui, "is_tui", False):
+                self.ui.append_activity("note", f"Switching model: {detail}")
+            self._set_status(Status.THINKING, "switching model")
+            self._brief(active=True, status="Retrying", retry=f"Switching model: {detail}")
         elif kind == "retry":
-            self.ui.dim(f"  {detail}")
+            if getattr(self.ui, "is_tui", False):
+                self.ui.append_activity("note", detail)
+            else:
+                self.ui.dim(f"  {detail}")
+            self._set_status(Status.WAITING, "retrying model request")
             self._brief(active=True, status="Retrying", retry=detail)
         elif kind == "limit":
             self.ui.warning(f"Agent Mode stopped: {detail}")
@@ -449,7 +576,7 @@ class _TaskPresenter:
             # With a task view on screen the step list already shows the tool
             # work; without one, narrate it (the plain/legacy experience).
             # The TUI renders the richer structured event instead.
-            self.ui.dim(f"  ⚒ {detail}")
+            self.ui.dim(f"  ACTION: {detail}")
             self._set_status(Status.EXECUTING, detail)
 
     # --- structured activity -> step states ---------------------------------
@@ -500,7 +627,7 @@ class _TaskPresenter:
         message = str(payload.get("message") or "")
         if phase == "task_started":
             self._turn_ops = self._fresh_turn()
-            append("note", "Analyzing the task and inspecting the workspace...")
+            append("action", "Analyzing the request")
             self._set_status(Status.THINKING, "analyzing the task")
             self._brief(
                 active=True,
@@ -517,6 +644,11 @@ class _TaskPresenter:
             # structured event is for event consumers, not a second echo.
             return
         if phase == "say":
+            text = str(payload.get("text") or "").strip()
+            if text:
+                append("note", text)
+            return
+        if phase == "narration":
             text = str(payload.get("text") or "").strip()
             if text:
                 append("note", text)
@@ -914,14 +1046,6 @@ def _handle_codemode(
     from .core.session import CodeSession, SessionStatus
 
     lc = lifecycle()
-    _thinking_state = getattr(getattr(ui, "tui", None), "state", None)
-    if _thinking_state is not None:
-        # A fresh reasoning window for this request (the buffer may keep the
-        # session's history across turns); accounting is per request.
-        try:
-            _thinking_state.begin_reasoning()
-        except Exception:  # pragma: no cover - display-only
-            pass
     workspace, store = _codemode_workspace()
     config = getattr(agent, "config", None)
     label = _task_mode_label(config) if config is not None else "Agent Mode"
@@ -960,15 +1084,6 @@ def _handle_codemode(
     finally:
         if presenter is not None:
             presenter.flow = None
-
-    # The request ended (a pause keeps its window open for /resume): when the
-    # model exposed no reasoning stream at all, the panel records the one
-    # honest line instead of an empty record.
-    if _thinking_state is not None and status is not SessionStatus.PAUSED:
-        try:
-            _thinking_state.finish_thinking()
-        except Exception:  # pragma: no cover - display-only
-            pass
 
     if session.store is not None and status is not SessionStatus.PAUSED:
         _save_codemode_summary(agent, text, session.reason or status.value)
@@ -1081,8 +1196,11 @@ def _handle_agent(
         _handle_codemode(ui, agent, history, text, presenter)
         return
 
-    # v9.2.0: a fresh bounded thinking panel for every turn, collapsed only
-    # when the parseable answer has been produced.
+    if presenter is not None:
+        presenter.begin_turn()
+
+    # Keep prior activity available for scroll/collapse; clear legacy hidden
+    # reasoning state without populating it from provider data.
     _tui = getattr(ui, "tui", None)
     if _tui is not None:
         try:
@@ -1091,9 +1209,9 @@ def _handle_agent(
             # by the strip itself; only the real phase is set here.
             _tui.state.set_briefing(
                 active=True,
-                status="Thinking",
+                status="Starting",
                 task=str(text or "").strip()[:160],
-                activity="Composing a reply",
+                activity="Starting agent task",
                 last_completed="",
                 next_action="",
                 retry="",
@@ -1134,14 +1252,13 @@ def _handle_agent(
         _log.exception("assist turn failed")
     finally:
         if presenter is not None:
+            if outcome != "completed":
+                # A partial/streamed answer is not a completed response.
+                presenter.discard_stream()
+            presenter.finish_stream()
             presenter.flow = None
 
     if outcome != "completed":
-        if _tui is not None:
-            try:
-                _tui.state.collapse_thinking()
-            except Exception:  # pragma: no cover - display-only
-                pass
         if reason:
             ui.error(reason)
         else:
@@ -1164,14 +1281,13 @@ def _handle_agent(
         # a time, and the answer deserves the full width.
         flow.stop()
     final = strip_tool_blocks(reply or "")
-    if _tui is not None:
-        try:
-            _tui.state.collapse_thinking()
-        except Exception:  # pragma: no cover - display-only
-            pass
+    already_streamed = presenter is not None and presenter.streamed
     if final.strip():
-        with ui.streaming() as renderer:
-            renderer.feed(final)
+        if not already_streamed:
+            # No live tokens arrived (a scripted/plain path): paint the answer
+            # once, exactly as before.
+            with ui.streaming() as renderer:
+                renderer.feed(final)
     else:
         ui.dim("(no response)")
     if flow is not None:
@@ -1215,7 +1331,20 @@ def _make_agent(
         permissions,
         on_event=presenter.on_event,
         on_step=presenter.on_step,
+        agent_id=config.agent_profile,
     )
+    # Wire live streaming after construction so a test double / alternate
+    # engine with the older signature still builds (attributes are optional).
+    try:
+        engine._on_delta = presenter.on_delta  # type: ignore[attr-defined]
+        engine._on_discard = presenter.discard_stream  # type: ignore[attr-defined]
+    except Exception:
+        pass
+    state = getattr(ui, "state", None) or getattr(
+        getattr(ui, "tui", None), "state", None
+    )
+    if state is not None:
+        state.update(agent_state=engine.profile.name)
     # Attached so /resume can continue a paused session with the same view.
     engine.presenter = presenter  # type: ignore[attr-defined]
     return engine
@@ -1549,6 +1678,12 @@ class _TuiController:
     # --- one turn (worker thread) ------------------------------------------
     def submit(self, text: str) -> None:
         """Run one user turn to completion (never raises into the TUI)."""
+        if not self.config.is_configured():
+            # The interface is fully usable for /connect, /provider and /help;
+            # only the model call needs a provider, so say exactly that.
+            self.ui.warning("No AI provider is connected.")
+            self.ui.dim("Run /connect to add one, then send your message again.")
+            return
         with lifecycle().task_span():
             # v9.2.0 unified engine: every request is one coding-agent turn;
             # the engine reads the request's intent itself.
@@ -1765,13 +1900,10 @@ def run_persistent(*, input_device=None, output_device=None) -> None:
     sync_custom_providers(config)
     set_active_theme(config.theme)
 
-    if not config.is_configured():
-        setup_ui = UI()
-        setup_ui.apply_theme(config.theme)
-        if not _guided_setup(setup_ui, config):
-            setup_ui.dim("Setup incomplete — a provider and a model are required.")
-            return
-
+    # v10.3.0: no blocking startup wizard. A first run opens the normal
+    # interface — the centred intro shows a single tip pointing at /connect —
+    # and an unconfigured session refuses a turn with a clear instruction
+    # instead of forcing the user through selectors before seeing the product.
     workspace = str(workspace_root())
     columns, rows = _terminal_size()
     state = AppState.from_config(config, workspace=workspace)

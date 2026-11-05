@@ -37,30 +37,30 @@ __all__ = [
 PANEL_TITLE = " TASK PLAN "
 
 # --- glyphs -------------------------------------------------------------------
-#: TaskState.value -> mark (matches the spec's ○ ● ✓ ✗ states).
+#: TaskState.value -> monochrome terminal marker.
 _GLYPHS: dict[str, str] = {
-    "pending": "○",
-    "running": "●",
-    "verifying": "●",
-    "recovering": "↻",
-    "blocked": "◷",
-    "failed": "✗",
-    "completed": "✓",
-    "skipped": "–",
-    "cancelled": "■",
+    "pending": "[ ]",
+    "running": "[>]",
+    "verifying": "[>]",
+    "recovering": "[~]",
+    "blocked": "[?]",
+    "failed": "[!]",
+    "completed": "[+]",
+    "skipped": "[-]",
+    "cancelled": "[x]",
 }
 
 #: ASCII fallbacks for legacy consoles.
 _GLYPHS_ASCII: dict[str, str] = {
-    "pending": "o",
-    "running": ">",
-    "verifying": ">",
-    "recovering": ">",
-    "blocked": ">",
-    "failed": "x",
-    "completed": "+",
-    "skipped": "-",
-    "cancelled": "=",
+    "pending": "[ ]",
+    "running": "[>]",
+    "verifying": "[>]",
+    "recovering": "[~]",
+    "blocked": "[?]",
+    "failed": "[!]",
+    "completed": "[+]",
+    "skipped": "[-]",
+    "cancelled": "[x]",
 }
 
 #: Palette role per state (resolved by the caller's stylesheet mapping).
@@ -79,7 +79,7 @@ _ROLE_BY_STATE: dict[str, str] = {
 
 def task_glyph(state: str, *, legacy: bool = False) -> str:
     """The checklist mark for one plan state (ASCII on legacy consoles)."""
-    return (_GLYPHS_ASCII if legacy else _GLYPHS).get(state or "", "○")
+    return (_GLYPHS_ASCII if legacy else _GLYPHS).get(state or "", "[ ]")
 
 
 def state_role(state: str) -> str:
@@ -134,10 +134,10 @@ def plan_panel_lines(rows: list[tuple[str, str]], width: int) -> list[str]:
 TreeRow = tuple[str, str, int, int, bool]
 
 #: How a container row shows whether it is open or closed.
-_EXPANDED = "▼"
-_COLLAPSED = "▶"
-_EXPANDED_ASCII = "v"
-_COLLAPSED_ASCII = ">"
+_EXPANDED = "-"
+_COLLAPSED = "+"
+_EXPANDED_ASCII = "-"
+_COLLAPSED_ASCII = "+"
 
 
 def tree_progress(

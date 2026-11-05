@@ -31,6 +31,7 @@ from ..streaming import iter_stream
 from .. import http as pooled_http
 from ...utils.logger import get_logger
 from .base import (
+    FinishEvent,
     ModelInfo,
     Provider,
     ProviderError,
@@ -39,6 +40,8 @@ from .base import (
     ToolCallEvent,
     ToolSpec,
     ValidationResult,
+    stream_idle_timeout,
+    stream_timeout,
 )
 
 if TYPE_CHECKING:
@@ -258,7 +261,7 @@ class FreeModelClaudeProvider(_FreeModelBase):
                 _CLAUDE_MESSAGES_URL,
                 headers=_claude_headers(api_key),
                 json=payload,
-                timeout=_CHAT_TIMEOUT,
+                timeout=stream_timeout(config),
             ) as response:
                 self._raise_for_stream_status(response, model)
                 # Anthropic-style SSE: data lines with typed JSON events.
@@ -354,7 +357,7 @@ class FreeModelClaudeProvider(_FreeModelBase):
                 _CLAUDE_MESSAGES_URL,
                 headers=_claude_headers(api_key),
                 json=payload,
-                timeout=_CHAT_TIMEOUT,
+                timeout=stream_timeout(config),
             ) as response:
                 self._raise_for_stream_status(response, model)
                 yield from _iter_claude_events(response)
@@ -442,20 +445,21 @@ class FreeModelCodexProvider(_FreeModelBase):
         models.sort(key=lambda m: m.id)
         return models
 
-    def _get_client(self, api_key: str):
+    def _get_client(self, api_key: str, config: "AppConfig"):
         # The OpenAI SDK is the heaviest import in the app; loading it here
         # (first message) instead of at startup keeps launch fast.
         from openai import OpenAI
 
-        if self._client is None or self._client_key != api_key:
+        cache_key = f"{api_key}|{stream_idle_timeout(config)}"
+        if self._client is None or self._client_key != cache_key:
             self._client = OpenAI(
                 api_key=api_key,
                 base_url=_CODEX_API,
-                timeout=_CHAT_TIMEOUT,
+                timeout=stream_timeout(config),
                 # The engine owns retry policy; keep the SDK from stacking its own.
                 max_retries=0,
             )
-            self._client_key = api_key
+            self._client_key = cache_key
         return self._client
 
     def stream_chat(self, config: "AppConfig", messages: list["Message"]) -> Iterator[str]:
@@ -475,7 +479,7 @@ class FreeModelCodexProvider(_FreeModelBase):
             RateLimitError,
         )
 
-        client = self._get_client(api_key)
+        client = self._get_client(api_key, config)
         try:
             if not self._use_chat_completions:
                 try:
@@ -570,7 +574,7 @@ class FreeModelCodexProvider(_FreeModelBase):
             RateLimitError,
         )
 
-        client = self._get_client(api_key)
+        client = self._get_client(api_key, config)
         try:
             if not self._use_chat_completions:
                 try:
@@ -670,6 +674,18 @@ class FreeModelCodexProvider(_FreeModelBase):
                             id=slot["call_id"], name=slot["name"], arguments={},
                             error=f"Tool call arguments were not valid JSON: {exc}",
                         )
+            elif kind == "response.incomplete":
+                response = getattr(event, "response", None)
+                details = getattr(response, "incomplete_details", None)
+                reason = getattr(details, "reason", "") or "length"
+                yield FinishEvent(str(reason))
+            elif kind == "response.completed":
+                # A completed response can still be flagged incomplete when
+                # the account's output budget was exhausted.
+                response = getattr(event, "response", None)
+                if getattr(response, "status", "") == "incomplete":
+                    details = getattr(response, "incomplete_details", None)
+                    yield FinishEvent(str(getattr(details, "reason", "") or "length"))
             elif kind in ("response.failed", "error"):
                 detail = getattr(getattr(event, "response", None), "error", None)
                 message = getattr(detail, "message", None) or "Unknown FreeModel Codex error."
@@ -697,10 +713,12 @@ class FreeModelCodexProvider(_FreeModelBase):
             stream=True,
         )
         pending: dict[int, dict[str, str]] = {}  # index -> {id, name, args}
+        finish_reason: str = ""
         for chunk in stream:
             choices = getattr(chunk, "choices", None) or []
             if not choices:
                 continue
+            finish_reason = getattr(choices[0], "finish_reason", None) or finish_reason
             delta = choices[0].delta
             if getattr(delta, "content", None):
                 yield TextDelta(delta.content)
@@ -729,6 +747,8 @@ class FreeModelCodexProvider(_FreeModelBase):
                     id=slot["id"], name=slot["name"], arguments={},
                     error=f"Tool call arguments were not valid JSON: {exc}",
                 )
+        if finish_reason and finish_reason not in ("stop", "tool_calls", "function_call"):
+            yield FinishEvent(finish_reason)
 
 
 def _to_claude_turns(messages: list["Message"]) -> list[dict[str, Any]]:
@@ -831,6 +851,10 @@ def _iter_claude_events(response: httpx.Response) -> Iterator[StreamEvent]:
                         id=slot["id"], name=slot["name"], arguments={},
                         error=f"Tool call arguments were not valid JSON: {exc}",
                     )
+        elif kind == "message_delta":
+            reason = str((event.get("delta") or {}).get("stop_reason") or "")
+            if reason in ("max_tokens", "length"):
+                yield FinishEvent(reason)
         elif kind == "error":
             message = (event.get("error") or {}).get(
                 "message", "Unknown FreeModel Claude error."

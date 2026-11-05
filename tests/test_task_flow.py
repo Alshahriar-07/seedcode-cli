@@ -90,15 +90,15 @@ def _clean_state():
 
 
 def test_glyphs_cover_every_state() -> None:
-    assert step_glyph(TaskState.PENDING) == "○"
-    assert step_glyph(TaskState.RUNNING) == "●"
-    assert step_glyph(TaskState.COMPLETED) == "✓"
-    assert step_glyph(TaskState.FAILED) == "✗"
-    assert step_glyph(TaskState.SKIPPED) == "–"
+    assert step_glyph(TaskState.PENDING) == "[ ]"
+    assert step_glyph(TaskState.RUNNING) == "[>]"
+    assert step_glyph(TaskState.COMPLETED) == "[+]"
+    assert step_glyph(TaskState.FAILED) == "[!]"
+    assert step_glyph(TaskState.SKIPPED) == "[-]"
 
 
 def test_legacy_console_gets_ascii_glyphs() -> None:
-    assert step_glyph(TaskState.COMPLETED, legacy=True) == "[ok]"
+    assert step_glyph(TaskState.COMPLETED, legacy=True) == "[+]"
     assert step_glyph(TaskState.FAILED, legacy=True) == "[x]"
 
 
@@ -216,7 +216,7 @@ def test_failed_step_stays_visible_after_finish() -> None:
     flow.finish("completed")
 
     out = console.export_text()
-    assert "✗ Implement changes" in out
+    assert "[!] Implement changes" in out
     assert "1 step(s) failed" in out
     assert "Task completed" in out
 
@@ -236,7 +236,7 @@ def test_success_outcome_is_persistent_and_prompts_for_more() -> None:
 
     out = console.export_text()
     assert "Task  ·  Code Mode" in out
-    assert "✓ Task completed" in out
+    assert "[+] Task completed" in out
     assert "721 passed" in out
     assert "Ready for next task." in out
 
@@ -247,7 +247,7 @@ def test_failure_outcome_shows_the_reason_and_stays_usable() -> None:
     flow.finish("failed", "Provider rejected the request")
 
     out = console.export_text()
-    assert "✗ Task failed" in out
+    assert "[!] Task failed" in out
     assert "Provider rejected the request" in out
     assert "Ready for another task." in out
 
@@ -278,7 +278,7 @@ def test_no_tests_run_means_no_test_claim() -> None:
     flow.finish("completed")
     out = console.export_text()
     assert "Tests:" not in out
-    assert "– Run tests" in out
+    assert "[-] Run tests" in out
 
 
 # --- the presenter -----------------------------------------------------------

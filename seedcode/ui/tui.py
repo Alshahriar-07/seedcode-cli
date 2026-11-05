@@ -11,11 +11,10 @@ screen is split into exactly three regions:
   command output. It follows the bottom while the user is at the bottom, and
   stops following the moment the user scrolls up, so reading history is never
   interrupted by new output;
-* a **fixed composer** — a real, bounded multiline editor. The border is drawn
-  by prompt_toolkit's ``Frame`` around the ``BufferControl`` (never by manually
-  printed border text), so the ``╭─ Message ─╮`` box is the actual visual
-  boundary: long lines wrap inside it, taller content scrolls internally, and
-  typed text can never leak outside the border. ``Enter`` sends,
+* a **fixed composer** — a real, bounded multiline editor with a full-width
+    dark field, green left rail, model/agent metadata and a compact status footer.
+    Long lines wrap inside the field, taller content scrolls internally, and
+    typed text can never leak outside the composer. ``Enter`` sends,
   ``Shift+Enter`` inserts a newline, ``↑``/``↓`` move the cursor inside a
   multiline message (and walk the input history at the edges), and ``Esc``
   clears.
@@ -24,10 +23,9 @@ The single source of session truth is the **header** dashboard: provider,
 model, mode and status each appear in exactly one place — there is no second
 toolbar repeating them, and no separate Submit button competing with Enter.
 
-Before the first token arrives the content region shows an animated
-``AI > ◌ Thinking…`` line. It is a UI state only — the animation runs on its own
-thread, is replaced the instant real output starts, and never delays the model
-call or the agent.
+The compact activity area shows real request/tool lifecycle events above the
+composer. While a provider is silent it reports an honest waiting state and
+elapsed time; private reasoning is never rendered as user-facing activity.
 
 Everything the existing application prints already flows here: the TUI owns a
 Rich console whose stream is a sink feeding the content buffer, so commands,
@@ -52,6 +50,7 @@ from typing import Any, Callable, Iterator
 
 from prompt_toolkit.application import Application
 from prompt_toolkit.buffer import Buffer
+from prompt_toolkit.cursor_shapes import CursorShape
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout import HSplit, Layout, VSplit, Window
 from prompt_toolkit.layout.controls import (
@@ -61,16 +60,17 @@ from prompt_toolkit.layout.controls import (
     UIControl,
 )
 from prompt_toolkit.layout.dimension import Dimension
+from prompt_toolkit.layout.processors import Processor, Transformation
 from prompt_toolkit.mouse_events import MouseEventType
 from prompt_toolkit.styles import DynamicStyle
-from prompt_toolkit.widgets import Frame
 from rich.console import Console
 
 from ..utils.text import safe_text
 from .content import ContentBuffer, StyledLine, trim_line
 from .header import header_lines
-from .state import AppState, Status
-from .theme import pt_style, rich_theme
+from .intro import PLACEHOLDER
+from .state import AppState, Status, status_fragment
+from .theme import active_palette, gradient_colors, mix, pt_style, rich_theme, shimmer_fragments
 
 __all__ = ["ChatTUI", "TuiUI", "TuiStreamRenderer"]
 
@@ -85,9 +85,6 @@ _PERMISSION_HEIGHT = 7
 #: The slash-command suggestion list shows at most this many rows; typing
 #: further narrows the list instead of growing it.
 _MAX_AUTOCOMPLETE_ROWS = 8
-#: Rows the composer's ``Frame`` adds around the editor (its top and bottom
-#: border) and the single hint row underneath it.
-_COMPOSER_FRAME_ROWS = 2
 _HINT_ROWS = 1
 #: The conversation is never allowed to vanish: this many rows are reserved for
 #: it (and therefore taken from the header) before anything else gives way.
@@ -96,32 +93,18 @@ _MIN_CONVERSATION_ROWS = 1
 #: renders (an empty conversation and the composer rather than a blank screen).
 _MIN_TERMINAL_ROWS = 3
 
-#: The composer's in-box prompt: a chevron with a leading and trailing cell so a
-#: wrapped continuation line stays indented under the first one. Its length is
-#: the width of the dedicated prompt column inside the frame.
-_COMPOSER_PROMPT = " \u203a "
-#: One blank cell of right padding inside the composer frame.
-_COMPOSER_PAD = 1
-
-#: The conversation label echoed before a user message in the scrollback. It is
-#: a display-only attribution for the chat history: the composer itself carries
-#: no such prefix, so the submitted message is never decorated with it.
-_INPUT_PROMPT = "You > "
-#: The streamed answer's first line is attributed with this. Activity lines,
-#: by contrast, carry **no** prefix — they are indented under the turn instead,
-#: so the log reads clean while the user prompt keeps its ``You >`` marker.
-_AI_PREFIX = "AI > "
-#: The two-space indent every activity line is printed under the turn with.
+#: Every conversation line starts with this margin (the OpenCode-style
+#: two-cell gutter). User blocks additionally paint their own surface rail.
 _ACTIVITY_INDENT = "  "
 
-#: Frames of the pre-response thinking indicator (a small animated spinner
-#: beside the current activity, per the v9.2.x clean-log design).
-_THINK_FRAMES = (
-    "\u280b", "\u2819", "\u2839", "\u2838", "\u283c", "\u2834",
-    "\u2826", "\u2827", "\u2807", "\u280f",
-)
-#: Animation cadence: alive enough to reassure, calm enough not to distract.
-_THINK_INTERVAL_S = 0.4
+#: Assistant answers carry a two-cell vertical gradient rail instead of a flat
+#: margin. The trailing space keeps the first word off the rail.
+_ASSISTANT_BAR = "\u258c\u258c "
+_ASSISTANT_BAR_WIDTH = 3
+
+#: Spinner cadence for the one live activity line ({\u280b, \u2819, ...}).
+_THINK_INTERVAL_S = 0.09
+_SPINNER_FRAMES = ("\u280b", "\u2819", "\u2839", "\u2838", "\u283c", "\u2834", "\u2826", "\u2827", "\u2807", "\u280f")
 
 
 def _agentic_mode(mode: str) -> bool:
@@ -204,12 +187,26 @@ class _NullStream:
         return False
 
 
+class _PlaceholderProcessor(Processor):
+    """Show the home placeholder only while the composer buffer is empty."""
+
+    def apply_transformation(self, transformation_input):
+        if transformation_input.document.text:
+            return Transformation(transformation_input.fragments)
+        return Transformation(
+            [
+                ("class:placeholder.cursor", "\u25ae"),
+                ("class:placeholder", " " + PLACEHOLDER),
+            ]
+        )
+
+
 class _ContentControl(UIControl):
     """A non-focusable control that renders the buffer's visible slice."""
 
-    #: Left padding of the conversation region (cells). Text starts two
-    #: columns in, so nothing is clipped against the terminal edge.
-    LEFT_PAD = 2
+    #: v10.2.0: the conversation uses the complete terminal width — no reserved
+    #: sidebar column and no decorative left margin.
+    LEFT_PAD = 0
 
     def __init__(
         self,
@@ -438,6 +435,12 @@ class TuiStreamRenderer:
     def flush(self) -> None:
         self._tui.set_stream(self._buffer, force=True)
 
+    def reset(self) -> None:
+        """Drop the preview (the streamed text was intermediate prose)."""
+        self._buffer = ""
+        self._last = 0.0
+        self._tui.set_stream("", force=True)
+
     def reflow(self) -> None:
         """Re-render the buffered answer at the current terminal width.
 
@@ -476,6 +479,11 @@ class ChatTUI:
         #: each frame by :meth:`_reallocate_rows`.
         self._header_rows = 0
         self._input_rows = _MIN_INPUT_LINES
+        self._composer_top_rows = 0
+        self._composer_meta_rows = 0
+        self._composer_rule_rows = 0
+        self._workspace_rows = 0
+        self._status_rows = 1
         self._permission_rows = 0
         self._thinking_rows = 0
         self._hint_rows = _HINT_ROWS
@@ -514,6 +522,10 @@ class ChatTUI:
             legacy_windows=False,
             width=self._width,
             theme=rich_theme(),
+            # Rich output is parsed into the screen buffer; giving the console
+            # the canvas colour means every rendered span (including padding)
+            # carries it instead of falling back to the terminal profile.
+            style=f"on {active_palette().bg}",
             highlight=False,
         )
         self._input = Buffer(
@@ -526,6 +538,7 @@ class ChatTUI:
         self._input_window: Window | None = None
         self._content_window: Window | None = None
         self._hint_window: Window | None = None
+        self._workspace_window: Window | None = None
         # --- v9.2.0: the right-side TASK PLAN + bounded THINKING panels -----
         self._plan_window: Window | None = None
         self._thinking_window: Window | None = None
@@ -537,6 +550,21 @@ class ChatTUI:
         self._history_index = 0
         self._draft = ""
         self._busy = False
+        #: True once the completed reasoning was copied into the scrollback, so
+        #: a later resize/turn never duplicates the block.
+        self._reasoning_committed = False
+        #: The one live action line (spinner -> check) shown above the composer.
+        #: It is replaced in place, never appended, so a tool call has one line.
+        self._live_action: tuple[str, str] | None = None
+        self._turn_started = 0.0
+        #: Dynamic side padding turns the composer into a centered home card on
+        #: the welcome screen, then releases it to full width in chat.
+        self._composer_pad = 0
+        #: True only after :meth:`banner_text` — the centred intro state. It is
+        #: cleared by the first user turn, so the intro can never reappear over
+        #: a live conversation (and tests that build a TUI directly see the
+        #: plain conversation area, exactly as before).
+        self._intro_visible = False
         self._cancel = threading.Event()
         self._confirm_lock = threading.Lock()
         self._confirm_event: threading.Event | None = None
@@ -590,58 +618,78 @@ class ChatTUI:
         self.console.print()
 
     def append_user(self, text: str) -> None:
-        """Echo the user's turn behind the ``You >`` prompt.
+        """Echo the user's turn as a surface block with a vertical gradient rail.
 
-        Continuation lines of a multiline message are indented under the prompt
-        so the message stays visually attached to it. The stored/engine text is
-        untouched: the prefix exists only on screen.
-        """
-        from .theme import active_palette
-
-        palette = active_palette()
-        lines = safe_text(text).splitlines() or [""]
-        indent = " " * len(_INPUT_PROMPT)
-        self.console.print()
-        self.console.print(
-            f"{_INPUT_PROMPT}{lines[0]}",
-            style=f"bold {palette.primary}",
-            highlight=False,
-        )
-        for extra in lines[1:]:
-            self.console.print(f"{indent}{extra}", highlight=False)
-        self.console.print()
-
-    def append_activity(self, kind: str, text: str, *, legacy: bool = False) -> None:
-        """One clean activity line, indented under the current turn.
-
-        Rendered as ``⚙ Reading package.json`` — activity carries **no**
-        ``AI >`` prefix (only the user prompt keeps ``You >``). ``kind`` is
-        ``action`` (a tool/step started), ``success``, ``error`` or ``note``
-        (informational). Only real events are passed here — the stream never
-        invents progress.
+        There is no ``You >`` prefix: the block itself is the attribution. One
+        blank surface row pads the message above and below, and the rail moves
+        from the brand green to the accent blue down the block.
         """
         from rich.text import Text
 
-        from .theme import active_palette
+        palette = active_palette()
+        self._intro_visible = False
+        lines = safe_text(text).splitlines() or [""]
+        rows = [""] + lines + [""]
+        colours = gradient_colors(palette.brand_start, palette.brand_end, len(rows))
+        width = max(20, self._width)
+        self.console.print()
+        for value, colour in zip(rows, colours):
+            line = Text()
+            line.append("\u258c", style=f"{colour} on {palette.surface}")
+            line.append(" ", style=f"on {palette.surface}")
+            line.append(value, style=f"{palette.text} on {palette.surface}")
+            used = 3 + len(value)
+            if used < width:
+                line.append(" " * (width - used), style=f"on {palette.surface}")
+            self.console.print(line, overflow="fold", highlight=False)
+        self.console.print()
+
+    def append_activity(self, kind: str, text: str, *, legacy: bool = False) -> None:
+        """Update the one live operation line instead of appending duplicates.
+
+        Real backend events drive this: ``action`` starts a spinner line,
+        ``success`` turns it into a check and ``error`` becomes a red result.
+        The line is replaced in place, so a tool call can never leave both a
+        "started" and a "finished" row behind. Informational notes are the one
+        exception: they are history, not a progress step, so they are committed.
+        """
+        safe_activity = safe_text(text).strip()
+        if not safe_activity:
+            return
+        self.state.add_activity(kind, safe_activity)
+        if kind in ("action", "success"):
+            self._live_action = (kind, safe_activity)
+            self._invalidate()
+            return
+        if kind == "error":
+            self._live_action = None
+            self._commit_activity("error", safe_activity)
+            self._invalidate()
+            return
+        self._commit_activity("note", safe_activity)
+
+    def _commit_activity(self, kind: str, text: str) -> None:
+        """Commit one compact, real activity line to the scrollback."""
+        from rich.text import Text
 
         palette = active_palette()
         marks = {
-            "action": ("\u2699", palette.accent),
+            "action": ("\u2699", palette.info),
             "success": ("\u2713", palette.success),
             "error": ("\u2715", palette.error),
-            "note": ("\u2139", palette.dim),
+            "note": ("\u2139", palette.muted),
         }
         mark, colour = marks.get(kind, marks["note"])
         line = Text()
-        # v9.3.2: no bracketed timestamp in the conversation pane. The bracketed
-        # wall-clock prefix here printed between/next to the streamed AI
-        # response — the "[TIME 12:34:56]" the user saw was this stamp (no code
-        # path ever appends a timestamp to the response text itself). When it
-        # happened is kept in the backend :class:`ActivityEvent.timestamp`.
-        line.append(f"{_ACTIVITY_INDENT}", style=palette.dim)
-        line.append(f"{mark} ", style=colour)
-        line.append(safe_text(text), style=colour)
-        self.console.print(line, highlight=False)
+        if kind == "error":
+            line.append("  \u258c ", style=palette.error)
+            line.append("Error  ", style=f"bold {palette.error}")
+            line.append(text, style=palette.muted)
+        else:
+            line.append(_ACTIVITY_INDENT, style=palette.muted)
+            line.append(f"{mark} ", style=colour)
+            line.append(text, style=colour if kind != "note" else palette.muted)
+        self.console.print(line, highlight=False, overflow="fold")
 
     def append_change(self, event: dict) -> None:
         """Render a real file change: summary, line ranges and a diff preview."""
@@ -664,7 +712,7 @@ class ChatTUI:
         if start:
             summary += f" (lines {start}–{end})" if end and end != start else f" (line {start})"
         self._last_change = (path, diff)
-        self.append_activity("success" if kind != "file_deleted" else "note", summary)
+        self._commit_activity("success" if kind != "file_deleted" else "note", summary)
         self._print_diff(diff, limit=12, indent="    ")
         if diff:
             self.console.print(
@@ -706,7 +754,7 @@ class ChatTUI:
             self.append_activity("note", "No file change to expand yet.")
             return
         path, diff = self._last_change
-        self.append_activity("note", f"Full diff for {path}")
+        self._commit_activity("note", f"Full diff for {path}")
         self._print_diff(diff, limit=None)
         self._invalidate()
 
@@ -726,18 +774,18 @@ class ChatTUI:
 
         record = self._last_command
         if record is None:
-            self.append_activity("note", "No command has run yet (Ctrl+T).")
+            self._commit_activity("note", "No command has run yet (Ctrl+T).")
             return
         ok = bool(record.get("ok"))
         command = str(record.get("command") or "")
         cwd = str(record.get("cwd") or "(workspace)")
         body = str(record.get("output") or "")
-        # The tool's own status line ("✓ Success" / "✗ FAILED (exit N)") is
+        # The tool's own status line ("DONE" / "FAILED (exit N)") is
         # real output; it is rendered as the status header, the rest as body.
         lines = body.splitlines() or [""]
         status_line = lines[0]
-        self.append_activity("note", f"$ {command}   (cwd: {cwd})")
-        self.append_activity(
+        self._commit_activity("note", f"$ {command}   (cwd: {cwd})")
+        self._commit_activity(
             "success" if ok else "error",
             status_line.split(" ", 1)[-1] if status_line else "finished",
         )
@@ -827,48 +875,43 @@ class ChatTUI:
         if not text:
             self.buffer.clear_live()
             return
-        self.buffer.set_live(_assistant_lines(_markdown_lines(text, self._width)))
+        self.buffer.set_live(
+            _assistant_lines(
+                _markdown_lines(text, max(20, self._width - _ASSISTANT_BAR_WIDTH))
+            )
+        )
 
     def finish_stream(self) -> None:
+        stream = self._stream
+        text = stream.text if stream is not None else ""
         self.buffer.commit_live()
+        self._live_action = None
+        if text.strip():
+            self._assistant_footer()
         self.console.print()
-
-    # --- thinking indicator (UI state only) ---------------------------------
-    def _thinking_lines(self) -> list[StyledLine]:
-        frame = _THINK_FRAMES[self._think_index % len(_THINK_FRAMES)]
-        palette = _palette()
-        # Live elapsed time on the same line: the operation is genuinely
-        # running and the user deserves to see how long it has been running.
-        elapsed = max(0, int(time.monotonic() - self._think_started))
-        timer = f"  \u00b7 {elapsed}s" if self._think_started else ""
-        # The label is the *real* current operation the backend published
-        # (``state.operation``), never a generic word: when the engine is
-        # reading a file or generating, that is exactly what this line shows.
-        label = (getattr(self.state, "operation", "") or "").strip()
-        if not label:
-            label = self._think_label
-        if label:
-            # Display quality: the status comes in lowercase ("analyzing the
-            # task"); a sentence case reads better on the spinner line.
-            label = label[0].upper() + label[1:]
-            if not label.endswith(("...", "\u2026")):
-                label = f"{label}..."
-        return [
-            [
-                (f"bold fg:{palette.accent}", f"{_ACTIVITY_INDENT}{frame} {label}{timer}"),
-            ]
-        ]
-
-    def _render_thinking(self) -> None:
-        self.buffer.set_live(self._thinking_lines())
         self._invalidate()
 
-    def start_thinking(self, label: str = "Thinking") -> None:
-        """Show the animated ``◌ <current operation> — e.g. Reading…`` line (idempotent).
+    def _assistant_footer(self) -> None:
+        """The quiet ``■ Build · model · duration`` line under an answer."""
+        from rich.text import Text
 
-        The animation is a UI state only: it lives on a daemon thread, is
-        stopped the moment real output starts, and never delays the turn.
-        """
+        palette = active_palette()
+        elapsed = max(0.0, time.monotonic() - self._turn_started) if self._turn_started else 0.0
+        duration = f"{elapsed:.1f}s" if elapsed < 60 else f"{elapsed / 60:.1f}m"
+        line = Text()
+        line.append("  \u25a0 ", style=palette.primary)
+        line.append(self.state.agent_state or "Build", style=f"bold {palette.info}")
+        line.append("  \u00b7  ", style=palette.muted)
+        line.append(self.state.model or "model", style=palette.text)
+        line.append("  \u00b7  ", style=palette.muted)
+        line.append(duration, style=palette.muted)
+        self.console.print(line, highlight=False)
+
+    def _render_thinking(self) -> None:
+        self._invalidate()
+
+    def start_thinking(self, label: str = "Waiting for model response") -> None:
+        """Start the elapsed wait clock used by the live activity panel."""
         with self._think_lock:
             self._think_label = (label or "").strip() or "Thinking"
             self._think_index = 0
@@ -912,12 +955,53 @@ class ChatTUI:
             self._think_thread = None
         if stop is not None:
             stop.set()
-        self.buffer.clear_live()
+        # Preserve completed reasoning in the conversation instead of erasing
+        # it: the live strip is transient, the history block is not.
+        self._commit_reasoning_history()
         self._invalidate()
+
+    def _commit_reasoning_history(self) -> None:
+        """Copy finished real reasoning into the scrollback exactly once."""
+        reasoning = (self.state.thinking_text or "").strip()
+        if not reasoning or reasoning == self.state.REASONING_FALLBACK:
+            return
+        if self._reasoning_committed:
+            return
+        self._reasoning_committed = True
+        from rich.text import Text
+
+        from .theme import active_palette
+
+        palette = active_palette()
+        self.console.print()
+        self.console.print(
+            Text("  Thinking", style=f"bold {palette.muted}"), highlight=False
+        )
+        for line in reasoning.splitlines():
+            if not line.strip():
+                continue
+            block = Text()
+            block.append("  \u2503 ", style=palette.info)
+            block.append(line.rstrip(), style=palette.dim)
+            self.console.print(block, highlight=False, overflow="fold")
+
+    def reset_reasoning_history(self) -> None:
+        """A new turn may record its own reasoning block."""
+        self._reasoning_committed = False
 
     # --- state --------------------------------------------------------------
     def sync_from_config(self, config: Any) -> None:
         self.state.sync_from_config(config)
+        # The reasoning level is real configuration when it exists; when the
+        # config has no such setting the composer shows nothing for it.
+        reasoning = ""
+        for attribute in ("reasoning", "reasoning_level", "effort"):
+            value = getattr(config, attribute, "")
+            if isinstance(value, str) and value.strip():
+                reasoning = " ".join(value.split())
+                break
+        if reasoning != self.state.reasoning:
+            self.state.update(reasoning=reasoning)
         self._invalidate()
 
     # --- background initialization (a non-blocking UI state) ----------------
@@ -956,8 +1040,39 @@ class ChatTUI:
         self._follow = True
         self._invalidate()
 
+    def _inline_plan_lines(self, width: int) -> list[StyledLine]:
+        """The task plan rendered inline at the end of the conversation.
+
+        v10.2.0 removes the permanent right-side panel: the plan is part of the
+        conversation timeline, at full width, and only when a real plan exists.
+        """
+        if not self.state.plan_nodes:
+            return []
+        from .theme import active_palette
+
+        palette = active_palette()
+        lines: list[StyledLine] = [
+            [],
+            [(f"bold fg:{palette.primary}", " Task Progress")],
+        ]
+        lines.extend(self._plan_fragments(max(10, width - 1), 0))
+        return lines
+
     def _slice(self, width: int, height: int) -> list[StyledLine]:
-        lines = self.buffer.lines()
+        # The empty state: a centred wordmark, placeholder and one tip, shown
+        # only until the first message (or any real output) arrives.
+        if (
+            self._intro_visible
+            and not self._busy
+            and not self.state.messages
+            and not self.buffer.lines()
+        ):
+            from .intro import intro_lines
+
+            return intro_lines(self.state, width, height)
+        # The live plan is part of the conversation, not a reserved column:
+        # appended after the real transcript so the full width stays free.
+        lines = self.buffer.lines() + self._inline_plan_lines(width)
         total = len(lines)
         height = max(1, height)
         max_scroll = max(0, total - height)
@@ -976,6 +1091,85 @@ class ChatTUI:
     def _input_height(self) -> int:
         lines = self._input.text.count("\n") + 1
         return max(_MIN_INPUT_LINES, min(lines, _MAX_INPUT_LINES))
+
+    def _composer_accent(self) -> list[tuple[str, str]]:
+        palette = active_palette()
+        count = max(
+            1,
+            self._composer_top_rows
+            + self._input_rows
+            + self._composer_meta_rows
+            + self._composer_rule_rows,
+        )
+        colours = gradient_colors(palette.brand_start, palette.brand_end, count)
+        fragments: list[tuple[str, str]] = []
+        for index, colour in enumerate(colours):
+            if index:
+                fragments.append(("", "\n"))
+            glyph = "\u2579" if self._composer_rule_rows and index == count - 1 else "\u2503"
+            fragments.append((f"fg:{colour}", glyph))
+        return fragments
+
+    def _composer_metadata(self) -> list[tuple[str, str]]:
+        from .theme import active_palette
+
+        palette = active_palette()
+        # One restrained hierarchy: the agent mode is the only accented value,
+        # the model is normal text, the provider is secondary and the reasoning
+        # level is the quietest metadata. Values that do not exist are omitted
+        # entirely (never replaced by a placeholder).
+        segments: list[tuple[str, str]] = [
+            (self.state.agent_state or "Build", f"bold fg:{palette.info}"),
+            (self.state.model, f"fg:{palette.text}"),
+            (self.state.provider, f"fg:{palette.muted}"),
+            (self.state.reasoning, f"bold fg:{palette.highlight}"),
+        ]
+        segments = [(text, style) for text, style in segments if text]
+        if not segments:
+            return []
+        limit = max(0, self._width - 6)
+        separator = "  \u00b7  "
+        fragments: list[tuple[str, str]] = []
+        used = 0
+        for index, (text, style) in enumerate(segments):
+            prefix = separator if index else ""
+            room = limit - used - len(prefix)
+            if room <= 0:
+                break
+            if prefix:
+                fragments.append((f"fg:{palette.dim}", prefix))
+            if len(text) > room:
+                clipped = text[: max(0, room - 1)] + "\u2026" if room > 1 else text[:room]
+                fragments.append((style, clipped))
+                break
+            fragments.append((style, text))
+            used += len(prefix) + len(text)
+        return fragments
+
+    def _workspace_fragments(self) -> list[tuple[str, str]]:
+        # The permanent workspace row is gone (the reference never spends a
+        # row on it); the path is available in /status and the header.
+        return []
+
+    def _workspace_fragments_legacy(self) -> list[tuple[str, str]]:
+        from .theme import active_palette
+
+        path = safe_text(self.state.workspace or "").strip()
+        if not path:
+            return []
+        label = "Workspace: "
+        width = max(0, self._width - len(label))
+        if len(path) > width:
+            if width <= 1:
+                path = "..."[:width] if width else ""
+            else:
+                left = max(0, (width - 3) // 2)
+                right = max(0, width - left - 3)
+                path = path[:left] + "..." + (path[-right:] if right else "")
+        return [(f"fg:{active_palette().muted}", label + path)]
+
+    def _composer_rule(self) -> list[tuple[str, str]]:
+        return [("class:composer", " ")]
 
     # --- slash-command autocomplete -----------------------------------------
     def _command_entries(self) -> list[tuple[str, str]]:
@@ -1126,7 +1320,9 @@ class ChatTUI:
         return self._ui_thread is not None and threading.get_ident() == self._ui_thread
 
     def _header_row_count(self) -> int:
-        return len(header_lines(self.state, self._width))
+        # The home screen owns its own logo and chat owns its message stream;
+        # identity lives in the composer, so no permanent top bar is needed.
+        return 0
 
     def _reallocate_rows(self) -> None:
         """Fit every region into the live terminal height, in priority order.
@@ -1147,12 +1343,32 @@ class ChatTUI:
         budget = rows
 
         budget -= 1 if budget > _MIN_CONVERSATION_ROWS else 0  # conversation
-        hint = _HINT_ROWS if budget - _HINT_ROWS >= 1 else 0
-        budget -= hint
-        input_rows = max(
-            0, min(self._input_height(), budget - _COMPOSER_FRAME_ROWS)
+        # The bottom status bar always owns one row; the home screen adds the
+        # shortcut hint above it. Chat keeps the same bar with cwd/tokens.
+        status = 1 if budget > 1 else 0
+        budget -= status
+        hint = 0
+        if self._intro_visible and budget - _HINT_ROWS >= 1:
+            hint = _HINT_ROWS
+            budget -= hint
+        # One row of breathing room inside the box, then the status line and
+        # its soft bottom edge.
+        self._composer_top_rows = 1 if rows >= 10 and budget >= 4 else 0
+        self._composer_meta_rows = 1 if rows >= 8 and budget >= 3 else 0
+        self._composer_rule_rows = 1 if rows >= 7 and budget >= 2 else 0
+        composer_extra = (
+            self._composer_top_rows
+            + self._composer_meta_rows
+            + self._composer_rule_rows
         )
-        budget -= input_rows + _COMPOSER_FRAME_ROWS
+        minimum_input = min(_MIN_INPUT_LINES, max(0, budget - composer_extra))
+        # The full workspace path never occupies a permanent bottom row; it is
+        # available through /status and the header.
+        workspace = 0
+        input_rows = max(
+            0, min(self._input_height(), budget - composer_extra - workspace)
+        )
+        budget -= input_rows + composer_extra + workspace
         # The Thinking strip is reserved directly above the composer (it is
         # compact and only exists while there is reasoning to show), then the
         # header, then the transient lists.
@@ -1167,6 +1383,8 @@ class ChatTUI:
         permission = min(self._permission_height(), max(0, budget))
 
         self._hint_rows = hint
+        self._workspace_rows = workspace
+        self._status_rows = status
         self._input_rows = input_rows
         self._thinking_rows = thinking
         self._header_rows = header
@@ -1185,8 +1403,12 @@ class ChatTUI:
             + self._permission_rows
             +            self._thinking_rows
             + self._input_rows
-            + _COMPOSER_FRAME_ROWS
+            + self._composer_top_rows
+            + self._composer_meta_rows
+            + self._composer_rule_rows
+            + self._workspace_rows
             + self._hint_rows
+            + self._status_rows
         )
 
     def _header_dimension(self) -> Dimension:
@@ -1198,11 +1420,26 @@ class ChatTUI:
     def _input_dimension(self) -> Dimension:
         return Dimension.exact(self._input_rows)
 
+    def _composer_top_dimension(self) -> Dimension:
+        return Dimension.exact(self._composer_top_rows)
+
+    def _composer_meta_dimension(self) -> Dimension:
+        return Dimension.exact(self._composer_meta_rows)
+
+    def _composer_rule_dimension(self) -> Dimension:
+        return Dimension.exact(self._composer_rule_rows)
+
+    def _workspace_dimension(self) -> Dimension:
+        return Dimension.exact(self._workspace_rows)
+
     def _permission_dimension(self) -> Dimension:
         return Dimension.exact(self._permission_rows)
 
     def _hint_dimension(self) -> Dimension:
         return Dimension.exact(self._hint_rows)
+
+    def _status_dimension(self) -> Dimension:
+        return Dimension.exact(self._status_rows)
 
     # --- v9.2.0: TASK PLAN + THINKING panels ---------------------------------
     def _visible_plan_nodes(self) -> list[tuple[str, str, int, int, bool]]:
@@ -1240,7 +1477,7 @@ class ChatTUI:
             style = f"fg:{getattr(palette, state_role(state), palette.dim)}"
             arrow = ""
             if has_children:
-                arrow = "\u25b6 " if int(task_id) in closed else "\u25bc "
+                arrow = "+ " if int(task_id) in closed else "- "
             prefix = f"{'  ' * max(0, int(depth))}{arrow}{task_glyph(state)} "
             title = " ".join(str(title or "").split())
             room = max(1, inner - len(prefix))
@@ -1259,64 +1496,90 @@ class ChatTUI:
             return 0
         return len(self._visible_plan_nodes()) + 1
 
-    # --- v9.3.2: the compact Thinking strip ---------------------------------
+    # --- compact live activity ----------------------------------------------
     def _thinking_fragments(self, width: int, height: int) -> list[StyledLine]:
-        """A bounded slice of the model's own reasoning stream.
-
-        Auto-scroll follows the newest text; while the user has scrolled up
-        (``thinking_offset > 0``) their position is kept — new reasoning does
-        not yank the view back down — and auto-scroll resumes when they return
-        to the bottom (Ctrl+Down past the end, or Ctrl+B toggling).
-        """
+        """Render current operation and recent real events, never model thoughts."""
         from .theme import active_palette
 
         palette = active_palette()
         visible = max(1, int(height or 1))
-        text = (self.state.thinking_text or "").splitlines()
-        if not text:
-            return []
-        offset = max(0, int(self.state.thinking_offset or 0))
-        # Viewport end: the newest line while following, offset lines back
-        # once the user has scrolled up (kept position).
-        end = len(text) - offset
-        start = max(0, end - visible)
-        slice_ = text[start:end]
-        # v9.3.2: minimal presentation — one small dim label, then the
-        # model's own reasoning, also dim. No heading, no LIVE badge, no
-        # model/provider metadata (execution status stays in backend state).
-        lines: list[StyledLine] = [[(f"fg:{palette.dim}", " Thinking...")]]
-        for line in slice_:
-            # The reasoning stream renders dim/faded: visually quieter than
-            # a normal AI response, a tool echo or an activity line.
-            lines.append(
-                [(f"fg:{palette.dim}", " " + line[: max(1, (width or 1) - 1)])]
+        lines: list[StyledLine] = []
+        # One operation line, updated in place. The spinner and shimmer come
+        # from the UI clock; the text is always the real backend event.
+        if self._live_action is not None:
+            kind, text = self._live_action
+            body = text[: max(4, int(width) - 6)]
+            if kind == "success":
+                lines.append(
+                    [(f"fg:{palette.success}", "  \u2713 "), (f"fg:{palette.text}", body)]
+                )
+            elif kind == "error":
+                lines.append(
+                    [(f"fg:{palette.error}", "  \u2715 "), (f"fg:{palette.error}", body)]
+                )
+            else:
+                frame = _SPINNER_FRAMES[self._think_index % len(_SPINNER_FRAMES)]
+                glyph: StyledLine = [(f"fg:{palette.highlight}", f"  {frame} ")]
+                glyph.extend(
+                    shimmer_fragments(body, palette.muted, palette.highlight, self._think_index * 0.45)
+                )
+                lines.append(glyph)
+        reasoning = (self.state.thinking_text or "").replace("\r\n", "\n")
+        # The "reasoning unavailable" record is history, not a live Thinking
+        # state: a model that exposes no reasoning must show NO panel at all.
+        if reasoning.strip() == self.state.REASONING_FALLBACK:
+            reasoning = ""
+        if not reasoning.strip():
+            return lines
+        # Wrap to the terminal width so a streamed chunk is visible immediately
+        # even before the model emits its first newline.
+        import textwrap
+
+        room = max(8, int(width) - 4)
+        wrapped: list[str] = []
+        for raw in reasoning.split("\n"):
+            if not raw.strip():
+                wrapped.append("")
+                continue
+            wrapped.extend(
+                textwrap.wrap(raw, width=room, replace_whitespace=False) or [raw]
             )
+        offset = max(0, int(self.state.thinking_offset or 0))
+        end = max(0, len(wrapped) - offset)
+        start = max(0, end - max(0, visible - len(lines) - 1))
+        shown = wrapped[start:end]
+        # ``Thinking · 3.2s`` exists only while a turn is active AND real
+        # reasoning has arrived; the elapsed clock is the real request clock.
+        heading: StyledLine = [(f"bold fg:{palette.dim}", " Thinking")]
+        if self._thinking_active and self._think_started:
+            elapsed = max(0.0, time.monotonic() - self._think_started)
+            heading.append((f"fg:{palette.dim}", f" \u00b7 {elapsed:.1f}s"))
+        rail = f"fg:{palette.info}"
+        lines.append(heading)
+        for text in shown:
+            lines.append([(rail, " \u2503 "), (f"fg:{palette.dim}", safe_text(text))])
         return lines
 
     def _thinking_height(self) -> int:
-        """Compact height: a small bounded slice, 0 when hidden.
-
-        The strip is a subtle text area, not a dashboard: at most a few rows
-        and never on a terminal too short to keep the conversation usable.
-        """
-        if not (self.state.thinking_text or "").strip():
-            return 0
+        """Compact height for current or recent activity; 0 when empty/collapsed."""
+        if self._live_action is not None:
+            if self._rows < 8:
+                return 0
+            return 1
         if not self.state.thinking_open:
             return 0
-        if self._rows < 12:
+        reasoning = (self.state.thinking_text or "").strip()
+        if not reasoning or reasoning == self.state.REASONING_FALLBACK:
+            return 0  # no real reasoning → no Thinking UI at all
+        if self._rows < 10:
             return 0
-        return max(3, min(int(self._rows * 0.2), 6))
+        # Bounded by the terminal: never more than a third of the screen, so
+        # the conversation and the composer always remain usable.
+        return min(8, max(2, self._rows // 3))
 
     def _plan_dimension(self) -> Dimension:
         rows = self._plan_height()
         return Dimension.exact(rows if rows > 0 else 0)
-
-    # --- composer prompt ----------------------------------------------------
-    def _prompt_fragments(self) -> list[tuple[str, str]]:
-        """The composer's in-box chevron, drawn in its own fixed-width column."""
-        from .theme import active_palette
-
-        return [(f"bold fg:{active_palette().primary}", _COMPOSER_PROMPT)]
 
     def _submit_text(self, text: str) -> None:
         text = (text or "").strip()
@@ -1557,18 +1820,25 @@ class ChatTUI:
         """Run one user turn on a worker thread, keeping the UI live."""
         self._busy = True
         self._cancel.clear()
+        self._turn_started = time.monotonic()
+        self._live_action = None
         self.append_user(text)
         self.state.add_message("user", text)
         # Thinking starts the moment the message is sent — before the provider
         # has been called — and is replaced by the answer as soon as it streams.
-        self.state.set_status(Status.THINKING, "composing a reply")
+        self.state.set_status(Status.THINKING, "starting agent task")
         # Backend state only: the turn's real phase (no longer rendered —
         # the bottom strip is the compact reasoning display).
+        self.reset_reasoning_history()
+        # Each turn owns its reasoning window: the previous turn's text was
+        # committed to the scrollback, so the live strip starts empty and the
+        # Thinking label cannot appear before this turn's first real delta.
+        self.state.reset_thinking()
         self.state.set_briefing(
             active=True,
             status="Thinking",
             task=safe_text(text).strip()[:160],
-            activity="Composing a reply",
+            activity="Starting agent task",
             last_completed="",
             next_action="",
             retry="",
@@ -1589,8 +1859,10 @@ class ChatTUI:
             self.append_activity("error", f"{type(exc).__name__}: {exc}")
         finally:
             self.stop_thinking()
-            # The turn is over: the briefing must not claim the model is working.
+            # The turn is over: the briefing must not claim the model is working
+            # and no stale spinner line may survive into the next turn.
             self.state.reset_briefing()
+            self._live_action = None
             self._busy = False
             self._cancel.clear()
             self._invalidate()
@@ -1659,42 +1931,98 @@ class ChatTUI:
             flat.extend(line)
         return flat
 
-    def _composer_title(self) -> str:
-        """The frame's top-border label (a pending confirmation reuses it)."""
-        prompt = self._confirm_prompt
-        if prompt is not None:
-            return f" {prompt[0]} "
-        return " Message "
-
     def _composer_bottom(self) -> list[tuple[str, str]]:
-        """The single hint line under the bounded composer.
+        """The right-aligned shortcut row directly under the home composer."""
+        palette = active_palette()
+        parts: list[tuple[str, str]] = []
+        if self._busy or self.state.agent_initializing:
+            parts.append((f"fg:{palette.warning}", "Esc interrupt"))
+            parts.append((f"fg:{palette.muted}", "   "))
+        parts.extend(
+            [
+                (f"bold fg:{palette.text}", "tab"),
+                (f"fg:{palette.muted}", " agents   "),
+                (f"bold fg:{palette.text}", "ctrl+p"),
+                (f"fg:{palette.muted}", " commands"),
+            ]
+        )
+        if not self._follow and self._unseen > 0:
+            parts.append((f"fg:{palette.warning}", f"   \u2193 {self._unseen} new"))
+        width = sum(len(text) for _style, text in parts)
+        box_left = self._composer_pad_width()
+        box_width = max(20, self._width - box_left * 2)
+        pad = box_left + max(0, box_width - width - 2)
+        return [("", " " * pad)] + parts
 
-        The box itself is drawn by :class:`Frame`; this line only carries live
-        context — a pending permission prompt, the cancel hint while a turn
-        runs, the submit/newline keys — and, only while the user is reading
-        history, how much new output arrived below the viewport.
-        """
-        from .theme import active_palette
+    def _cwd_label(self) -> str:
+        path = safe_text(self.state.workspace or "").strip()
+        if not path:
+            return ""
+        try:
+            from pathlib import Path
+
+            home = str(Path.home())
+            if path.lower().startswith(home.lower()):
+                path = "~" + path[len(home) :]
+        except Exception:
+            pass
+        return path
+
+    def _status_fragments(self) -> list[tuple[str, str]]:
+        """The bottom-most status bar: cwd, context, shortcuts and version."""
+        from .. import __version__
 
         palette = active_palette()
-        if self._confirm_prompt is not None:
-            hint = (
-                "  Enter allow  \u00b7  a allow session  \u00b7  "
-                "A allow all  \u00b7  d deny  \u00b7  Esc cancel"
-            )
-        elif self._busy:
-            hint = "  Ctrl+C cancel"
-        elif self.state.agent_initializing:
-            # Background initialization: the interface stays fully usable, so
-            # say so instead of showing an idle prompt.
-            hint = "  Initializing in the background \u2014 keep typing, Ctrl+C cancels"
+        cwd = self._cwd_label()
+        if len(cwd) > max(8, self._width - 28):
+            keep = max(4, self._width - 31)
+            cwd = "\u2026" + cwd[-keep:]
+        left: list[tuple[str, str]] = []
+        if cwd:
+            left.append((f"fg:{palette.text}", cwd))
+        if self.state.context_limit:
+            def _short(value: int) -> str:
+                if value >= 1000:
+                    return f"{value / 1000:.1f}k".replace(".0k", "k")
+                return str(value)
+
+            if left:
+                left.append(
+                    (
+                        f"fg:{palette.muted}",
+                        "   "
+                        + _short(int(self.state.context_used or 0))
+                        + "/"
+                        + _short(int(self.state.context_limit))
+                        + " ctx",
+                    )
+                )
+        right: list[tuple[str, str]] = []
+        if self._intro_visible:
+            if self.state.connection:
+                right.append((f"fg:{palette.success}", "\u25cf "))
+                right.append((f"fg:{palette.muted}", self.state.connection + "   "))
+            right.append((f"fg:{palette.muted}", "/status   "))
+            right.append((f"fg:{palette.muted}", "v" + __version__))
         else:
-            hint = "  Enter \u21b5 send  \u00b7  Shift+Enter newline"
-        parts: list[tuple[str, str]] = []
-        if not self._follow and self._unseen > 0:
-            parts.append((f"fg:{palette.warning}", f"  \u2193 {self._unseen} new"))
-        parts.append((f"fg:{palette.dim}", hint))
-        return parts
+            right.extend(
+                [
+                    (f"bold fg:{palette.text}", "ctrl+p"),
+                    (f"fg:{palette.muted}", " commands"),
+                ]
+            )
+        used = sum(len(text) for _style, text in left + right)
+        gap = max(1, self._width - used - 2)
+        return [(f"fg:{palette.muted}", " ")] + left + [(f"fg:{palette.muted}", " " * gap)] + right + [(f"fg:{palette.muted}", " ")]
+
+    def _composer_pad_width(self) -> int:
+        if not self._intro_visible:
+            return 0
+        box = min(80, max(36, int(self._width * 0.68)))
+        return max(0, (self._width - box) // 2)
+
+    def _composer_pad_dimension(self) -> Dimension:
+        return Dimension.exact(self._composer_pad_width())
 
     def _build_app(self) -> Application:
         kb = KeyBindings()
@@ -1886,10 +2214,11 @@ class ChatTUI:
             dont_extend_height=True,
         )
         self._input_window = Window(
-            BufferControl(buffer=self._input),
+            BufferControl(buffer=self._input, input_processors=[_PlaceholderProcessor()]),
             height=self._input_dimension,
             dont_extend_height=True,
             wrap_lines=True,
+            style="class:composer",
         )
         # The permission panel is a persistent region (height 0 unless a
         # request is pending), never a nested application or a blocking read.
@@ -1904,25 +2233,54 @@ class ChatTUI:
             height=self._hint_dimension,
             dont_extend_height=True,
         )
-        # A real bounded editor: Frame draws the ╭─ Message ─╮ box around the
-        # BufferControl, so the border *is* the visual boundary. The chevron
-        # lives in its own fixed-width column (its width is the wrapped-line
-        # indent) and the right padding keeps text off the border.
-        composer_body = VSplit(
+        self._status_window = Window(
+            FormattedTextControl(self._status_fragments, focusable=False),
+            height=self._status_dimension,
+            dont_extend_height=True,
+        )
+        self._workspace_window = Window(
+            FormattedTextControl(self._workspace_fragments, focusable=False),
+            height=self._workspace_dimension,
+            dont_extend_height=True,
+        )
+        composer_content = HSplit(
             [
                 Window(
-                    FormattedTextControl(self._prompt_fragments, focusable=False),
-                    width=Dimension.exact(len(_COMPOSER_PROMPT)),
-                    dont_extend_width=True,
+                    height=self._composer_top_dimension,
+                    style="class:composer",
+                    dont_extend_height=True,
                 ),
                 self._input_window,
-                Window(width=Dimension.exact(_COMPOSER_PAD)),
-            ]
-        )
-        composer = Frame(
-            composer_body,
-            title=lambda: self._composer_title().strip(),
+                Window(
+                    FormattedTextControl(self._composer_metadata, focusable=False),
+                    height=self._composer_meta_dimension,
+                    style="class:composer",
+                    dont_extend_height=True,
+                ),
+                Window(
+                    FormattedTextControl(self._composer_rule, focusable=False),
+                    height=self._composer_rule_dimension,
+                    style="class:composer",
+                    dont_extend_height=True,
+                ),
+            ],
             style="class:composer",
+        )
+        composer = VSplit(
+            [
+                Window(width=self._composer_pad_dimension, style="class:canvas"),
+                Window(
+                    FormattedTextControl(self._composer_accent, focusable=False),
+                    width=Dimension.exact(1),
+                    style="class:composer",
+                    dont_extend_width=True,
+                ),
+                Window(width=Dimension.exact(2), style="class:composer"),
+                composer_content,
+                Window(width=Dimension.exact(2), style="class:composer"),
+                Window(width=self._composer_pad_dimension, style="class:canvas"),
+            ],
+            style="class:canvas",
         )
         self._autocomplete_window = Window(
             _AutocompleteControl(
@@ -1933,17 +2291,9 @@ class ChatTUI:
             dont_extend_height=True,
             wrap_lines=False,
         )
-        self._plan_window = Window(
-            _PlanControl(
-                self._plan_fragments,
-                lambda: self._width,
-                lambda: self.state.plan_nodes,
-            ),
-            height=self._plan_dimension,
-            width=None,  # the control's preferred width sizes the panel
-            dont_extend_height=True,
-            wrap_lines=False,
-        )
+        # v10.2.0: no permanent right-side plan/sidebar window. The plan is
+        # rendered inline in the content region (see _inline_plan_lines).
+        self._plan_window = None
         self._thinking_window = Window(
             _ThinkingControl(self._thinking_fragments, self._thinking_height),
             dont_extend_height=True,
@@ -1952,21 +2302,26 @@ class ChatTUI:
         root = HSplit(
             [
                 self._header_window,
-                # LEFT: main chat + activity. RIGHT: hierarchical TODO list.
-                VSplit([self._content_window, self._plan_window]),
+                # Full-width conversation: activity, diff, inline task plan.
+                self._content_window,
                 self._autocomplete_window,
                 self._permission_window,
-                # Bottom strip: the compact thinking display sits directly
-                # above the input; it takes zero rows when there is nothing.
+                # The event-backed activity area stays above the composer.
                 self._thinking_window,
                 composer,
+                self._workspace_window,
                 self._hint_window,
-            ]
+                self._status_window,
+            ],
+            # The layout root paints the whole rect; gaps between rows can
+            # never reveal the terminal's own profile background.
+            style="class:canvas",
         )
         return Application(
             layout=Layout(root, focused_element=self._input_window),
             key_bindings=kb,
             style=DynamicStyle(lambda: pt_style()),
+            cursor=CursorShape.BLOCK,
             full_screen=True,
             mouse_support=True,
             before_render=self._before_render,
@@ -2022,16 +2377,14 @@ class ChatTUI:
         self._app = None
 
     def banner_text(self) -> None:
-        """The opening content: just how to drive an already-branded session.
+        """Show the centred intro in the conversation area.
 
-        The header already carries the identity (version, logo, tagline), so the
-        scrollback only adds the input hint — nothing is printed twice.
+        Nothing is printed into the scrollback: the intro is the empty state of
+        the one conversation region, so it disappears naturally when the first
+        message (or the first real tool event) is appended.
         """
-        from .reference import INPUT_HINT
-
-        self.console.print()
-        self.console.print(safe_text(INPUT_HINT), style=_rich("dim"))
-
+        self._intro_visible = True
+        self._invalidate()
 
 def _palette():
     from .theme import active_palette
@@ -2052,19 +2405,24 @@ def _pt(role: str, *, bold: bool = False) -> str:
 
 
 def _assistant_lines(lines: list[StyledLine]) -> list[StyledLine]:
-    """Attribute rendered assistant output with the ``AI >`` prefix.
+    """Give assistant markdown a muted two-cell gradient rail.
 
-    Only the first line carries the prefix: wrapped and continued lines keep
-    their own left margin, so rendered markdown (lists, code blocks) is not
-    re-indented by the UI.
+    There is no ``AI >`` attribution: the response is identified by its rail
+    and the model footer underneath it. The green→blue gradient runs down the
+    whole answer and is blended toward the background so the words stay primary.
     """
     body = list(lines)
     while body and not "".join(text for _, text in body[0]).strip():
         body.pop(0)
     if not body:
         return [[("", "")]]
-    first: StyledLine = [(_pt("primary", bold=True), _AI_PREFIX)] + list(body[0])
-    return [first] + [list(line) for line in body[1:]]
+    palette = active_palette()
+    colours = gradient_colors(palette.brand_start, palette.brand_end, len(body))
+    out: list[StyledLine] = []
+    for line, colour in zip(body, colours):
+        muted = mix(colour, palette.bg, 0.40)
+        out.append([(f"fg:{muted}", _ASSISTANT_BAR)] + list(line))
+    return out
 
 
 def _markdown_lines(text: str, width: int) -> list[StyledLine]:
@@ -2080,6 +2438,7 @@ def _markdown_lines(text: str, width: int) -> list[StyledLine]:
         legacy_windows=False,
         width=max(20, width),
         theme=rich_theme(),
+        style=f"on {active_palette().bg}",
         highlight=False,
         record=True,
     )
@@ -2196,14 +2555,7 @@ class TuiUI:
 
     @contextmanager
     def thinking(self, label: str = "Thinking") -> Iterator[None]:
-        """Animate ``◌ <current operation>`` while a real operation is in flight.
-
-        The indicator is removed on exit — including when the block wrapped a
-        command that ran with the prompt_toolkit application stepped aside — so
-        it can never be left behind on screen. Streamed output takes over the
-        live block immediately, and the turn's own ``finally`` is a no-op by
-        then.
-        """
+        """Publish the real operation label during a blocking UI operation."""
         self.tui.check_cancel()
         self.tui.start_thinking(label)
         self.tui.state.set_status(Status.THINKING, label.lower())

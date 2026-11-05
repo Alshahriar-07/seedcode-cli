@@ -16,6 +16,7 @@ import httpx
 
 from .. import http as pooled_http
 from .base import (
+    FinishEvent,
     ModelInfo,
     Provider,
     ProviderError,
@@ -25,18 +26,40 @@ from .base import (
     ToolCallEvent,
     ToolSpec,
     ValidationResult,
+    stream_timeout,
 )
 
 if TYPE_CHECKING:
     from ..models import AppConfig, Message
 
 _DETECT_TIMEOUT = 5.0
-# Local generation can pause while a model loads into memory; be generous.
-_CHAT_TIMEOUT = httpx.Timeout(10.0, read=300.0)
-
 #: ``model -> exposes a thinking channel`` as reported by ``/api/show``.
 #: Probed lazily and cached; an unreached server just means "no thinking".
 _thinking_cache: dict[tuple[str, str], bool] = {}
+_capability_cache: dict[tuple[str, str], tuple[str, ...] | None] = {}
+
+
+def _model_capabilities(config: "AppConfig", model: str) -> tuple[str, ...] | None:
+    key = (str(getattr(config, "ollama_host", "")), str(model or ""))
+    if not key[1]:
+        return None
+    if key in _capability_cache:
+        return _capability_cache[key]
+    capabilities = None
+    try:
+        response = pooled_http.post(
+            f"{config.ollama_host}/api/show",
+            json={"model": model},
+            timeout=_DETECT_TIMEOUT,
+        )
+        if response.status_code == 200:
+            raw = (response.json() or {}).get("capabilities") or []
+            capabilities = tuple(sorted(str(item) for item in raw if isinstance(item, str)))
+    except Exception:
+        capabilities = None
+    if capabilities is not None:
+        _capability_cache[key] = capabilities
+    return capabilities
 
 
 def _model_can_think(config: "AppConfig") -> bool:
@@ -52,18 +75,10 @@ def _model_can_think(config: "AppConfig") -> bool:
         return False
     if key in _thinking_cache:
         return _thinking_cache[key]
-    supported = False
-    try:
-        response = pooled_http.post(
-            f"{config.ollama_host}/api/show",
-            json={"model": config.model},
-            timeout=_DETECT_TIMEOUT,
-        )
-        if response.status_code == 200:
-            capabilities = (response.json() or {}).get("capabilities") or []
-            supported = "thinking" in capabilities
-    except Exception:
-        supported = False
+    capabilities = _model_capabilities(config, config.model)
+    if capabilities is None:
+        return False
+    supported = capabilities is not None and "thinking" in capabilities
     _thinking_cache[key] = supported
     return supported
 
@@ -71,7 +86,8 @@ def _model_can_think(config: "AppConfig") -> bool:
 def _not_running(host: str) -> ProviderError:
     return ProviderError(
         f"Ollama is not reachable at {host}. Start it with 'ollama serve' "
-        "(install from https://ollama.com) and try again."
+        "(install from https://ollama.com) and try again.",
+        transient=True,
     )
 
 
@@ -102,6 +118,34 @@ def _to_api_ollama_tools(message: "Message") -> dict:
             ],
         }
     return _to_api_ollama(message)
+
+
+def _tool_arguments(value: object) -> tuple[dict, str]:
+    """Normalize Ollama's object or JSON-string arguments without executing bad JSON."""
+    if value is None:
+        return {}, ""
+    if isinstance(value, dict):
+        return value, ""
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except ValueError:
+            return {}, "Ollama returned incomplete tool-call JSON arguments."
+        if isinstance(parsed, dict):
+            return parsed, ""
+    return {}, "Ollama returned tool-call arguments that are not a JSON object."
+
+
+def _request_options(config: "AppConfig") -> dict:
+    options = dict(getattr(config, "ollama_options", {}) or {})
+    # A user-supplied num_ctx in ollama_options always wins; otherwise request
+    # the configured window explicitly so a low model default cannot truncate
+    # the agent history.
+    num_ctx = int(getattr(config, "ollama_num_ctx", 0) or 0)
+    if num_ctx > 0:
+        options.setdefault("num_ctx", num_ctx)
+    options["num_predict"] = config.effective_max_tokens()
+    return options
 
 
 @dataclass
@@ -176,15 +220,23 @@ class OllamaProvider(Provider):
         """Ollama's chat API accepts images natively (vision models use them)."""
         return True
 
+    def model_capabilities(self, config: "AppConfig", model_id: str) -> list[str] | None:
+        """Actual model capabilities from Ollama /api/show, when reachable."""
+        capabilities = _model_capabilities(config, model_id)
+        return list(capabilities) if capabilities is not None else None
+
     def stream_chat(self, config: "AppConfig", messages: list["Message"]) -> Iterator[str]:
         payload = {
             "model": config.model,
             "messages": [_to_api_ollama(m) for m in messages],
             "stream": True,
+            "keep_alive": config.ollama_keep_alive or "30m",
+            "options": _request_options(config),
         }
         try:
             with pooled_http.stream(
-                "POST", f"{config.ollama_host}/api/chat", json=payload, timeout=_CHAT_TIMEOUT
+                "POST", f"{config.ollama_host}/api/chat", json=payload,
+                timeout=stream_timeout(config, connect=10.0),
             ) as response:
                 if response.status_code == 404:
                     raise ProviderError(
@@ -202,13 +254,21 @@ class OllamaProvider(Provider):
                     raise ProviderError(f"Ollama error (HTTP {response.status_code}): {detail}")
                 # NDJSON: one JSON object per line until "done": true.
                 emitted = False
+                saw_done = False
                 for line in response.iter_lines():
                     if not line.strip():
                         continue
                     try:
                         event = json.loads(line)
                     except ValueError:
-                        continue
+                        raise ProviderError(
+                            "Ollama returned malformed NDJSON before stream completion.",
+                            transient=True,
+                        )
+                    if not isinstance(event, dict):
+                        raise ProviderError(
+                            "Ollama returned an invalid NDJSON event.", transient=True
+                        )
                     if event.get("error"):
                         raise ProviderError(f"Ollama error: {event['error']}")
                     piece = (event.get("message") or {}).get("content")
@@ -216,7 +276,13 @@ class OllamaProvider(Provider):
                         emitted = True
                         yield piece
                     if event.get("done"):
+                        saw_done = True
                         break
+                if not saw_done:
+                    raise ProviderError(
+                        "Ollama stream ended before completion (missing done event).",
+                        transient=True,
+                    )
                 if not emitted:
                     raise ProviderError(
                         f"Ollama returned an empty response for model "
@@ -256,6 +322,8 @@ class OllamaProvider(Provider):
                 for t in tools
             ],
             "stream": True,
+            "keep_alive": config.ollama_keep_alive or "30m",
+            "options": _request_options(config),
         }
         # v9.2.0: request the thinking channel ONLY on models that expose one
         # (detected from /api/show). Models without it reject ``think``.
@@ -264,7 +332,8 @@ class OllamaProvider(Provider):
         call_counter = 0
         try:
             with pooled_http.stream(
-                "POST", f"{config.ollama_host}/api/chat", json=payload, timeout=_CHAT_TIMEOUT
+                "POST", f"{config.ollama_host}/api/chat", json=payload,
+                timeout=stream_timeout(config, connect=10.0),
             ) as response:
                 if response.status_code == 404:
                     raise ProviderError(
@@ -290,18 +359,39 @@ class OllamaProvider(Provider):
                             "retrying without it.",
                             transient=True,
                         )
+                    lower_detail = detail.lower()
+                    if (
+                        any(term in lower_detail for term in ("tool", "function"))
+                        and any(
+                            term in lower_detail
+                            for term in ("unsupported", "not support", "unknown", "invalid")
+                        )
+                    ):
+                        raise ProviderError(
+                            f"Ollama model '{config.model}' rejected native tools; "
+                            "retrying with the text tool protocol.",
+                            fallback_to_text=True,
+                        )
                     raise ProviderError(f"Ollama error (HTTP {response.status_code}): {detail}")
                 # NDJSON stream; tool calls arrive with arguments already
                 # parsed as objects (no fragment assembly needed). Ollama has
                 # no call ids, so synthesize stable ones.
                 saw_output = False
+                saw_done = False
                 for line in response.iter_lines():
                     if not line.strip():
                         continue
                     try:
                         event = json.loads(line)
                     except ValueError:
-                        continue
+                        raise ProviderError(
+                            "Ollama returned malformed NDJSON before stream completion.",
+                            transient=True,
+                        )
+                    if not isinstance(event, dict):
+                        raise ProviderError(
+                            "Ollama returned an invalid NDJSON event.", transient=True
+                        )
                     if event.get("error"):
                         raise ProviderError(f"Ollama error: {event['error']}")
                     message = event.get("message") or {}
@@ -316,18 +406,32 @@ class OllamaProvider(Provider):
                         yield TextDelta(piece)
                     for call in message.get("tool_calls") or []:
                         fn = call.get("function") or {}
-                        arguments = fn.get("arguments")
-                        if not isinstance(arguments, dict):
-                            arguments = {}
+                        arguments, argument_error = _tool_arguments(
+                            fn.get("arguments")
+                        )
                         call_counter += 1
                         saw_output = True
                         yield ToolCallEvent(
                             id=f"call_{call_counter}",
                             name=fn.get("name", ""),
                             arguments=arguments,
+                            error=argument_error,
                         )
                     if event.get("done"):
+                        saw_done = True
+                        # v10.2.0: Ollama reports why generation stopped. A
+                        # "length" stop is a truncated answer, not a final one.
+                        reason = str(event.get("done_reason") or "stop")
+                        # A normal stop needs no event; only a non-normal
+                        # terminal reason (e.g. "length") is actionable.
+                        if reason.lower() != "stop":
+                            yield FinishEvent(reason)
                         break
+                if not saw_done:
+                    raise ProviderError(
+                        "Ollama stream ended before completion (missing done event).",
+                        transient=True,
+                    )
                 if not saw_output:
                     raise ProviderError(
                         f"Ollama returned no text and no tool call for model "

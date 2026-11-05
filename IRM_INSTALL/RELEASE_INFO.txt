@@ -1,13 +1,13 @@
 Seed Code CLI
 =============
 
-Version: 9.3.2
+Version: 10.2.1
 License: PolyForm Noncommercial License 1.0.0
          (https://polyformproject.org/licenses/noncommercial/1.0.0/)
 
 WHAT'S IN THIS RELEASE
 ----------------------
-The v9.3.2 release artifacts:
+The v10.2.1 release artifacts:
   - Windows portable executable (x64)
   - Windows Setup installer (x64)
   - Python wheel (any OS)
@@ -18,9 +18,9 @@ The v9.3.2 release artifacts:
 Primary command after any install method:  seedcode
 Developer fallback:                        python -m seedcode
 
-WHAT CHANGED IN v9.3.2
+WHAT CHANGED IN v10.2.1
 ----------------------
-v9.3.2 is a reliability and interface-polish release: the coding agent now
+v10.2.1 is a reliability and interface-polish release: the coding agent now
 guarantees real workspace changes, the terminal interface is quieter, and one
 long-standing timestamp annoyance is gone.
 
@@ -76,18 +76,18 @@ INSTALLATION METHODS
 
      irm https://seedcode-cli.vercel.app/install.ps1 | iex
 
-   Downloads the official SeedCode-CLI-9.3.2-windows-x64.exe from GitHub
+   Downloads the official SeedCode-CLI-10.2.1-windows-x64.exe from GitHub
    Releases and verifies its SHA-256 against the release's SHA256SUMS.txt. A
    mismatch, a missing entry, or an unreachable checksum file aborts;
    verification is never bypassed. It installs per-user to
    %LOCALAPPDATA%\Programs\SeedCode, adds that directory to the user PATH, and
-   verifies the installed binary reports version 9.3.2. PowerShell 5.1 and 7+
+   verifies the installed binary reports version 10.2.1. PowerShell 5.1 and 7+
    compatible; ANSI UI with graceful fallback; Ctrl+C safe.
 
 2) Windows - Setup installer
 
-   Download SeedCode-CLI-Setup-9.3.2.exe from
-   https://github.com/Alshahriar-07/seedcode-cli/releases/tag/v9.3.2 and run it.
+   Download SeedCode-CLI-Setup-10.2.1.exe from
+   https://github.com/Alshahriar-07/seedcode-cli/releases/tag/v10.2.1 and run it.
    Installs with a Start Menu shortcut and adds the install directory to the
    PATH so `seedcode` works in new terminals. Preserves configuration during
    upgrades (user config lives in the Seed Code config directory, not the
@@ -95,21 +95,21 @@ INSTALLATION METHODS
 
 3) Windows - portable executable
 
-   Download SeedCode-CLI-9.3.2-windows-x64.exe from the releases page and
+   Download SeedCode-CLI-10.2.1-windows-x64.exe from the releases page and
    run it directly. No installation, no PATH changes; `seedcode --version`
-   reports 9.3.2. For a persistent `seedcode` command, use method 1 or 2.
+   reports 10.2.1. For a persistent `seedcode` command, use method 1 or 2.
 
 4) Linux / macOS - remote shell installer
 
      curl -fsSL https://seedcode-cli.vercel.app/install.sh | bash
 
-   Downloads the official SeedCode-CLI-9.3.2-<os>-<arch> standalone binary
+   Downloads the official SeedCode-CLI-10.2.1-<os>-<arch> standalone binary
    from GitHub Releases when the release publishes one for this platform, and
-   otherwise downloads the official seedcode_cli-9.3.2-py3-none-any.whl. Either
+   otherwise downloads the official seedcode_cli-10.2.1-py3-none-any.whl. Either
    way the downloaded file's SHA-256 is verified against the release's
    SHA256SUMS.txt before anything is installed (a mismatch aborts, and an
    unreachable checksum file aborts too - verification is never bypassed).
-   Installs to ~/.local/bin and verifies the installed binary reports 9.3.2.
+   Installs to ~/.local/bin and verifies the installed binary reports 10.2.1.
    pipx is used for the wheel when available (otherwise pip --user, with
    PEP 668 handling). Clean ANSI UI with ASCII fallback; Ctrl+C safe.
 
@@ -136,7 +136,7 @@ Download, checksum and version verification are unchanged.
   - Long operations show real spinners, or the downloader's own byte progress.
   - Redirected output, NO_COLOR, --plain and TERM=dumb disable animation.
   - Errors report a reason, a suggested action and a stable error code.
-  - The success screen appears only after the installed binary reports 9.3.2.
+  - The success screen appears only after the installed binary reports 10.2.1.
 
 UPGRADE SAFETY
 --------------
@@ -148,7 +148,7 @@ CHECKSUMS
 ---------
 Every release artifact has a SHA-256 entry in SHA256SUMS.txt:
 
-  cd dist/release/v9.3.2
+  cd dist/release/v10.2.1
   sha256sum -c SHA256SUMS.txt            # Linux/macOS
   Get-FileHash <file> -Algorithm SHA256  # Windows
 

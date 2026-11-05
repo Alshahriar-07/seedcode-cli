@@ -38,8 +38,8 @@ from .badges import badge_fragment
 from .fuzzy import FuzzyResult, fuzzy_match
 from .theme import pt_style
 
-# Marker used for the highlighted row (the Seed pointer).
-POINTER = "❯"  # ❯
+# Marker used for the highlighted row.
+POINTER = ">"
 _PAGE = 10
 
 

@@ -8,6 +8,7 @@ switching providers or models mid-session takes effect on the next turn.
 from __future__ import annotations
 
 import os
+import random
 import time
 from collections.abc import Callable, Iterator
 from typing import Any
@@ -25,8 +26,11 @@ _log = get_logger("chat")
 # Transparent retry for transient failures before any output has streamed.
 # The backoff is short (v6.2.0): first-token latency matters more than
 # hammering politeness — a provider that is down stays down for 2s too.
-_MAX_RETRIES = 2
-_RETRY_BACKOFF_S = 0.5
+_MAX_RETRIES = 3
+#: v10.2.0 bounded exponential backoff: the first retry waits ~1s, then ~3s,
+#: then ~7s, capped by ``_MAX_WAIT_S``. Jitter breaks synchronized retries.
+_RETRY_DELAYS = (1.0, 3.0, 7.0)
+_RETRY_BACKOFF_S = _RETRY_DELAYS[0]
 # Hard cap on any single wait, including a provider's Retry-After hint: a
 # bounded retry policy must never be tricked into sleeping for minutes.
 _MAX_WAIT_S = 30.0
@@ -49,6 +53,10 @@ def _max_retries() -> int:
 
 class ChatError(Exception):
     """Raised with a user-friendly message when a request cannot complete."""
+
+    def __init__(self, message: str, *, fallback_to_text: bool = False) -> None:
+        super().__init__(message)
+        self.fallback_to_text = fallback_to_text
 
 
 class ChatEngine:
@@ -164,9 +172,12 @@ class ChatEngine:
         """
         attempt = 0
         tried: set[str] = set()
+        tried_models: set[str] = set()
         while True:
             provider_id = (self.config.provider or "").lower()
             tried.add(provider_id)
+            if self.config.model:
+                tried_models.add(self.config.model)
             yielded = False
             _log.info(
                 "request: provider=%s model=%s turns=%d attempt=%d",
@@ -175,24 +186,80 @@ class ChatEngine:
                 len(self.messages),
                 attempt,
             )
+            request_started = time.monotonic()
+            last_event_at = request_started
+            event_count = 0
+            self.event("waiting_model", "Waiting for model response")
             try:
                 for piece in request():
+                    now = time.monotonic()
+                    idle_for = now - last_event_at
+                    if event_count == 0:
+                        self.event("model_response", "Receiving model response")
+                        _log.info(
+                            "first stream event: provider=%s model=%s after=%.1fs type=%s",
+                            self.config.provider,
+                            self.config.model,
+                            now - request_started,
+                            type(piece).__name__,
+                        )
+                    else:
+                        _log.debug(
+                            "stream event: provider=%s model=%s type=%s idle=%.1fs",
+                            self.config.provider,
+                            self.config.model,
+                            type(piece).__name__,
+                            idle_for,
+                        )
+                    event_count += 1
+                    last_event_at = now
                     yielded = True
                     yield piece
-                _log.info("request complete: provider=%s", self.config.provider)
+                if not yielded:
+                    raise ProviderError(
+                        "Provider stream ended without response data."
+                    )
+                _log.info(
+                    "request complete: provider=%s model=%s events=%d elapsed=%.1fs",
+                    self.config.provider,
+                    self.config.model,
+                    event_count,
+                    time.monotonic() - request_started,
+                )
+                self.event("stream_completed", "Processing model response")
                 health_mod.tracker().record_success(provider_id)
                 return
             except ProviderError as exc:
+                _log.warning(
+                    "request stream failed: provider=%s model=%s events=%d "
+                    "idle=%.1fs transient=%s error_type=%s",
+                    self.config.provider,
+                    self.config.model,
+                    event_count,
+                    time.monotonic() - last_event_at,
+                    exc.transient,
+                    type(exc).__name__,
+                )
+                if exc.fallback_to_text:
+                    raise ChatError(str(exc), fallback_to_text=True) from exc
                 retries = _max_retries()
                 if exc.transient and not yielded and attempt < retries:
-                    attempt += 1
                     # A real HTTP 429 carries the provider's own Retry-After:
                     # honour it (capped) instead of the generic backoff.
-                    wait = _RETRY_BACKOFF_S * attempt
+                    base = _RETRY_DELAYS[min(attempt, len(_RETRY_DELAYS) - 1)]
+                    attempt += 1
                     hint = getattr(exc, "retry_after", None)
                     if isinstance(hint, (int, float)) and hint > 0:
-                        wait = max(wait, float(hint))
-                    wait = min(wait, _MAX_WAIT_S)
+                        # A provider's own Retry-After is honoured exactly
+                        # (within the hard cap), with no jitter added to it.
+                        wait = min(max(base, float(hint)), _MAX_WAIT_S)
+                    else:
+                        # Jitter keeps retries from synchronizing across
+                        # sessions; the hard cap still applies so no retry can
+                        # sleep for minutes.
+                        wait = min(
+                            base + random.uniform(0, 0.25 * base), _MAX_WAIT_S
+                        )
                     health_mod.tracker().record_failure(provider_id, exc, cooldown=wait)
                     _log.warning(
                         "transient failure, retry %d/%d in %.1fs: %s",
@@ -209,11 +276,24 @@ class ChatEngine:
                 # try another healthy configuration, unless output already
                 # streamed (retrying elsewhere would duplicate the reply).
                 switch = None if yielded else self._next_provider(tried)
+                # Model failover runs before provider failover: when a
+                # transient failure is model-specific, another model on the
+                # same provider keeps the task, history and context intact.
+                alternate = (
+                    None
+                    if (yielded or switch is not None)
+                    else self._next_model(tried_models)
+                )
                 state = health_mod.tracker().record_failure(provider_id, exc).state
+                if alternate is not None:
+                    self._switch_model(alternate, reason=self._failover_reason(exc, state))
+                    attempt = 0
+                    continue
                 if switch is not None:
                     self._switch_provider(switch, reason=self._failover_reason(exc, state))
                     attempt = 0
                     continue
+                self.event("stream_failed", "Model request failed")
                 _log.error("request failed: %s", exc)
                 raise ChatError(str(exc)) from exc
             except ChatError:
@@ -242,24 +322,64 @@ class ChatEngine:
         provider_id = (self.config.provider or "").lower()
         provider = PROVIDERS.get(provider_id)
         if provider is not None and provider.local:
-            # The user chose a local backend (Ollama). Connection problems are
-            # reported as actionable errors, never converted into a provider
-            # switch — see :meth:`stream_reply`'s error path.
-            _log.info(
-                "failover suppressed: %s is a local provider the user selected",
-                provider_id,
-            )
-            self.event(
-                "provider_stay",
-                f"{provider.label} is your selected local provider — no "
-                "automatic switch; fix the connection and retry.",
-            )
+            # v10.2.0 privacy gate: a local session is never silently moved to
+            # a cloud provider. Crossing that boundary requires the explicit
+            # ``allow_local_to_cloud`` opt-in, and even then only a verified
+            # non-local candidate is used.
+            if not bool(getattr(self.config, "allow_local_to_cloud", False)):
+                _log.info(
+                    "failover suppressed: %s is local and local-to-cloud is disabled",
+                    provider_id,
+                )
+                self.event(
+                    "provider_stay",
+                    f"{provider.label} is your selected local provider — no "
+                    "automatic switch; fix the connection and retry.",
+                )
+                return None
+            try:
+                for candidate in FailoverChain(self.config).candidates(exclude=tried):
+                    target = PROVIDERS.get(candidate.provider_id)
+                    if target is not None and not target.local:
+                        self.event(
+                            "privacy_boundary",
+                            f"Local-to-cloud failover explicitly allowed: "
+                            f"{provider.label} → {target.label} ({candidate.model})",
+                        )
+                        return candidate
+            except Exception:
+                _log.exception("local-to-cloud failover evaluation failed")
             return None
         try:
             return FailoverChain(self.config).next_candidate(tried)
         except Exception:
             _log.exception("failover evaluation failed")
             return None
+
+    def _next_model(self, tried: set[str]) -> str | None:
+        """The next configured fallback model for the active provider.
+
+        Only explicit user configuration (``fallback_models``) is used: SeedCode
+        never invents a model identifier, and a failed request on an unsupported
+        model is not retried forever.
+        """
+        for model in getattr(self.config, "fallback_models", []) or []:
+            candidate = str(model or "").strip()
+            if candidate and candidate not in tried:
+                return candidate
+        return None
+
+    def _switch_model(self, model: str, *, reason: str = "") -> None:
+        """Switch to another model on the same provider, preserving the task."""
+        previous = self.config.model
+        self.config.model = model
+        _log.warning(
+            "switch model %s -> %s reason=%s", previous, model, reason or "unspecified"
+        )
+        detail = f"{previous or '(none)'} → {model}"
+        if reason:
+            detail += f" ({reason})"
+        self.event("switching_model", detail)
 
     def _failover_reason(self, exc: BaseException, state) -> str:
         """A short, user-safe reason for a provider switch (v9.1.1).

@@ -193,9 +193,38 @@ def tool_manifest(
             continue
         if allowed is not None and tool.name not in allowed:
             continue
-        arg_desc = ", ".join(f'"{a}": {d}' for a, d in tool.args.items()) or "none"
-        lines.append(f"- {tool.name}: {tool.description}\n  args: {arg_desc}")
+        lines.append(
+            f"- {tool.name}: {tool.description}\n"
+            f"  args: {_manifest_args(tool)}\n"
+            f"  access: {_manifest_access(tool)}"
+        )
     return "\n".join(lines)
+
+
+def _manifest_args(tool: Tool) -> str:
+    """Argument docs for the manifest: name, required/optional, type, meaning.
+
+    A small model cannot infer from a bare ``path: where to write`` that the
+    argument is mandatory, so the requirement is stated explicitly and the
+    JSON type is taken from the same field that drives native schemas.
+    """
+    if not tool.args:
+        return "none"
+    parts: list[str] = []
+    for arg, description in tool.args.items():
+        optional = "(optional)" in description
+        text = description.replace("(optional)", "").strip()
+        flags = "optional" if optional else "required"
+        kind = tool.types.get(arg, "string")
+        parts.append(f'"{arg}" ({flags} {kind}): {text}')
+    return "; ".join(parts)
+
+
+def _manifest_access(tool: Tool) -> str:
+    """Whether the tool is free to call or reaches the permission gate."""
+    if tool.mutates:
+        return "changes files or system state — permission check applies"
+    return "read-only"
 
 
 # v6.2.0: specs are immutable for a given registry state, so cache them per

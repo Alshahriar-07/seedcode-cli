@@ -105,7 +105,12 @@ def dispatch(ctx: CommandContext, text: str) -> CommandResult:
 # /desktop) and the non-coding /play & /youtube commands are gone; the unified
 # workspace/capability module registers /workspace, /permission, /index,
 # /tools and /memory instead.
-from . import about, agent, clear, doctor, help, history, palette, provider, session, status, theme, workspace  # noqa: E402,F401
+from . import about, agent, clear, doctor, help, history, models, palette, provider, session, status, theme, workspace  # noqa: E402,F401
+
+# v10.3.0: ``/connect`` is the onboarding name for the existing provider flow
+# (the first-run intro points at it). It is an alias, never a second
+# implementation, so it cannot drift from /provider.
+_ALIASES.setdefault("connect", "provider")
 
 __all__ = [
     "CommandContext",

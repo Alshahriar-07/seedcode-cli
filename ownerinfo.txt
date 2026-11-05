@@ -1,0 +1,10 @@
+Owner Information
+=================
+
+Project: Seed Code CLI
+Version: 10.2.0
+Owner: Al Shahriar Sowan
+Studio: Eagox Studio
+GitHub: https://github.com/Alshahriar-07
+License: PolyForm Noncommercial License 1.0.0
+Copyright: (c) 2026 Al Shahriar Sowan - Eagox Studio

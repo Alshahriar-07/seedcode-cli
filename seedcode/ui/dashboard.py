@@ -194,8 +194,8 @@ def _reference_panel(config: AppConfig, width: int, layout_legacy: bool) -> Pane
     """The logo-first panel (or its text-wordmark fallback on legacy consoles)."""
     panel_width = min(width, PANEL_WIDTH)
     content = panel_width - 4  # border (2) + 1-column padding each side
-    ready_mark = "o" if layout_legacy else "●"
-    idle_mark = "-" if layout_legacy else "○"
+    ready_mark = "+"
+    idle_mark = "-"
     # The block logo is primary branding, but only where it can actually be
     # drawn and fit; narrower/legacy consoles get the wordmark fallback.
     use_logo = not layout_legacy and panel_width >= FULL_MIN_WIDTH
@@ -227,8 +227,8 @@ def _compact_line(config: AppConfig, layout_legacy: bool, width: int) -> Text:
     content = max(width - 4, 16)  # borders + one padding column each side
     bullet = _bullet(layout_legacy)
     sep = f" {bullet} "
-    ready_mark = "o" if layout_legacy else "●"
-    idle_mark = "-" if layout_legacy else "○"
+    ready_mark = "+"
+    idle_mark = "-"
 
     tail = Text()
     tail.append(_mode_value(config), style="seed.accent")

@@ -1,0 +1,47 @@
+Seed Code CLI - Project Information
+
+Project Name: Seed Code CLI
+Version: v10.2.0
+Description: Premium terminal-based AI coding agent that reads projects, plans work, writes/edit files, runs commands, and reports honestly on execution.
+
+Key Features:
+- One unified agent (no chat/agent/code modes)
+- Real tools with strict schemas (27+ tools including file operations, terminal commands, git, web search)
+- Live execution view with actual tool results
+- Thinking indicator with live timer
+- Task progress display in conversation timeline
+- Model-aware execution profiles (small/standard/advanced)
+- Safe recovery with bounded backoff and failover options
+- Real file operations with diff previews
+- Real terminal execution with exit codes and durations
+- Real internet research with source tracking
+- Final report matching actual operations performed
+
+Providers & Models:
+- Default (built-in, no key)
+- OpenRouter (requires key)
+- FreeModel Claude (requires key)
+- FreeModel Codex (requires key)
+- AeroLink (requires key)
+- Ollama (local models, auto-starts server)
+- Custom OpenAI-compatible providers
+
+Workspace:
+- Single root directory for all operations
+- .seedcode/ directory for project memory and session state
+- Permissions are requested before dangerous actions
+- No silent credential copying between providers
+
+Installation:
+- pip install seedcode-cli (Python 3.10+)
+- Windows remote installer (PowerShell)
+- Windows setup installer
+- Linux/macOS remote installer (Python wheel)
+- From source (development)
+
+Usage:
+- seedcode --version → Seed Code CLI 10.2.0
+- First run selects workspace directory
+- Persistent terminal interface with live status
+
+-- writen by seedcode cli - default/openrouter:free

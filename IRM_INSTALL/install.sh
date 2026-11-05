@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Seed Code CLI v10.1.0 - official remote installer (Linux / macOS / WSL).
+# Seed Code CLI v10.2.1 - official remote installer (Linux / macOS / WSL).
 #
 # Installs Seed Code CLI for the CURRENT USER. No administrator rights and no
 # cloned repository are required: the official release artifact is downloaded
@@ -18,11 +18,11 @@
 #
 # Or, to pass options, download-then-run:
 #
-#   bash install.sh --version 10.1.0
+#   bash install.sh --version 10.2.1
 #   bash install.sh --bin-dir ~/.local/bin
 #
 # Options:
-#   --version V   Release version to install   (default: 10.1.0)
+#   --version V   Release version to install   (default: 10.2.1)
 #   --bin-dir D   Where the seedcode binary should live (default: ~/.local/bin)
 #   --force       Reinstall even if this version is already present
 #   --plain       Disable the ANSI/Unicode UI
@@ -39,7 +39,7 @@ umask 022
 
 # --- constants ---------------------------------------------------------------
 REPO="Alshahriar-07/seedcode-cli"
-DEFAULT_VERSION="10.1.0"
+DEFAULT_VERSION="10.2.1"
 USER_AGENT="seedcode-cli-installer/${DEFAULT_VERSION}"
 
 # The release artifact names are the release contract shared with
@@ -144,7 +144,7 @@ SEEDCODE_BANNER
     fi
     printf '  %sSEED CODE CLI%s  %s%s%s  %sAI CODING AGENT%s\n' \
         "${C_WHITE:-}" "${C_RESET:-}" "${C_DGRAY:-}" "${SYM_DOT:-|}" "${C_RESET:-}" "${C_GRAY:-}" "${C_RESET:-}"
-    printf '  %sVersion %s%s\n\n' "${C_GRAY:-}" "${VERSION:-10.1.0}" "${C_RESET:-}"
+    printf '  %sVersion %s%s\n\n' "${C_GRAY:-}" "${VERSION:-10.2.1}" "${C_RESET:-}"
 }
 
 write_status() {

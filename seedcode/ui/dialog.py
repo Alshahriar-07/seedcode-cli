@@ -2,7 +2,7 @@
 
 Replaces every [Y]/[N] text prompt with an arrow-key choice list:
 
-    ❯ Allow Once
+    > Allow Once
       Always Allow
       Deny
 

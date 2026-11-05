@@ -1,4 +1,4 @@
-"""v9.3.2 startup and version regression tests.
+"""v10.2.1 startup and version regression tests.
 
 The reported failure was::
 
@@ -68,13 +68,13 @@ def test_module_entry_point_reports_931() -> None:
         timeout=120,
     )
     assert proc.returncode == 0, proc.stderr
-    assert proc.stdout.strip() == "Seed Code CLI 9.3.2"
+    assert proc.stdout.strip() == "Seed Code CLI 10.2.1"
 
 
 def test_version_agrees_across_the_distribution_channels() -> None:
     from seedcode import __version__
 
-    assert __version__ == "9.3.2"
+    assert __version__ == "10.2.1"
 
     npm = json.loads((ROOT / "npm" / "package.json").read_text(encoding="utf-8"))
     assert npm["version"] == __version__
@@ -82,6 +82,6 @@ def test_version_agrees_across_the_distribution_channels() -> None:
     ps = (ROOT / "IRM_INSTALL" / "install.ps1").read_text(encoding="utf-8")
     sh = (ROOT / "IRM_INSTALL" / "install.sh").read_text(encoding="utf-8")
     iss = (ROOT / "scripts" / "windows" / "setup.iss").read_text(encoding="utf-8")
-    assert '$Version = "9.3.2"' in ps
-    assert 'DEFAULT_VERSION="9.3.2"' in sh
-    assert '#define MyAppVersion "9.3.2"' in iss
+    assert '$Version = "10.2.1"' in ps
+    assert 'DEFAULT_VERSION="10.2.1"' in sh
+    assert '#define MyAppVersion "10.2.1"' in iss

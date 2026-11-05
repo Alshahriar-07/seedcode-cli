@@ -2,12 +2,11 @@
 
 v9.1.0 replaces the old implicit behaviour ("wherever the terminal happened to
 be, usually the user's home directory, becomes the project") with an explicit
-choice made once at startup:
+choice made once at startup with the arrow-key selector:
 
-    Select Workspace
-
-      1  Current Folder    D:\\Projects\\my-website
-      2  Choose a Folder   browse this PC and pick any directory
+    Current Workspace
+    Browse Folders
+    Recent Workspaces
 
 The selected directory becomes the active **workspace** — the single root that
 controls Agent Mode, file reads/writes, project indexing, ``.seedcode`` context
@@ -81,29 +80,24 @@ def menu_lines(cwd: Path | None = None) -> list[str]:
     """The "Select Workspace" menu, as plain lines (testable, no I/O)."""
     here = Path(cwd) if cwd is not None else active_workspace()
     return [
-        "  Select Workspace",
-        "  " + "-" * 62,
-        "  Where should Seed Code work? Agent Mode reads, writes, indexes and",
-        "  runs commands only inside the folder you pick.",
-        "",
-        f"    1  Current Folder    {here}",
-        "    2  Choose a Folder   browse this PC and pick any directory",
-        "",
+        "Workspace Selection",
+        f"Current workspace: {here}",
+        "Choose with the arrow keys or enter a directory path.",
     ]
 
 
 def parse_choice(raw: str, cwd: Path | None = None) -> str | None:
     """Map a typed answer to a choice, a literal directory, or ``None``.
 
-    ``""``/``1``/``current`` -> :data:`CURRENT`; ``2``/``choose`` -> 
+    ``""``/``current`` -> :data:`CURRENT`; ``choose`` -> 
     :data:`CHOOSE`; an existing directory path is accepted verbatim. Anything
     else returns ``None`` so the caller re-prompts instead of guessing.
     """
     text = (raw or "").strip()
     low = text.strip('"').strip("'").lower()
-    if low in ("", "1", "current", "c", "here"):
+    if low in ("", "current", "c", "here"):
         return CURRENT
-    if low in ("2", "choose", "browse", "pick", "b"):
+    if low in ("choose", "browse", "pick", "b"):
         return CHOOSE
     candidate = Path(text.strip('"').strip("'")).expanduser()
     if candidate.is_dir():
@@ -234,21 +228,17 @@ def select_workspace(
     print_fn: Callable[[str], None] = print,
     picker: Callable[..., Path | None] | None = None,
 ) -> Path:
-    """Run the Select Workspace flow and return the chosen directory.
-
-    ``Current Folder`` returns ``cwd``; ``Choose a Folder`` opens the native
-    picker and falls back to a typed path when no GUI picker exists. EOF/^C
-    (``EOFError``/``KeyboardInterrupt``) selects the current folder, so a
-    mistyped answer can never leave the session without a workspace.
-    """
+    """Run the interactive folder selector or a scriptable path prompt."""
     here = Path(cwd) if cwd is not None else active_workspace()
     pick = picker or pick_folder_native
+    if input_fn is input and _has_interactive_tty():
+        return _select_workspace_menu(here, pick)
     for line in menu_lines(here):
         print_fn(line)
 
     while True:
         try:
-            answer = input_fn("  Select [1] > ")
+            answer = input_fn("  Workspace path (Enter keeps current) > ")
         except (EOFError, KeyboardInterrupt):
             print_fn(f"  Keeping the current folder: {here}")
             return here
@@ -261,8 +251,7 @@ def select_workspace(
             if chosen is not None:
                 return Path(chosen)
             print_fn(
-                "  No folder picker is available on this host — type a path, "
-                "or press Enter for the current folder."
+                "  No folder picker is available; type a directory path or press Enter."
             )
             try:
                 typed = input_fn("  Folder path > ")
@@ -277,7 +266,103 @@ def select_workspace(
             return Path(resolved)
         if choice is not None:
             return Path(choice)
-        print_fn("  Please answer 1, 2, or a path to an existing folder.")
+        print_fn("  Enter an existing directory path, or press Enter to keep the current folder.")
+
+
+def _has_interactive_tty() -> bool:
+    try:
+        return sys.stdin.isatty() and sys.stdout.isatty()
+    except (AttributeError, OSError, ValueError):
+        return False
+
+
+def _select_workspace_menu(here: Path, picker: Callable[..., Path | None]) -> Path:
+    from .ui.menu import MenuItem, run_menu
+    from .ui.textbox import read_text
+
+    while True:
+        try:
+            from .config.manager import load_config
+
+            recent = list(load_config().recent_workspaces)
+        except Exception:
+            recent = []
+        choice = run_menu(
+            [
+                MenuItem("Use current workspace", "current", status=str(here)),
+                MenuItem("Browse folders", "browse"),
+                MenuItem("Recent workspaces", "recent", disabled=not recent),
+                MenuItem("Choose with system folder picker", "native"),
+                MenuItem("Open directory by path", "path"),
+                MenuItem("Back", "back"),
+            ],
+            title="Workspace Selection",
+            breadcrumbs=("Workspace",),
+            hint="Up/Down navigate   Enter select   Esc back",
+        )
+        if choice in (None, "back"):
+            return here
+        if choice == "current":
+            return here
+        if choice == "browse":
+            selected = _browse_workspace(here, run_menu, MenuItem)
+            if selected is not None:
+                return selected
+        elif choice == "recent":
+            selected = run_menu(
+                [MenuItem(path, path) for path in recent] + [MenuItem("Back", "back")],
+                title="Recent Workspaces",
+                hint="Up/Down navigate   Enter select   Esc back",
+            )
+            if selected and selected != "back" and Path(selected).is_dir():
+                return Path(selected)
+        elif choice == "native":
+            selected = picker(here)
+            if selected is not None:
+                return Path(selected)
+        elif choice == "path":
+            typed = read_text("Directory path > ")
+            if typed:
+                candidate = Path(typed).expanduser()
+                if candidate.is_dir():
+                    return candidate
+
+
+def _browse_workspace(here: Path, run_menu, menu_item) -> Path | None:
+    current = here
+    while True:
+        try:
+            entries = sorted(
+                (entry for entry in current.iterdir() if entry.is_dir()),
+                key=lambda entry: entry.name.casefold(),
+            )
+        except OSError:
+            entries = []
+        items = [menu_item("Select this folder", f"select:{current}")]
+        if current.parent != current:
+            items.append(menu_item("Go to parent directory", f"browse:{current.parent}"))
+        if os.name == "nt":
+            drives = [Path(f"{letter}:\\") for letter in "ABCDEFGHIJKLMNOPQRSTUVWXYZ"]
+            items.extend(
+                menu_item(f"Browse {drive}", f"browse:{drive}")
+                for drive in drives
+                if drive.is_dir()
+            )
+        items.extend(menu_item(f"{entry.name}\\", f"browse:{entry}") for entry in entries)
+        items.append(menu_item("Back", "back"))
+        choice = run_menu(
+            items,
+            title="Select Directory",
+            breadcrumbs=("Workspace", str(current)),
+            hint="Up/Down navigate   Enter open/select   / filters   Esc back",
+        )
+        if choice in (None, "back"):
+            return None
+        kind, _, value = str(choice).partition(":")
+        if kind == "select":
+            return Path(value)
+        if kind == "browse" and Path(value).is_dir():
+            current = Path(value)
 
 
 def ensure_workspace(
@@ -310,7 +395,18 @@ def ensure_workspace(
         cwd=here, input_fn=input_fn, print_fn=print_fn, picker=picker
     )
     try:
-        return set_workspace(chosen)
+        selected = set_workspace(chosen)
+        try:
+            from .config.manager import load_config, save_config
+
+            config = load_config()
+            config.recent_workspaces = list(
+                dict.fromkeys([str(selected), *config.recent_workspaces])
+            )[:12]
+            save_config(config)
+        except Exception:
+            pass
+        return selected
     except (NotADirectoryError, OSError) as exc:
         print_fn(f"  Could not use {chosen}: {exc}")
         return here

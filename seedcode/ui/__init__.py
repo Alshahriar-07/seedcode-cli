@@ -24,7 +24,7 @@ from ..utils.text import safe_text
 from .dashboard import render_dashboard
 from .reference import render_command_hint
 from .renderer import StreamRenderer
-from .theme import SEED_THEME, rich_theme, set_active_theme
+from .theme import CANVAS, SEED_THEME, rich_theme, set_active_theme
 
 __all__ = ["UI", "StreamRenderer", "SEED_THEME"]
 
@@ -41,17 +41,17 @@ class UI:
         # the user sets SEEDCODE_PLAIN): no colour, no cursor tricks — Rich is
         # still used, it just emits nothing a terminal could corrupt.
         self.console = Console(
-            theme=rich_theme(), highlight=False, no_color=plain
+            theme=rich_theme(),
+            # One canvas everywhere: unset spans must not inherit the
+            # terminal profile's own background.
+            style=f"on {CANVAS}",
+            highlight=False,
+            no_color=plain,
         )
         # The active Live display (spinner/stream), if any — permission
         # dialogs pause it so interactive input works cleanly.
         self._live: Live | None = None
-        # Legacy Windows consoles (pre-Windows-Terminal cmd.exe with raster
-        # fonts) can't render ✔/✖ — fall back to pure-ASCII markers there.
-        if self.console.legacy_windows:
-            self._ok_mark, self._err_mark = "[OK]", "[X]"
-        else:
-            self._ok_mark, self._err_mark = "✔", "✖"
+        self._ok_mark, self._err_mark = "[OK]", "[X]"
         self._theme_pushed = False
 
     def apply_theme(self, name: str) -> None:

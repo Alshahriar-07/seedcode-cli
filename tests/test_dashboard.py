@@ -324,7 +324,7 @@ def test_legacy_console_gets_an_ascii_panel() -> None:
     lines = [ln for ln in out.splitlines() if ln.strip()]
     assert lines[0].startswith("+- Seed Code CLI")
     assert lines[-1].startswith("+-")
-    assert "o Ready" in out or "o Connected" in out
+    assert "+ Ready" in out or "+ Connected" in out
     for glyph in "●○╭╮╰╯│─█▄▀":
         assert glyph not in out, glyph
 

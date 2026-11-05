@@ -80,7 +80,7 @@ def _absent(legacy: bool) -> str:
 
 
 def state_label(state: TaskState, *, legacy: bool = False) -> str:
-    """``✓ COMPLETED`` / ``● RUNNING`` / ... for one task state."""
+    """``[+] COMPLETED`` / ``[>] RUNNING`` / ... for one task state."""
     return f"{glyph_for(state, legacy=legacy)} {state.value.upper()}"
 
 

@@ -1,4 +1,4 @@
-"""v9.3.2 npm launcher regression tests.
+"""v10.2.1 npm launcher regression tests.
 
 The launcher's download helper passed the artifact descriptor object to
 ``assetName(version, platform)``, which raised
@@ -44,7 +44,7 @@ def test_launcher_reports_the_package_version() -> None:
         timeout=60,
     )
     assert proc.returncode == 0, proc.stderr
-    assert proc.stdout.strip() == "seedcode-cli (npm launcher) v9.3.2"
+    assert proc.stdout.strip() == "seedcode-cli (npm launcher) v10.2.1"
 
 
 def test_artifact_filename_url_and_checksum_name_agree() -> None:
@@ -60,16 +60,16 @@ def test_artifact_filename_url_and_checksum_name_agree() -> None:
         "}));"
     )
     data = json.loads(raw)
-    expected = "SeedCode-CLI-9.3.2-windows-x64.exe"
+    expected = "SeedCode-CLI-10.2.1-windows-x64.exe"
     assert data["asset"] == expected
     assert data["filename"] == expected  # used for the cache + checksum lookup
-    assert data["url"].endswith(f"/v9.3.2/{expected}")
-    assert data["checksums"].endswith("/v9.3.2/SHA256SUMS.txt")
+    assert data["url"].endswith(f"/v10.2.1/{expected}")
+    assert data["checksums"].endswith("/v10.2.1/SHA256SUMS.txt")
 
 
 def test_packaged_manifest_lists_only_files_that_exist() -> None:
     package = json.loads((ROOT / "npm" / "package.json").read_text(encoding="utf-8"))
-    assert package["version"] == "9.3.2"
+    assert package["version"] == "10.2.1"
     assert package["bin"] == {"seedcode": "bin/seedcode.js"}
     for name in package["files"]:
         assert (ROOT / "npm" / name).is_file(), name
